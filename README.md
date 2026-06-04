@@ -13,13 +13,24 @@ ReadEra на Android. Хостится на VPS рядом с Calibre.
       [foliate-js](https://github.com/johnfactotum/foliate-js) (EPUB + FB2) с темой
       ReadEra (день/сепия/серая/ночь/чёрная), ручная загрузка файла, библиотека,
       сохранение/восстановление прогресса (ratio + CFI), deep-link `/?open=<id>`.
-- [ ] **Этап 2 — скачивание.** FanFicFare (ficbook/fanfics.me/AO3/ffn) + адаптер
-      author.today + FicHub-фоллбэк; добавление в Calibre.
+- [x] **Этап 2 — скачивание.** FanFicFare (ficbook/fanfics.me/AO3/ffn) + адаптер
+      author.today (расшифровка глав) + FicHub-фоллбэк; добавление в Calibre.
 - [ ] **Этап 3 — sync с ReadEra.** Чтение/запись бэкапа `.bak` через Google Drive
       (rclone), матч книг по SHA-1, прогресс по `doc_position.ratio`.
 - [ ] **Этап 4 — мониторинг.** Шифрованные креды аккаунтов, проверка обновлений
       подписок, авто-докачка в Calibre.
-- [ ] **Этап 5 — деплой.** На VPS: `git clone`, venv, systemd, обратный прокси.
+- [x] **Этап 5 — деплой.** На VPS: `git clone` в `/root/reader`, venv, systemd-юнит
+      `reader.service`, бинд на Tailscale-IP. Читает библиотеку Calibre (`/root/calibre_lib`).
+
+## Доступ (прод)
+
+Живёт на VPS, только в tailnet: **http://100.66.108.118:8123** (открывается с любого
+устройства в Tailscale — Windows, телефон). Публичный порт НЕ выставлен.
+
+Обновление на VPS:
+```bash
+sudo bash -c 'cd /root/reader && git pull && .venv/bin/pip install -r requirements.txt && systemctl restart reader'
+```
 
 ## Структура
 

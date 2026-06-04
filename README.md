@@ -24,8 +24,10 @@ ReadEra на Android. Хостится на VPS рядом с Calibre.
 
 ## Доступ (прод)
 
-Живёт на VPS, только в tailnet: **http://100.66.108.118:8123** (открывается с любого
-устройства в Tailscale — Windows, телефон). Публичный порт НЕ выставлен.
+Публично по HTTPS под SSO: **https://reader.ibotz.fun** (тот же vps-sso, что и у
+других проектов; вход — через `sso.ibotz.fun`). nginx терминирует TLS и проксирует
+на бэкенд `127.0.0.1:8123` (наружу напрямую порт НЕ выставлен). Конфиг nginx —
+`deploy/nginx-reader.ibotz.fun.conf`, сертификат — Let's Encrypt (certbot).
 
 Обновление на VPS:
 ```bash

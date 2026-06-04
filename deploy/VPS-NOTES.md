@@ -32,9 +32,17 @@ SSH-алиас `vps` живёт в `~/.ssh/config` WSL Ubuntu (Tailscale SSH, б
   Сергея (там ReadEra Premium хранит бэкап `.bak`), напр. `gdrive:` →
   `READER_READERA_BACKUP_REMOTE=gdrive:ReadEra`.
 
-## Деплой (этап 5)
+## Деплой (этап 5 — сделано)
 
-`git clone https://github.com/serhii-yalosovetskyi/reader.git` на VPS → venv →
-`.env` (см. `.env.example`) → systemd-юнит → проксирование через nginx.
-Порт наружу — **согласовать с человеком** (прод-правило безопасности VPS).
+- Код: `git clone https://github.com/serg-yalosovetsky/reader.git` в `/root/reader`,
+  venv, `.env` (`READER_CALIBRE_LIBRARY=/root/calibre_lib`).
+- Сервис: systemd `reader.service`, uvicorn 1 воркер, бинд `127.0.0.1:8123`,
+  MemoryMax 400M, enabled.
+- HTTPS+SSO: nginx-сайт `reader.ibotz.fun` (`deploy/nginx-reader.ibotz.fun.conf`),
+  паттерн vps-sso как у `monoflow` (auth_request → `[::1]:3010`, редирект на
+  `sso.ibotz.fun/sign-in`). Сертификат Let's Encrypt (certbot certonly --nginx).
+  Wildcard-DNS `*.ibotz.fun` → 212.227.115.106 (новые поддомены резолвятся сразу).
+- Адрес: **https://reader.ibotz.fun**. Обновление:
+  `sudo bash -c 'cd /root/reader && git pull && .venv/bin/pip install -r requirements.txt && systemctl restart reader'`.
+
 RAM коробки ~7.9 ГБ, держать стек лёгким (uvicorn 1 воркер, FanFicFare — subprocess).

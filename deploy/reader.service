@@ -8,10 +8,10 @@ Type=simple
 # Каталог установки (git clone сюда).
 WorkingDirectory=/root/reader
 EnvironmentFile=/root/reader/.env
-# 1 воркер — экономим RAM коробки. Бинд на Tailscale-IP: доступ только из tailnet,
-# наружу порт НЕ выставляется (правило безопасности VPS).
+# 1 воркер — экономим RAM коробки. Бинд на localhost: единственный вход — nginx
+# (HTTPS + SSO на reader.ibotz.fun). Напрямую порт наружу НЕ доступен.
 ExecStart=/root/reader/.venv/bin/python -m uvicorn backend.app.main:app \
-  --host 100.66.108.118 --port 8123 --workers 1 --log-level info
+  --host 127.0.0.1 --port 8123 --workers 1 --log-level info
 Restart=on-failure
 RestartSec=3
 # Бережём RAM: ограничим память сервиса.

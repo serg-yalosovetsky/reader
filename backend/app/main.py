@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import FRONTEND_DIR
 from .db.session import init_db
-from .routers import library, progress, reader
+from .routers import calibre, ingest, library, progress, reader
 
 
 @asynccontextmanager
@@ -26,6 +26,8 @@ app = FastAPI(title="Reader — фанфики и Calibre", lifespan=lifespan)
 app.include_router(library.router)
 app.include_router(reader.router)
 app.include_router(progress.router)
+app.include_router(ingest.router)
+app.include_router(calibre.router)
 
 
 @app.get("/api/health")

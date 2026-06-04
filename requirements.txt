@@ -1,0 +1,23 @@
+# Web framework
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+
+# DB
+sqlmodel>=0.0.22
+
+# Scheduler (мониторинг + ReadEra sync по расписанию)
+APScheduler>=3.10
+
+# Crypto для шифрования кредов аккаунтов
+cryptography>=43
+
+# HTTP-клиент (FicHub, мониторинг, скачивание)
+httpx>=0.27
+
+# Парсинг страниц сайтов (author.today адаптер, мониторинг)
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# Движок скачивания фанфиков (ficbook/fanfics.me/AO3/ffn)
+FanFicFare>=4.30

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="day">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Читалка</title>
+  <link rel="stylesheet" href="/css/theme.css" />
+</head>
+<body>
+  <!-- ======================= БИБЛИОТЕКА ======================= -->
+  <section id="library" class="screen">
+    <header class="lib-header">
+      <h1 class="lib-title">Моя библиотека</h1>
+      <div class="lib-actions">
+        <form id="ingest-form" class="ingest" autocomplete="off">
+          <input id="ingest-input" type="text" placeholder="Ссылка или название фанфика…" />
+          <button type="submit" class="btn-primary" title="Скачать и открыть">Добавить</button>
+        </form>
+        <label class="btn-ghost" for="upload-input">Загрузить файл</label>
+        <input id="upload-input" type="file" accept=".epub,.fb2" hidden />
+      </div>
+    </header>
+    <div id="ingest-status" class="ingest-status" hidden></div>
+    <div id="book-grid" class="book-grid"></div>
+    <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
+  </section>
+
+  <!-- ======================= ЧИТАЛКА ======================= -->
+  <section id="reader" class="screen" hidden>
+    <div id="reader-top" class="reader-bar reader-top">
+      <button id="back-btn" class="icon-btn" title="К библиотеке">‹ Библиотека</button>
+      <span id="reader-title" class="reader-title"></span>
+      <div class="reader-top-actions">
+        <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
+        <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
+      </div>
+    </div>
+
+    <div id="view-host" class="view-host"></div>
+
+    <div id="reader-bottom" class="reader-bar reader-bottom">
+      <button id="prev-btn" class="icon-btn" title="Назад">‹</button>
+      <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" />
+      <span id="progress-label" class="progress-label">0%</span>
+      <button id="next-btn" class="icon-btn" title="Вперёд">›</button>
+    </div>
+
+    <!-- Панель оглавления -->
+    <aside id="toc-panel" class="panel" hidden>
+      <div class="panel-head">Оглавление</div>
+      <nav id="toc-list" class="toc-list"></nav>
+    </aside>
+
+    <!-- Панель вида (темы, шрифт) -->
+    <aside id="settings-panel" class="panel" hidden>
+      <div class="panel-head">Вид</div>
+      <div class="setting-row">
+        <span class="setting-label">Тема</span>
+        <div class="theme-swatches">
+          <button class="swatch" data-theme="day" title="День" style="background:#ffffff;color:#222"></button>
+          <button class="swatch" data-theme="sepia" title="Сепия" style="background:#f5ecd9;color:#5b4636"></button>
+          <button class="swatch" data-theme="grey" title="Серая" style="background:#cfd2d4;color:#222"></button>
+          <button class="swatch" data-theme="night" title="Ночь" style="background:#15171a;color:#cbd0d6"></button>
+          <button class="swatch" data-theme="black" title="Чёрная" style="background:#000;color:#bdbdbd"></button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Размер</span>
+        <div class="stepper">
+          <button id="font-dec" class="icon-btn">A−</button>
+          <span id="font-val" class="stepper-val">100%</span>
+          <button id="font-inc" class="icon-btn">A+</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Поля</span>
+        <div class="stepper">
+          <button id="margin-dec" class="icon-btn">−</button>
+          <span id="margin-val" class="stepper-val">сред.</span>
+          <button id="margin-inc" class="icon-btn">+</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Шрифт</span>
+        <select id="font-family" class="select">
+          <option value="serif">С засечками</option>
+          <option value="sans">Без засечек</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Режим</span>
+        <select id="flow-mode" class="select">
+          <option value="paginated">Страницы</option>
+          <option value="scrolled">Лента</option>
+        </select>
+      </div>
+    </aside>
+    <div id="panel-overlay" class="panel-overlay" hidden></div>
+  </section>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

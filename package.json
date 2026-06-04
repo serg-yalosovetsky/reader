@@ -1,0 +1,14 @@
+{
+  "name": "reader",
+  "version": "0.1.0",
+  "description": "Веб-читалка фанфиков с синхронизацией прогресса (стиль ReadEra)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "shoot": "node scripts/shoot.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "puppeteer-core": "^25.1.0"
+  }
+}

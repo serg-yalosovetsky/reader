@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Project data (runtime)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+books/
+tmp/
+secret.key
+
+# Secrets / config
+.env
+
+# Frontend deps (vendored libs are committed; node stuff is not)
+node_modules/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

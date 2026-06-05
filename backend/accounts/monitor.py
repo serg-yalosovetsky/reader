@@ -51,8 +51,14 @@ def _host(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-def check_all(session: Session, auto_download: bool = True) -> dict:
-    """Проверить все отслеживаемые фики. Возвращает сводку."""
+def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True) -> dict:
+    """Проверить обновления: сперва фиды подписок (ставят новые работы на
+    отслеживание), затем детект новых глав по каждому отслеживаемому фику."""
+    feeds_result = {}
+    if pull_feeds:
+        from . import feeds  # ленивый импорт — избегаем цикла
+        feeds_result = feeds.pull_all(session)
+
     mons = session.exec(select(Monitored)).all()
     checked = updated = downloaded = 0
     details = []
@@ -86,7 +92,7 @@ def check_all(session: Session, auto_download: bool = True) -> dict:
         session.commit()
         time.sleep(0.3)  # вежливость к сайтам
     return {"checked": checked, "with_updates": updated,
-            "downloaded": downloaded, "details": details}
+            "downloaded": downloaded, "feeds": feeds_result, "details": details}
 
 
 def list_monitored(session: Session) -> list[dict]:

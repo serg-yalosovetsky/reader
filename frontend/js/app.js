@@ -105,6 +105,59 @@ $('#readera-sync').addEventListener('click', async () => {
   }
 })
 
+// ===================== Аккаунты и обновления =====================
+const accStatus = (msg, err) => {
+  const el = $('#accounts-status'); el.hidden = false
+  el.classList.toggle('error', !!err); el.textContent = msg
+}
+async function loadAccounts() {
+  const accs = await api.get('/api/accounts').catch(() => [])
+  const box = $('#accounts-list'); box.innerHTML = ''
+  if (!accs.length) box.innerHTML = '<div class="acc-row">Аккаунтов нет</div>'
+  for (const a of accs) {
+    const row = document.createElement('div'); row.className = 'acc-row'
+    row.innerHTML = `<span>${escapeHtml(a.site)} — ${escapeHtml(a.username)}</span>`
+    const del = document.createElement('button'); del.className = 'icon-btn'; del.textContent = '✕'
+    del.addEventListener('click', async () => { await fetch(`/api/accounts/${a.id}`, { method: 'DELETE' }); loadAccounts() })
+    row.append(del); box.append(row)
+  }
+}
+async function loadMonitored() {
+  const items = await api.get('/api/monitored').catch(() => [])
+  const box = $('#monitored-list'); box.innerHTML = ''
+  if (!items.length) { box.innerHTML = '<div class="mon-row">Пока ничего не отслеживается</div>'; return }
+  for (const m of items) {
+    const row = document.createElement('div'); row.className = 'mon-row' + (m.has_update ? ' has-update' : '')
+    const name = m.title || m.source_url
+    row.innerHTML = `<span class="mon-title">${escapeHtml(name)}</span>` +
+      `<span>${m.last_seen_chapters} гл.${m.has_update ? ' <span class="badge">обновление</span>' : ''}</span>`
+    box.append(row)
+  }
+}
+$('#accounts-btn').addEventListener('click', () => {
+  $('#accounts-overlay').hidden = false; loadAccounts(); loadMonitored()
+})
+$('#accounts-close').addEventListener('click', () => { $('#accounts-overlay').hidden = true })
+$('#accounts-overlay').addEventListener('click', (e) => { if (e.target.id === 'accounts-overlay') $('#accounts-overlay').hidden = true })
+$('#account-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const site = $('#acc-site').value, username = $('#acc-user').value.trim(), password = $('#acc-pass').value
+  if (!username || !password) { accStatus('Введите логин и пароль', true); return }
+  try {
+    await api.post('/api/accounts', { site, username, password })
+    $('#acc-user').value = ''; $('#acc-pass').value = ''
+    accStatus('Аккаунт сохранён'); loadAccounts()
+  } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
+})
+$('#check-updates').addEventListener('click', async () => {
+  accStatus('Проверяю обновления…')
+  try {
+    const r = await api.post('/api/monitored/check', {})
+    accStatus(`Проверено: ${r.checked}, с обновлениями: ${r.with_updates}, докачано: ${r.downloaded}`)
+    loadMonitored(); loadLibrary()
+  } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
+})
+
 // ===================== ЧИТАЛКА =====================
 let view = null
 let currentWork = null

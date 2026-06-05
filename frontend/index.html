@@ -19,11 +19,47 @@
         <label class="btn-ghost" for="upload-input">Загрузить файл</label>
         <input id="upload-input" type="file" accept=".epub,.fb2" hidden />
         <button id="readera-sync" class="btn-ghost" title="Синхронизировать прогресс с ReadEra">⇄ ReadEra</button>
+        <button id="accounts-btn" class="btn-ghost" title="Аккаунты и обновления">Аккаунты</button>
       </div>
     </header>
     <div id="ingest-status" class="ingest-status" hidden></div>
     <div id="book-grid" class="book-grid"></div>
     <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
+
+    <!-- Модал аккаунтов и обновлений -->
+    <div id="accounts-overlay" class="modal-overlay" hidden>
+      <div class="modal">
+        <div class="modal-head">
+          <span>Аккаунты и обновления</span>
+          <button id="accounts-close" class="icon-btn">✕</button>
+        </div>
+
+        <div class="modal-section">
+          <div class="setting-label">Аккаунты сайтов (пароль хранится зашифрованным)</div>
+          <div id="accounts-list" class="accounts-list"></div>
+          <form id="account-form" class="account-form" autocomplete="off">
+            <select id="acc-site" class="select">
+              <option value="ficbook">ficbook.net</option>
+              <option value="fanfics">fanfics.me</option>
+              <option value="ao3">AO3</option>
+              <option value="ffn">fanfiction.net</option>
+            </select>
+            <input id="acc-user" type="text" placeholder="логин" />
+            <input id="acc-pass" type="password" placeholder="пароль" />
+            <button type="submit" class="btn-primary">Сохранить</button>
+          </form>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-row">
+            <span class="setting-label">Отслеживаемые фанфики</span>
+            <button id="check-updates" class="btn-ghost">Проверить обновления</button>
+          </div>
+          <div id="monitored-list" class="monitored-list"></div>
+        </div>
+        <div id="accounts-status" class="ingest-status" hidden></div>
+      </div>
+    </div>
   </section>
 
   <!-- ======================= ЧИТАЛКА ======================= -->

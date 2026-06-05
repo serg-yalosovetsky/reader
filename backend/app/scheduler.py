@@ -10,7 +10,11 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session
 
-from .config import READERA_BACKUP_REMOTE, READERA_SYNC_INTERVAL_MIN
+from .config import (
+    MONITOR_INTERVAL_MIN,
+    READERA_BACKUP_REMOTE,
+    READERA_SYNC_INTERVAL_MIN,
+)
 from .db.session import engine
 
 log = logging.getLogger("reader.scheduler")
@@ -27,19 +31,32 @@ def _readera_import_job() -> None:
         log.warning("ReadEra auto-import failed: %s", e)
 
 
+def _monitor_job() -> None:
+    from ..accounts import monitor
+    try:
+        with Session(engine) as session:
+            res = monitor.check_all(session, auto_download=True)
+        log.info("Monitor check: %s", {k: res[k] for k in ("checked", "with_updates", "downloaded")})
+    except Exception as e:  # noqa: BLE001
+        log.warning("Monitor check failed: %s", e)
+
+
 def start() -> None:
     global _scheduler
     if _scheduler:
         return
-    if READERA_SYNC_INTERVAL_MIN <= 0 or not READERA_BACKUP_REMOTE:
+    jobs = []
+    if READERA_SYNC_INTERVAL_MIN > 0 and READERA_BACKUP_REMOTE:
+        jobs.append((_readera_import_job, READERA_SYNC_INTERVAL_MIN, "readera_import"))
+    if MONITOR_INTERVAL_MIN > 0:
+        jobs.append((_monitor_job, MONITOR_INTERVAL_MIN, "monitor_check"))
+    if not jobs:
         return
     _scheduler = BackgroundScheduler(daemon=True)
-    _scheduler.add_job(
-        _readera_import_job, "interval",
-        minutes=READERA_SYNC_INTERVAL_MIN, id="readera_import",
-    )
+    for fn, minutes, jid in jobs:
+        _scheduler.add_job(fn, "interval", minutes=minutes, id=jid)
     _scheduler.start()
-    log.info("Scheduler started: ReadEra import every %d min", READERA_SYNC_INTERVAL_MIN)
+    log.info("Scheduler started: %s", [j[2] for j in jobs])
 
 
 def shutdown() -> None:

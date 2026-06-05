@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from ...accounts import monitor, store
 from ...downloaders import chain
 from ...downloaders.base import DownloaderError
 from ..db.models import Work
@@ -28,8 +29,19 @@ def ingest(body: IngestIn, session: Session = Depends(get_session)) -> Work:
     q = (body.query or "").strip()
     if not q:
         raise HTTPException(400, "пустой запрос")
+    # Подставить креды аккаунта для домена (если есть) — для закрытого/18+.
+    creds = store.creds_for_host(session, _host(q)) if chain.is_url(q) else None
     try:
-        result = chain.fetch(q)
+        result = chain.fetch(q, creds=creds)
     except DownloaderError as e:
         raise HTTPException(422, str(e))
-    return register_download(result, session)
+    work = register_download(result, session)
+    # Поставить фик на отслеживание обновлений.
+    if work.source_url:
+        monitor.add_monitor(session, work.source_url, work.id, work.chapters_count)
+    return work
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlparse
+    return urlparse(url).hostname or ""

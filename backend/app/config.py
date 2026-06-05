@@ -44,6 +44,10 @@ READERA_BOOKS_REMOTE = os.getenv("READER_READERA_BOOKS_REMOTE", "")
 # Период авто-импорта прогресса из бэкапа ReadEra (минуты; 0 — выключить).
 READERA_SYNC_INTERVAL_MIN = int(os.getenv("READER_READERA_SYNC_INTERVAL_MIN", "0"))
 
+# --- Мониторинг аккаунтов (этап 4) ---
+# Период проверки обновлений отслеживаемых фиков (минуты; 0 — выключить).
+MONITOR_INTERVAL_MIN = int(os.getenv("READER_MONITOR_INTERVAL_MIN", "0"))
+
 # --- Скачивание (этап 2) ---
 FICHUB_API = os.getenv("READER_FICHUB_API", "https://fichub.net/api/v0")
 DOWNLOAD_CONCURRENCY = int(os.getenv("READER_DOWNLOAD_CONCURRENCY", "1"))

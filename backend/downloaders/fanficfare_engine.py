@@ -43,6 +43,36 @@ def _ff_executable() -> list[str]:
     return [sys.executable, "-c", "from fanficfare.cli import main; main()"]
 
 
+def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 120) -> dict:
+    """Метаданные без скачивания глав (FanFicFare --meta-only --json). Для детекта
+    обновлений: возвращает dict с numChapters и пр. Пусто при ошибке."""
+    cmd = _ff_executable() + [
+        "-m", "--json-meta", "--non-interactive",
+        "-o", "is_adult=true",
+    ]
+    if creds:
+        cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]
+    cmd.append(url)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {}
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        # На случай мусора до/после JSON — выдрать первый объект.
+        start, end = out.find("{"), out.rfind("}")
+        if 0 <= start < end:
+            try:
+                return json.loads(out[start : end + 1])
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+
 def download(url: str, *, is_adult: bool = True, extra_options: dict | None = None) -> DownloadResult:
     """Скачать произведение в EPUB. Возвращает DownloadResult.
 
@@ -57,6 +87,9 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         "-o", f"is_adult={'true' if is_adult else 'false'}",
         "-o", "output_filename=book.${formatext}",
     ]
+    creds = (extra_options or {}).pop("_creds", None) if extra_options else None
+    if creds:
+        cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]
     for k, v in (extra_options or {}).items():
         cmd += ["-o", f"{k}={v}"]
     cmd.append(url)

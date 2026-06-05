@@ -19,8 +19,9 @@ def is_url(s: str) -> bool:
     return s.startswith("http://") or s.startswith("https://")
 
 
-def fetch(query: str) -> DownloadResult:
-    """Скачать по ссылке. query должен быть URL (поиск по названию — отдельно)."""
+def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
+    """Скачать по ссылке. query должен быть URL (поиск по названию — отдельно).
+    creds (username, password) пробрасываются в FanFicFare для закрытого/18+."""
     if not is_url(query):
         raise DownloaderError(
             "Пока поддерживается скачивание по ссылке. Вставьте URL фанфика "
@@ -28,6 +29,7 @@ def fetch(query: str) -> DownloadResult:
         )
     url = query.strip()
     host = (urlparse(url).hostname or "").lower()
+    opts = {"_creds": creds} if creds else None
 
     # 1) author.today — отдельный адаптер (если доступен).
     if host.endswith("author.today"):
@@ -39,10 +41,10 @@ def fetch(query: str) -> DownloadResult:
 
     # 2) известные FanFicFare-домены.
     if fff.supports(url):
-        return fff.download(url)
+        return fff.download(url, extra_options=opts)
 
     # 3) попытка FanFicFare, затем FicHub.
     try:
-        return fff.download(url)
+        return fff.download(url, extra_options=opts)
     except UnsupportedURL:
         return fichub.download(url)

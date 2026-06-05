@@ -217,9 +217,16 @@ function bookCSS() {
   const fam = prefs.fontFamily === 'sans'
     ? 'var(--font-sans, system-ui, sans-serif)'
     : '"PT Serif", Georgia, "Times New Roman", serif'
+  // В режиме «лента» foliate не центрирует узкую колонку — центрируем текст сами:
+  // даём foliate полную ширину, а body ограничиваем и центрируем.
+  const colW = MARGIN_INLINE[prefs.marginLevel]
+  const scrolledBody = prefs.flow === 'scrolled'
+    ? `body { max-width: ${colW}px; margin-inline: auto; padding: 0 16px; }`
+    : ''
   return `
     html { color: ${fg}; background: ${bg}; font-size: ${Math.round(prefs.fontScale * 100)}%; }
     body { font-family: ${fam}; }
+    ${scrolledBody}
     a:link, a:visited { color: ${accent}; }
     p, li, blockquote, dd { line-height: 1.55; text-align: justify; hyphens: auto; }
     img { max-width: 100%; height: auto; }
@@ -232,9 +239,9 @@ function applyViewStyles() {
   r.setAttribute('flow', prefs.flow)
   r.setAttribute('gap', '6%')
   if (prefs.flow === 'scrolled') {
-    // Лента: ровно одна колонка (фикс «текста на полэкрана» — раньше резервировалась 2-я).
+    // Лента: foliate-колонке отдаём всю ширину, текст центрируем через bookCSS (body).
     r.setAttribute('max-column-count', '1')
-    r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
+    r.setAttribute('max-inline-size', '100000')
   } else {
     // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей.
     r.setAttribute('max-column-count', String(prefs.columns || 1))

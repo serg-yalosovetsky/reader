@@ -183,6 +183,7 @@ async function openReader(work) {
 
   await view.open(file)
   view.addEventListener('relocate', onRelocate)
+  view.addEventListener('load', attachKeysToDoc)
   applyViewStyles()
   buildTOC()
 
@@ -278,11 +279,24 @@ $('#back-btn').addEventListener('click', () => {
 $('#prev-btn').addEventListener('click', () => view?.prev())
 $('#next-btn').addEventListener('click', () => view?.next())
 $('#progress-slider').addEventListener('input', (e) => view?.goToFraction(parseFloat(e.target.value)))
-document.addEventListener('keydown', (e) => {
-  if ($('#reader').hidden) return
-  if (e.key === 'ArrowLeft') view?.goLeft()
-  else if (e.key === 'ArrowRight') view?.goRight()
-})
+
+// Зоны клика по краям — перелистывание.
+$('#tap-prev').addEventListener('click', () => view?.prev())
+$('#tap-next').addEventListener('click', () => view?.next())
+
+// Клавиатура: стрелки, PageUp/Down, Home/End, пробел (вниз; Shift+пробел — вверх).
+function handleKey(e) {
+  if ($('#reader').hidden || !view) return
+  const k = e.key
+  if (k === 'ArrowLeft' || k === 'PageUp') { view.prev(); e.preventDefault() }
+  else if (k === 'ArrowRight' || k === 'PageDown') { view.next(); e.preventDefault() }
+  else if (k === ' ' || k === 'Spacebar') { e.shiftKey ? view.prev() : view.next(); e.preventDefault() }
+  else if (k === 'Home') { view.goToFraction(0); e.preventDefault() }
+  else if (k === 'End') { view.goToFraction(1); e.preventDefault() }
+}
+document.addEventListener('keydown', handleKey)
+// Когда фокус внутри книги (iframe), события клавиш ловим и там.
+function attachKeysToDoc(e) { try { e.detail.doc.addEventListener('keydown', handleKey) } catch {} }
 
 function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
 function closePanels() { $('#toc-panel').hidden = true; $('#settings-panel').hidden = true; $('#panel-overlay').hidden = true }

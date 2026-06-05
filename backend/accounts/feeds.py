@@ -28,7 +28,7 @@ def _antiforgery(html: str) -> str:
 
 
 # ----------------- ficbook (cloudscraper) -----------------
-def _ficbook_feed(user: str, pw: str) -> list[str]:
+def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
     import cloudscraper
     c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
     c.get("https://ficbook.net/")
@@ -51,7 +51,30 @@ def _ficbook_feed(user: str, pw: str) -> list[str]:
 
 
 # ----------------- author.today -----------------
-def _at_feed(user: str, pw: str) -> list[str]:
+def _at_updates_from_feed(c) -> list[str]:
+    feed = c.get("https://author.today/feed")
+    soup = BeautifulSoup(feed.text, "lxml")
+    urls = []
+    for art in soup.select("article.feed-row"):
+        header = art.select_one("h3.title") or art.select_one("header")
+        htext = header.get_text(" ", strip=True) if header else ""
+        if "обновил произведение" in htext or "опубликовал новое произведение" in htext:
+            a = art.select_one('a[href^="/work/"]')
+            if a and (m := re.match(r"/work/(\d+)", a.get("href", ""))):
+                urls.append(f"https://author.today/work/{m.group(1)}")
+    return list(dict.fromkeys(urls))
+
+
+def _at_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
+    # Если есть сохранённая cookie-сессия — используем её (без повторного входа,
+    # который на новом устройстве требует email-код подтверждения).
+    if cookies:
+        with httpx.Client(timeout=40, follow_redirects=True, cookies=cookies,
+                          headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+            feed = c.get("https://author.today/feed")
+            if "account/logoff" in feed.text or "logOff" in feed.text:
+                return _at_updates_from_feed(c)
+        # cookie протухла — пробуем обычный вход ниже.
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
         page = c.get("https://author.today/account/login")
@@ -72,21 +95,11 @@ def _at_feed(user: str, pw: str) -> list[str]:
         if not res.get("isSuccessful", False):
             msg = "; ".join(res.get("messages") or []) or "не удалось войти"
             raise RuntimeError(f"author.today: {msg}")
-        feed = c.get("https://author.today/feed")
-    soup = BeautifulSoup(feed.text, "lxml")
-    urls = []
-    for art in soup.select("article.feed-row"):
-        header = art.select_one("h3.title") or art.select_one("header")
-        htext = header.get_text(" ", strip=True) if header else ""
-        if "обновил произведение" in htext or "опубликовал новое произведение" in htext:
-            a = art.select_one('a[href^="/work/"]')
-            if a and (m := re.match(r"/work/(\d+)", a.get("href", ""))):
-                urls.append(f"https://author.today/work/{m.group(1)}")
-    return list(dict.fromkeys(urls))
+        return _at_updates_from_feed(c)
 
 
 # ----------------- fanfics.me -----------------
-def _fanfics_feed(user: str, pw: str) -> list[str]:
+def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA}) as c:
         c.get("https://fanfics.me/autent.php")
@@ -104,9 +117,9 @@ _ADAPTERS = {
 }
 
 
-def fetch_site_updates(site: str, user: str, pw: str) -> list[str]:
+def fetch_site_updates(site: str, user: str, pw: str, cookies: dict | None = None) -> list[str]:
     fn = _ADAPTERS.get(site)
-    return fn(user, pw) if fn else []
+    return fn(user, pw, cookies) if fn else []
 
 
 def pull_all(session: Session) -> dict:
@@ -116,8 +129,9 @@ def pull_all(session: Session) -> dict:
         creds = store.creds_for_site(session, site)
         if not creds:
             continue
+        cookies = store.get_cookies(session, site)
         try:
-            urls = fetch_site_updates(site, *creds)
+            urls = fetch_site_updates(site, creds[0], creds[1], cookies)
             for url in urls:
                 monitor.add_monitor(session, url)
             store.touch_check(session, site)

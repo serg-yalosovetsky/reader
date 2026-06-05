@@ -81,6 +81,27 @@ def creds_for_host(session: Session, host: str) -> tuple[str, str] | None:
     return creds_for_site(session, site_of_host(host))
 
 
+def set_cookies(session: Session, site: str, cookies: dict) -> None:
+    """Сохранить cookie-сессию аккаунта (шифрованно)."""
+    import json
+    acc = session.exec(select(Account).where(Account.site == site)).first()
+    if acc:
+        acc.cookies = encrypt(json.dumps(cookies))
+        session.add(acc)
+        session.commit()
+
+
+def get_cookies(session: Session, site: str) -> dict | None:
+    import json
+    acc = session.exec(select(Account).where(Account.site == site)).first()
+    if not acc or not acc.cookies:
+        return None
+    try:
+        return json.loads(decrypt(acc.cookies))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def touch_check(session: Session, site: str) -> None:
     acc = session.exec(select(Account).where(Account.site == site)).first()
     if acc:

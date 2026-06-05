@@ -55,14 +55,23 @@ def _at_feed(user: str, pw: str) -> list[str]:
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
         page = c.get("https://author.today/account/login")
-        data = {"Login": user, "Password": pw, "RememberMe": "true"}
-        token = _antiforgery(page.text)
-        if token:
-            data["__RequestVerificationToken"] = token
+        # токен именно из формы логина (на странице их несколько)
+        m = re.search(r'id="loginForm".*?name="__RequestVerificationToken"[^>]*value="([^"]+)"',
+                      page.text, re.S)
+        token = m.group(1) if m else _antiforgery(page.text)
+        data = {"__RequestVerificationToken": token, "Login": user, "Password": pw,
+                "RememberMe": "true", "SendEmailIfNeeded": "false"}
         r = c.post("https://author.today/account/login", data=data,
-                   headers={"Referer": "https://author.today/account/login"})
-        if not ("account/logoff" in r.text or "logOff" in r.text or r.url.path == "/feed"):
-            raise RuntimeError("author.today: не удалось войти")
+                   headers={"Referer": "https://author.today/account/login",
+                            "X-Requested-With": "XMLHttpRequest"})
+        # Форма логина AJAX-овая, отдаёт JSON {isSuccessful, messages}.
+        try:
+            res = r.json()
+        except ValueError:
+            res = {}
+        if not res.get("isSuccessful", False):
+            msg = "; ".join(res.get("messages") or []) or "не удалось войти"
+            raise RuntimeError(f"author.today: {msg}")
         feed = c.get("https://author.today/feed")
     soup = BeautifulSoup(feed.text, "lxml")
     urls = []

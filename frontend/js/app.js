@@ -242,9 +242,10 @@ function applyViewStyles() {
   r.setAttribute('flow', prefs.flow)
   r.setAttribute('gap', '6%')
   if (prefs.flow === 'scrolled') {
-    // Лента: foliate-колонке отдаём всю ширину, текст центрируем через bookCSS (body).
+    // Лента: одна колонка во всю ширину области (конкретный px, не «бесконечность»).
+    const w = Math.max(600, ($('#view-host')?.clientWidth || 1000))
     r.setAttribute('max-column-count', '1')
-    r.setAttribute('max-inline-size', '100000')
+    r.setAttribute('max-inline-size', String(w))
   } else {
     // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей.
     r.setAttribute('max-column-count', String(prefs.columns || 1))
@@ -297,6 +298,13 @@ function handleKey(e) {
 document.addEventListener('keydown', handleKey)
 // Когда фокус внутри книги (iframe), события клавиш ловим и там.
 function attachKeysToDoc(e) { try { e.detail.doc.addEventListener('keydown', handleKey) } catch {} }
+
+// Переприменять раскладку при изменении размера окна (особенно ширину «ленты»).
+let resizeTimer = null
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => { if (!$('#reader').hidden && view) applyViewStyles() }, 200)
+})
 
 function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
 function closePanels() { $('#toc-panel').hidden = true; $('#settings-panel').hidden = true; $('#panel-overlay').hidden = true }

@@ -20,11 +20,19 @@ def is_url(s: str) -> bool:
 
 
 def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
-    """Скачать по ссылке. query должен быть URL (поиск по названию — отдельно).
+    """Скачать по ссылке либо по названию.
+
+    Если query — URL, идём по адаптерам/FanFicFare/FicHub. Если это просто
+    название — ищем книгу в бесплатных агрегаторах (searchfloor → readli).
     creds (username, password) пробрасываются в FanFicFare для закрытого/18+."""
     if not is_url(query):
+        title = query.strip()
+        r = _search_free(title)
+        if r:
+            return r
         raise DownloaderError(
-            "Пока поддерживается скачивание по ссылке. Вставьте URL фанфика "
+            f"По названию «{title}» ничего не найдено в бесплатных источниках "
+            "(searchfloor/readli). Попробуйте вставить прямую ссылку на фанфик "
             "(ficbook.net, fanfics.me, author.today, AO3, fanfiction.net)."
         )
     url = query.strip()
@@ -58,23 +66,33 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
 
 
 def _fallback_free(title: str, author: str) -> DownloadResult:
-    """Найти полную книгу по названию в бесплатных источниках (searchfloor → readli)."""
-    if title:
-        from . import searchfloor
-        try:
-            bid = searchfloor.search_book(title, author)
-            if bid:
-                return searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}")
-        except DownloaderError:
-            pass
-        from . import readli
-        try:
-            r = readli.search_and_download(title, author)
-            if r:
-                return r
-        except DownloaderError:
-            pass
+    """Платная книга на AT → пробуем найти полную в бесплатных источниках."""
+    r = _search_free(title, author) if title else None
+    if r:
+        return r
     raise DownloaderError(
         f"Книга платная на author.today, а в бесплатных источниках "
         f"(searchfloor/readli) не найдена: «{title}»."
     )
+
+
+def _search_free(title: str, author: str = "") -> DownloadResult | None:
+    """Найти книгу по названию в бесплатных агрегаторах (searchfloor → readli).
+    Возвращает результат скачивания или None, если нигде не нашлось."""
+    if not title:
+        return None
+    from . import searchfloor
+    try:
+        bid = searchfloor.search_book(title, author)
+        if bid:
+            return searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}")
+    except DownloaderError:
+        pass
+    from . import readli
+    try:
+        r = readli.search_and_download(title, author)
+        if r:
+            return r
+    except DownloaderError:
+        pass
+    return None

@@ -53,13 +53,16 @@ function bookCard(w, ratio) {
 
 const escapeHtml = (s) => (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
-// Добавление по ссылке/названию (этап 2: /api/ingest). Пока эндпоинт может отсутствовать.
+// Добавление по ссылке или названию (/api/ingest): URL → адаптеры/FanFicFare,
+// название → поиск в бесплатных агрегаторах (searchfloor/readli).
 $('#ingest-form').addEventListener('submit', async (e) => {
   e.preventDefault()
   const q = $('#ingest-input').value.trim()
   if (!q) return
   const status = $('#ingest-status')
-  status.hidden = false; status.classList.remove('error'); status.textContent = 'Скачиваю…'
+  const isUrl = /^https?:\/\//i.test(q)
+  status.hidden = false; status.classList.remove('error')
+  status.textContent = isUrl ? 'Скачиваю…' : 'Ищу по названию…'
   try {
     const work = await api.post('/api/ingest', { query: q })
     status.textContent = 'Готово: ' + (work.title || 'книга добавлена')
@@ -67,7 +70,7 @@ $('#ingest-form').addEventListener('submit', async (e) => {
     await loadLibrary()
   } catch (err) {
     status.classList.add('error')
-    status.textContent = 'Скачивание появится на этапе 2. Пока используйте «Загрузить файл». (' + err.message.slice(0, 120) + ')'
+    status.textContent = 'Не удалось добавить: ' + err.message.slice(0, 200)
   }
 })
 

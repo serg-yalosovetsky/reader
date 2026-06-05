@@ -300,8 +300,9 @@ class View {
             'width': 'auto',
         })
         setStylesImportant(doc.body, {
-            [vertical ? 'max-height' : 'max-width']: `${columnWidth}px`,
-            'margin': 'auto',
+            // Лента — одна колонка во всю ширину области (а не узкая колонка columnWidth).
+            [vertical ? 'max-height' : 'max-width']: 'none',
+            'margin': '0',
         })
         this.setImageSize()
         this.expand()

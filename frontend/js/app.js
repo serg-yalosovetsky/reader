@@ -150,14 +150,19 @@ $('#account-form').addEventListener('submit', async (e) => {
     accStatus('Аккаунт сохранён'); loadAccounts()
   } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
 })
-$('#check-updates').addEventListener('click', async () => {
-  accStatus('Проверяю обновления…')
+async function checkUpdates(statusFn) {
+  statusFn('Проверяю обновления…')
   try {
     const r = await api.post('/api/monitored/check', {})
-    accStatus(`Проверено: ${r.checked}, с обновлениями: ${r.with_updates}, докачано: ${r.downloaded}`)
+    statusFn(`Проверено: ${r.checked}, с обновлениями: ${r.with_updates}, докачано: ${r.downloaded}`)
     loadMonitored(); loadLibrary()
-  } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
-})
+  } catch (err) { statusFn('Ошибка: ' + err.message.slice(0, 140), true) }
+}
+$('#check-updates').addEventListener('click', () => checkUpdates(accStatus))
+// Кнопка на главной: статус показываем в строке ingest-status.
+$('#check-updates-main').addEventListener('click', () => checkUpdates((msg, err) => {
+  const el = $('#ingest-status'); el.hidden = false; el.classList.toggle('error', !!err); el.textContent = msg
+}))
 
 // ===================== ЧИТАЛКА =====================
 let view = null

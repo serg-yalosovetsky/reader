@@ -31,6 +31,14 @@ def register_download(result: DownloadResult, session: Session) -> Work:
     # Best-effort: добавить в Calibre (на VPS). Локально без Calibre -> None.
     calibre_id = calibre.add_book(dest)
 
+    # Best-effort: положить книгу в ReadEra/Books (Drive) — ReadEra Premium
+    # подтянет её на телефон, и doc_sha1 совпадёт с нашим (включает sync прогресса).
+    try:
+        from ..readera import gdrive
+        gdrive.push_book(dest)
+    except Exception:  # noqa: BLE001 — не критично для скачивания
+        pass
+
     work = Work(
         title=result.title or dest.stem,
         author=result.author,

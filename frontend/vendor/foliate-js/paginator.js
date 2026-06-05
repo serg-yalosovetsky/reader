@@ -295,7 +295,12 @@ class View {
         setStylesImportant(doc.documentElement, {
             'box-sizing': 'border-box',
             'padding': vertical ? `${gap}px 0` : `0 ${gap}px`,
+            // ВАЖНО (патч): гасим ВЕСЬ колоночный контекст, оставшийся от columnize(),
+            // иначе в «ленте» текст делится на колонки и занимает половину ширины.
             'column-width': 'auto',
+            'column-count': 'auto',
+            'column-gap': 'normal',
+            'column-fill': 'auto',
             'height': 'auto',
             'width': 'auto',
         })

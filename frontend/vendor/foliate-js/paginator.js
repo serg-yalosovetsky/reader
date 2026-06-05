@@ -519,6 +519,13 @@ export class Paginator extends HTMLElement {
             grid-row: 1 / -1;
             overflow: auto;
         }
+        /* ВАЖНО (патч): в «ленте» НЕ используем многотрековый грид полей —
+           иначе #container (1/-1) садится только в первый трек и занимает
+           половину ширины. Схлопываем #top в одну ячейку → лента во всю ширину. */
+        :host([flow="scrolled"]) #top {
+            grid-template-columns: 1fr !important;
+            grid-template-rows: 1fr !important;
+        }
         #header {
             grid-column: 3 / 4;
             grid-row: 1;

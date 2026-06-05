@@ -227,30 +227,16 @@ function bookCSS() {
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.
   // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
   const sidePad = { 0: 4, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
-  // Лента: распахиваем на всю ширину. ВАЖНО: правила по html/body недостаточно —
-  // ширину режет остаточный/книжный многоколоночный контекст (column-*) и внутренние
-  // обёртки (FB2 <section>, EPUB-контейнеры, инлайн-div author.today) со своим
-  // max-width/margin:auto. Поэтому гасим колонки и распахиваем прямых потомков body.
+  // Лента: распахиваем документ книги на всю ширину области (поля — паддингом body).
+  // Корень узкой «ленты» был в shadow-гриде foliate (#top), пропатчен в paginator.js;
+  // здесь — только распахивание самого документа и гашение возможных колонок.
   const scrolledBody = prefs.flow === 'scrolled'
-    ? `
-      html {
-        max-width: none !important; width: auto !important;
-        column-width: auto !important; column-count: auto !important;
-        columns: auto !important; column-gap: normal !important;
-      }
-      body {
-        max-width: none !important; width: auto !important; margin: 0 !important;
-        padding: 0 ${sidePad}% !important;
-        column-width: auto !important; column-count: auto !important; columns: auto !important;
-      }
-      body > * {
-        max-width: none !important; width: auto !important;
-        margin-left: 0 !important; margin-right: 0 !important;
-        column-width: auto !important; column-count: auto !important;
-        columns: auto !important; float: none !important;
-      }
-      img, svg, video, figure { max-width: 100% !important; }
-      table { width: auto !important; max-width: 100% !important; }`
+    ? `html, body {
+         max-width: none !important; width: auto !important; margin: 0 !important;
+         column-width: auto !important; columns: auto !important;
+       }
+       body { padding: 0 ${sidePad}% !important; }
+       img, svg, video, figure { max-width: 100% !important; }`
     : ''
   return `
     html { color: ${fg}; background: ${bg}; font-size: ${Math.round(prefs.fontScale * 100)}%; }

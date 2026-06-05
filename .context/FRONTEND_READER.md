@@ -26,10 +26,18 @@ SPA без сборки: `frontend/index.html` + `css/theme.css` + `js/app.js` +
 ## Режимы
 - **Страницы** (`flow=paginated`): `max-column-count` = 1 (по умолч., как ReadEra) или 2;
   ширина колонки от уровня «Поля» (`max-inline-size`).
-- **Лента** (`flow=scrolled`): одна колонка **во всю ширину**. ВАЖНО: foliate в scrolled
-  жёстко ставил `body { max-width: columnWidth }` (узкая колонка слева) — **пропатчено**
-  в `vendor/foliate-js/paginator.js` (`scrolled()`: `body max-width:none; margin:0`).
-  Headless-скриншоты foliate для scrolled НЕНАДЁЖНЫ — проверять в реальном браузере.
+- **Лента** (`flow=scrolled`): одна колонка **во всю ширину**. ВАЖНО (корень давнего бага
+  «лента в половину экрана»): в scrolled `#container` (`grid-column:1/-1`) садился только в
+  первый трек многотрекового грида полей `#top` и занимал ~половину ширины. Документ книги
+  при этом корректен. **Фикс** — в `vendor/foliate-js/paginator.js` шадоу-CSS:
+  `:host([flow="scrolled"]) #top { grid-template-columns:1fr; grid-template-rows:1fr }`
+  (схлопываем грид в одну ячейку). Плюс `scrolled()` сбрасывает весь колоночный контекст,
+  а `app.js` распахивает `html/body` и задаёт поля паддингом.
+- Диагностика foliate (scrolled): **скриншоты ненадёжны**, замеряй DOM. Shadow-DOM
+  paginator — `closed`; чтобы измерить внутренние узлы, заходи **изнутри iframe книги**
+  (`window.frameElement` → вверх по `parentElement`). Рабочий приём — Playwright по
+  SSH-туннелю (`ssh -N -L 8124:127.0.0.1:8123`, в обход SSO) + `getComputedStyle`/
+  `getBoundingClientRect` (см. историю фикса).
 
 ## Навигация (app.js)
 - **Зоны клика**: `#tap-prev`/`#tap-next` (по 22% по краям, поверх foliate-view); центр

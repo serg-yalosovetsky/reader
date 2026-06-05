@@ -28,6 +28,25 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
+# Концевая рекламная врезка Цокольного этажа в FB2: <section> с заголовком
+# «Nota bene» (промо сайта, VPN, telegram-бот, «наградите автора»). Вырезаем.
+_PROMO_RE = re.compile(
+    r"<section>\s*<title>\s*<p>\s*Nota bene\s*</p>\s*</title>.*?</section>",
+    re.S | re.I,
+)
+
+
+def _strip_promo(raw: bytes) -> bytes:
+    """Убрать промо-врезку «Nota bene…» из FB2. Best-effort: при любой неожиданности
+    возвращаем исходные байты (книга важнее косметики)."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    cleaned = _PROMO_RE.sub("", text)
+    return cleaned.encode("utf-8") if cleaned != text else raw
+
+
 def supports(url: str) -> bool:
     return (urlparse(url).hostname or "").lower().endswith("searchfloor.org")
 
@@ -63,7 +82,7 @@ def _download_book(book_id: str, src_url: str) -> DownloadResult:
         fb2_name = next((n for n in zf.namelist() if n.lower().endswith(".fb2")), None)
         if fb2_name:
             out = out_dir / "book.fb2"
-            out.write_bytes(zf.read(fb2_name))
+            out.write_bytes(_strip_promo(zf.read(fb2_name)))
             fmt = "fb2"
         else:
             out = out_dir / "book.epub"  # на случай, если внутри epub
@@ -72,7 +91,7 @@ def _download_book(book_id: str, src_url: str) -> DownloadResult:
     except zipfile.BadZipFile:
         # не zip — сохраняем как есть (вдруг чистый fb2)
         out = out_dir / "book.fb2"
-        out.write_bytes(blob)
+        out.write_bytes(_strip_promo(blob))
         fmt = "fb2"
 
     return DownloadResult(

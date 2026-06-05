@@ -109,8 +109,8 @@ def list_monitored(session: Session) -> list[dict]:
             continue
         seen.add(key)
         out.append({
-            "id": mon.id, "source_url": mon.source_url, "title": title,
-            "last_seen_chapters": mon.last_seen_chapters,
+            "id": mon.id, "work_id": mon.work_id, "source_url": mon.source_url,
+            "title": title, "last_seen_chapters": mon.last_seen_chapters,
             "has_update": mon.has_update, "last_checked": mon.last_checked,
         })
     return out

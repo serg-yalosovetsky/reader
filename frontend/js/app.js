@@ -23,16 +23,19 @@ document.documentElement.dataset.theme = prefs.theme
 // ===================== БИБЛИОТЕКА =====================
 async function loadLibrary() {
   const works = await api.get('/api/library')
+  // Отметить книги, у которых мониторинг нашёл новые главы.
+  const monitored = await api.get('/api/monitored').catch(() => [])
+  const updated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
   const grid = $('#book-grid')
   grid.innerHTML = ''
   $('#lib-empty').hidden = works.length > 0
   for (const w of works) {
     const prog = await api.get(`/api/progress/${w.id}`).catch(() => ({ ratio: 0 }))
-    grid.append(bookCard(w, prog.ratio || 0))
+    grid.append(bookCard(w, prog.ratio || 0, updated.has(w.id)))
   }
 }
 
-function bookCard(w, ratio) {
+function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
   card.className = 'book-card'
   const pct = Math.round((ratio || 0) * 100)
@@ -40,8 +43,9 @@ function bookCard(w, ratio) {
   const cover = w.cover_path
     ? `<img src="/api/reader/${w.id}/cover" alt="" onerror="this.remove()" />${fallback}`
     : fallback
+  const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}</div>
+    <div class="book-cover">${cover}${badge}</div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>

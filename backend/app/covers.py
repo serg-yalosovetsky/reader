@@ -24,6 +24,49 @@ def extract_cover(file_path: str | Path, fmt: str, sha1: str) -> Path | None:
     return out
 
 
+def fetch_source_cover(source_url: str, sha1: str) -> Path | None:
+    """Скачать обложку со страницы-источника по og:image (есть у большинства сайтов).
+    ficbook закрыт анти-ботом → cloudscraper."""
+    if not source_url:
+        return None
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+    try:
+        html = _fetch(source_url, ua)
+        if not html:
+            return None
+        m = (re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html)
+             or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html))
+        if not m:
+            return None
+        img_url = m.group(1)
+        data = _fetch(img_url, ua, binary=True, base=source_url)
+        if not data or len(data) < 200:
+            return None
+        COVERS_DIR.mkdir(parents=True, exist_ok=True)
+        out = COVERS_DIR / f"{sha1}{_img_ext(data)}"
+        out.write_bytes(data)
+        return out
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
+    from urllib.parse import urljoin, urlparse
+    if base and not url.startswith("http"):
+        url = urljoin(base, url)
+    host = (urlparse(url).hostname or "").lower()
+    if host.endswith("ficbook.net"):
+        import cloudscraper
+        c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
+        r = c.get(url, timeout=40)
+        return r.content if binary else r.text
+    import httpx
+    with httpx.Client(timeout=40, follow_redirects=True, headers={"User-Agent": ua}) as c:
+        r = c.get(url)
+        return r.content if binary else r.text
+
+
 def _img_ext(b: bytes) -> str:
     if b[:3] == b"\xff\xd8\xff":
         return ".jpg"

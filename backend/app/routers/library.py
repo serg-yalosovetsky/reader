@@ -72,12 +72,15 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
     for w in session.exec(select(Work)).all():
         if w.cover_path and os.path.exists(w.cover_path):
             continue
+        c = None
         if w.file_path and os.path.exists(w.file_path):
             c = covers.extract_cover(w.file_path, w.file_format, w.sha1)
-            if c:
-                w.cover_path = str(c)
-                session.add(w)
-                added_covers += 1
+        if not c and w.source_url:
+            c = covers.fetch_source_cover(w.source_url, w.sha1)
+        if c:
+            w.cover_path = str(c)
+            session.add(w)
+            added_covers += 1
     session.commit()
     return {"removed_duplicates": removed_works, "removed_monitored": removed_mon,
             "covers_added": added_covers}

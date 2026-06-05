@@ -39,6 +39,8 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
         work.chapters_count = result.num_chapters
     work.calibre_id = calibre.add_book(dest) or work.calibre_id
     cover = covers.extract_cover(dest, result.file_format, sha1)
+    if not cover and result.source_url:
+        cover = covers.fetch_source_cover(result.source_url, sha1)
     if cover:
         work.cover_path = str(cover)
     _push_readera(dest)

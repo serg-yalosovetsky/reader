@@ -15,8 +15,11 @@ ReadEra на Android. Хостится на VPS рядом с Calibre.
       сохранение/восстановление прогресса (ratio + CFI), deep-link `/?open=<id>`.
 - [x] **Этап 2 — скачивание.** FanFicFare (ficbook/fanfics.me/AO3/ffn) + адаптер
       author.today (расшифровка глав) + FicHub-фоллбэк; добавление в Calibre.
-- [ ] **Этап 3 — sync с ReadEra.** Чтение/запись бэкапа `.bak` через Google Drive
-      (rclone), матч книг по SHA-1, прогресс по `doc_position.ratio`.
+- [x] **Этап 3 — sync с ReadEra.** Чтение/запись бэкапа `.bak` через Google Drive
+      (rclone), матч книг по SHA-1, прогресс по `doc_position.ratio`. Кнопка «⇄ ReadEra»
+      и `/api/readera/*`. Скачанные книги авто-кладутся в `ReadEra/Books` (Premium
+      подтянет на телефон → SHA-1 совпадёт). Прогресс берётся из **ручного** бэкапа
+      ReadEra (Premium синхронит в Drive только книги, не прогресс).
 - [ ] **Этап 4 — мониторинг.** Шифрованные креды аккаунтов, проверка обновлений
       подписок, авто-докачка в Calibre.
 - [x] **Этап 5 — деплой.** На VPS: `git clone` в `/root/reader`, venv, systemd-юнит

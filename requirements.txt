@@ -27,3 +27,6 @@ FanFicFare>=4.30
 
 # Сборка EPUB из глав (адаптер author.today)
 EbookLib>=0.18
+
+# Озвучивание (TTS) с пословными таймингами — edge-tts (Microsoft Edge TTS)
+edge-tts>=7.0

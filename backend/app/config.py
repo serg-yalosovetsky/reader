@@ -13,6 +13,8 @@ DATA_DIR = Path(os.getenv("READER_DATA_DIR", PROJECT_ROOT / "data"))
 BOOKS_DIR = Path(os.getenv("READER_BOOKS_DIR", DATA_DIR / "books"))
 COVERS_DIR = Path(os.getenv("READER_COVERS_DIR", DATA_DIR / "covers"))
 TMP_DIR = Path(os.getenv("READER_TMP_DIR", DATA_DIR / "tmp"))
+# Кэш синтезированной речи (TTS): <key>.mp3 + <key>.json (пословные тайминги).
+TTS_DIR = Path(os.getenv("READER_TTS_DIR", DATA_DIR / "tts"))
 
 # SQLite-файл
 DB_PATH = Path(os.getenv("READER_DB_PATH", DATA_DIR / "reader.db"))
@@ -56,5 +58,5 @@ DOWNLOAD_CONCURRENCY = int(os.getenv("READER_DOWNLOAD_CONCURRENCY", "1"))
 
 def ensure_dirs() -> None:
     """Создать рантайм-каталоги при старте."""
-    for d in (DATA_DIR, BOOKS_DIR, COVERS_DIR, TMP_DIR):
+    for d in (DATA_DIR, BOOKS_DIR, COVERS_DIR, TMP_DIR, TTS_DIR):
         d.mkdir(parents=True, exist_ok=True)

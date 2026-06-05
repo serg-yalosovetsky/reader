@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import scheduler
 from .config import FRONTEND_DIR
 from .db.session import init_db
-from .routers import accounts, calibre, ingest, library, progress, reader, readera
+from .routers import accounts, calibre, ingest, library, progress, reader, readera, tts
 
 
 @asynccontextmanager
@@ -33,6 +33,7 @@ app.include_router(ingest.router)
 app.include_router(calibre.router)
 app.include_router(readera.router)
 app.include_router(accounts.router)
+app.include_router(tts.router)
 
 
 @app.get("/api/health")

@@ -19,7 +19,7 @@
           <button type="submit" class="btn-primary" title="Скачать и открыть">Добавить</button>
         </form>
         <label class="btn-ghost" for="upload-input">Загрузить файл</label>
-        <input id="upload-input" type="file" accept=".epub,.fb2" hidden />
+        <input id="upload-input" type="file" accept=".epub,.fb2,.pdf" hidden />
         <button id="readera-sync" class="btn-ghost" title="Синхронизировать прогресс с ReadEra">⇄ ReadEra</button>
         <button id="check-updates-main" class="btn-ghost" title="Проверить обновления подписок">↻ Обновления</button>
         <button id="accounts-btn" class="btn-ghost" title="Аккаунты и обновления">Аккаунты</button>
@@ -72,6 +72,7 @@
       <button id="back-btn" class="icon-btn" title="К библиотеке">‹ Библиотека</button>
       <span id="reader-title" class="reader-title"></span>
       <div class="reader-top-actions">
+        <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
       </div>
@@ -88,6 +89,16 @@
       <span id="progress-label" class="progress-label">0%</span>
       <button id="next-btn" class="icon-btn" title="Вперёд">›</button>
     </div>
+
+    <!-- Панель поиска по книге -->
+    <aside id="search-panel" class="panel" hidden>
+      <div class="panel-head">Поиск по книге</div>
+      <form id="search-form" class="search-form" autocomplete="off">
+        <input id="search-input" type="search" placeholder="Найти в книге…" />
+      </form>
+      <div id="search-meta" class="search-meta"></div>
+      <nav id="search-results" class="search-results"></nav>
+    </aside>
 
     <!-- Панель оглавления -->
     <aside id="toc-panel" class="panel" hidden>

@@ -295,6 +295,7 @@ function buildTOC() {
 $('#back-btn').addEventListener('click', () => {
   $('#reader').hidden = true
   $('#library').hidden = false
+  $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
   currentWork = null; view = null
   loadLibrary()
 })
@@ -328,10 +329,57 @@ window.addEventListener('resize', () => {
 })
 
 function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
-function closePanels() { $('#toc-panel').hidden = true; $('#settings-panel').hidden = true; $('#panel-overlay').hidden = true }
+function closePanels() {
+  $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
+  $('#search-panel').hidden = true; $('#panel-overlay').hidden = true
+}
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
+$('#search-btn').addEventListener('click', () => { openPanel('#search-panel'); $('#search-input').focus() })
 $('#panel-overlay').addEventListener('click', closePanels)
+
+// ===================== Поиск по книге =====================
+// foliate view.search() — асинхронный генератор: по секциям выдаёт совпадения
+// (cfi + excerpt {pre,match,post}) и прогресс; сам подсвечивает их в тексте.
+let searchSeq = 0
+$('#search-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  if (!view) return
+  const q = $('#search-input').value.trim()
+  const results = $('#search-results'); results.innerHTML = ''
+  const meta = $('#search-meta')
+  view.clearSearch?.()
+  if (!q) { meta.textContent = ''; return }
+  const seq = ++searchSeq // отменяем результаты прошлого запроса
+  meta.textContent = 'Поиск…'
+  let count = 0
+  try {
+    for await (const r of view.search({ query: q })) {
+      if (seq !== searchSeq) return // начался новый поиск
+      if (r === 'done') break
+      if (r.subitems) {
+        for (const sub of r.subitems) { count++; results.append(searchResult(r.label, sub)) }
+        meta.textContent = `Найдено: ${count}`
+      } else if (typeof r.progress === 'number') {
+        meta.textContent = `Поиск… ${Math.round(r.progress * 100)}% (найдено ${count})`
+      }
+    }
+    if (seq === searchSeq) meta.textContent = count ? `Найдено совпадений: ${count}` : 'Ничего не найдено'
+  } catch (err) {
+    if (seq === searchSeq) meta.textContent = 'Ошибка поиска: ' + (err?.message || '')
+  }
+})
+
+function searchResult(label, sub) {
+  const ex = sub.excerpt || {}
+  const a = document.createElement('a')
+  a.className = 'search-result'; a.href = '#'
+  a.innerHTML =
+    (label ? `<span class="sr-label">${escapeHtml(label)}</span>` : '') +
+    `<span class="sr-ex">${escapeHtml(ex.pre || '')}<mark>${escapeHtml(ex.match || '')}</mark>${escapeHtml(ex.post || '')}</span>`
+  a.addEventListener('click', (ev) => { ev.preventDefault(); view.goTo(sub.cfi); closePanels() })
+  return a
+}
 
 // ===================== Настройки вида (UI) =====================
 function syncSettingsUI() {

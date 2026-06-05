@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import BOOKS_DIR
 
-SUPPORTED_FORMATS = {".epub": "epub", ".fb2": "fb2"}
+SUPPORTED_FORMATS = {".epub": "epub", ".fb2": "fb2", ".pdf": "pdf"}
 
 
 def sha1_of_file(path: Path) -> str:

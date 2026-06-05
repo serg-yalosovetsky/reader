@@ -108,7 +108,7 @@ async def upload_book(
     """Ручная загрузка EPUB/FB2 (полезно на этапе 1 и как фоллбэк)."""
     fmt = detect_format(file.filename or "")
     if not fmt:
-        raise HTTPException(400, "поддерживаются только .epub и .fb2")
+        raise HTTPException(400, "поддерживаются только .epub, .fb2 и .pdf")
 
     # Сохраняем во временный файл, считаем SHA-1, импортируем в хранилище.
     suffix = Path(file.filename or "").suffix.lower()

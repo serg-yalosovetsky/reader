@@ -12,7 +12,8 @@ from ..db.session import get_session
 
 router = APIRouter(prefix="/api/reader", tags=["reader"])
 
-_MEDIA = {"epub": "application/epub+zip", "fb2": "application/x-fictionbook+xml"}
+_MEDIA = {"epub": "application/epub+zip", "fb2": "application/x-fictionbook+xml",
+          "pdf": "application/pdf"}
 
 
 @router.get("/{work_id}/file")

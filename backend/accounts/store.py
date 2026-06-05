@@ -7,12 +7,27 @@ from sqlmodel import Session, select
 
 from ..app.crypto import decrypt, encrypt
 from ..app.db.models import Account, utcnow
-from ..downloaders.fanficfare_engine import KNOWN_DOMAINS
+
+# Хост → каноничный ключ сайта (для кредов и фидов). Отдельно от FanFicFare-карты,
+# т.к. сюда входят и сайты со своими адаптерами (author.today/readli/searchfloor).
+_SITE_BY_HOST = {
+    "ficbook.net": "ficbook",
+    "fanfics.me": "fanfics",
+    "archiveofourown.org": "ao3",
+    "fanfiction.net": "ffn",
+    "author.today": "authortoday",
+    "readli.net": "readli",
+    "searchfloor.org": "searchfloor",
+}
 
 
 def site_of_host(host: str) -> str:
-    """Хост → каноничный ключ сайта (ficbook/fanfics/ao3/ffn) или сам хост."""
-    return KNOWN_DOMAINS.get((host or "").lower(), (host or "").lower())
+    """Хост (в т.ч. поддомен) → ключ сайта; иначе сам хост."""
+    host = (host or "").lower()
+    for dom, key in _SITE_BY_HOST.items():
+        if host == dom or host.endswith("." + dom):
+            return key
+    return host
 
 
 def site_of_url(url: str) -> str:

@@ -40,6 +40,17 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# index.html отдаём с no-cache, чтобы правки UI (списки, кнопки) подхватывались
+# без жёсткого обновления браузера. Статика (css/js/vendor) кэшируется штатно.
+@app.get("/")
+def index():
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        str(FRONTEND_DIR / "index.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 # Раздача SPA-фронтенда (foliate-js + UI темы ReadEra). Должна идти последней,
 # чтобы не перехватывать /api/*. html=True отдаёт index.html на корень.
 if FRONTEND_DIR.exists():

@@ -22,7 +22,7 @@ import httpx
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
-from .base import DownloaderError, DownloadResult, UnsupportedURL
+from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
 
 _BASE = "https://author.today"
 _UA = (
@@ -73,6 +73,11 @@ def download(url: str) -> DownloadResult:
         if wr.status_code != 200:
             raise DownloaderError(f"author.today: страница книги вернула {wr.status_code}")
         title, author, annotation = _parse_work_meta(wr.text)
+
+        # Платная книга — анонимно доступно лишь превью. Сигналим наверх для
+        # фоллбэка на бесплатный источник (searchfloor/readli).
+        if not _is_free(wr.text):
+            raise PaidContentError(title=title, author=author)
 
         # 2) Страница ридера — список глав (+ cookies сессии для запросов глав).
         rr = _get(c, f"{_BASE}/reader/{work_id}")
@@ -154,6 +159,15 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
             if text:
                 break
     return _decrypt(text, secret, user_id)
+
+
+def _is_free(html: str) -> bool:
+    """Книга бесплатна, если на странице есть «Свободный доступ» и нет покупки."""
+    if "Свободный доступ" in html:
+        return True
+    # Признаки платной: ценник/кнопка покупки.
+    paid_markers = ("icon-2-cart", "Купить", "add-to-cart", 'class="price"', "руб.")
+    return not any(m in html for m in paid_markers)
 
 
 def _parse_work_meta(html: str) -> tuple[str, str, str]:

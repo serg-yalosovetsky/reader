@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from . import fanficfare_engine as fff
 from . import fichub
-from .base import DownloaderError, DownloadResult, UnsupportedURL
+from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
 
 
 def is_url(s: str) -> bool:
@@ -34,7 +34,11 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     # 1) сайты со своими адаптерами.
     if host.endswith("author.today"):
         from . import authortoday
-        return authortoday.download(url)
+        try:
+            return authortoday.download(url)
+        except PaidContentError as e:
+            # Платная на AT — ищем полную книгу в бесплатных источниках.
+            return _fallback_free(e.title, e.author)
     if host.endswith("readli.net"):
         from . import readli
         return readli.download(url)
@@ -51,3 +55,26 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         return fff.download(url, extra_options=opts)
     except UnsupportedURL:
         return fichub.download(url)
+
+
+def _fallback_free(title: str, author: str) -> DownloadResult:
+    """Найти полную книгу по названию в бесплатных источниках (searchfloor → readli)."""
+    if title:
+        from . import searchfloor
+        try:
+            bid = searchfloor.search_book(title, author)
+            if bid:
+                return searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}")
+        except DownloaderError:
+            pass
+        from . import readli
+        try:
+            r = readli.search_and_download(title, author)
+            if r:
+                return r
+        except DownloaderError:
+            pass
+    raise DownloaderError(
+        f"Книга платная на author.today, а в бесплатных источниках "
+        f"(searchfloor/readli) не найдена: «{title}»."
+    )

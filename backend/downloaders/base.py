@@ -26,3 +26,13 @@ class DownloaderError(Exception):
 
 class UnsupportedURL(DownloaderError):
     """Загрузчик не умеет этот URL — можно попробовать следующий в цепочке."""
+
+
+class PaidContentError(DownloaderError):
+    """Книга платная/неполная на этом источнике — нужен фоллбэк на бесплатный.
+    Несёт title/author для поиска на других сайтах."""
+
+    def __init__(self, title: str = "", author: str = "", message: str = ""):
+        super().__init__(message or f"Платный контент: {title}")
+        self.title = title
+        self.author = author

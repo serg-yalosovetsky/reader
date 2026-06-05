@@ -11,7 +11,7 @@ const api = {
 // ===================== Настройки вида (localStorage) =====================
 const PREFS_KEY = 'reader.prefs'
 const prefs = Object.assign(
-  { theme: 'day', fontScale: 1, marginLevel: 1, fontFamily: 'serif', flow: 'paginated' },
+  { theme: 'day', fontScale: 1, marginLevel: 1, fontFamily: 'serif', flow: 'paginated', columns: 1 },
   JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'),
 )
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
@@ -226,11 +226,20 @@ function bookCSS() {
   `
 }
 function applyViewStyles() {
-  if (!view) return
-  view.renderer?.setStyles?.(bookCSS())
-  view.renderer?.setAttribute('flow', prefs.flow)
-  view.renderer?.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
-  view.renderer?.setAttribute('gap', '6%')
+  if (!view || !view.renderer) return
+  const r = view.renderer
+  r.setStyles?.(bookCSS())
+  r.setAttribute('flow', prefs.flow)
+  r.setAttribute('gap', '6%')
+  if (prefs.flow === 'scrolled') {
+    // Лента: ровно одна колонка (фикс «текста на полэкрана» — раньше резервировалась 2-я).
+    r.setAttribute('max-column-count', '1')
+    r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
+  } else {
+    // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей.
+    r.setAttribute('max-column-count', String(prefs.columns || 1))
+    r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
+  }
 }
 
 function buildTOC() {
@@ -279,6 +288,9 @@ function syncSettingsUI() {
   $('#margin-val').textContent = MARGIN_NAME[prefs.marginLevel]
   $('#font-family').value = prefs.fontFamily
   $('#flow-mode').value = prefs.flow
+  $('#columns-mode').value = String(prefs.columns || 1)
+  // «Колонки» актуальны только в режиме страниц.
+  $('#columns-row').style.display = prefs.flow === 'paginated' ? '' : 'none'
 }
 document.querySelectorAll('.swatch').forEach((b) => b.addEventListener('click', () => {
   prefs.theme = b.dataset.theme
@@ -290,7 +302,8 @@ $('#font-dec').addEventListener('click', () => { prefs.fontScale = Math.max(0.6,
 $('#margin-inc').addEventListener('click', () => { prefs.marginLevel = Math.min(2, prefs.marginLevel + 1); savePrefs(); syncSettingsUI(); applyViewStyles() })
 $('#margin-dec').addEventListener('click', () => { prefs.marginLevel = Math.max(0, prefs.marginLevel - 1); savePrefs(); syncSettingsUI(); applyViewStyles() })
 $('#font-family').addEventListener('change', (e) => { prefs.fontFamily = e.target.value; savePrefs(); applyViewStyles() })
-$('#flow-mode').addEventListener('change', (e) => { prefs.flow = e.target.value; savePrefs(); applyViewStyles() })
+$('#flow-mode').addEventListener('change', (e) => { prefs.flow = e.target.value; savePrefs(); syncSettingsUI(); applyViewStyles() })
+$('#columns-mode').addEventListener('change', (e) => { prefs.columns = parseInt(e.target.value, 10) || 1; savePrefs(); applyViewStyles() })
 
 // ===================== Старт =====================
 syncSettingsUI()

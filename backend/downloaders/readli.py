@@ -29,9 +29,34 @@ def supports(url: str) -> bool:
 def _book_id(url: str) -> str:
     qs = parse_qs(urlparse(url).query)
     bid = qs.get("b", [None])[0]
-    if not bid:
-        raise UnsupportedURL(f"readli: не найден параметр b в {url}")
-    return bid
+    if bid:
+        return bid
+    # slug-страница книги (/vechno-golodnyiy-student-6/) → найти ссылку на читалку.
+    with httpx.Client(timeout=40, follow_redirects=True,
+                      headers={"User-Agent": _UA}) as c:
+        html = _get(c, url).text
+    m = re.search(r"/chitat-online/\?b=(\d+)", html)
+    if not m:
+        raise UnsupportedURL(f"readli: не найден b и ссылка на читалку в {url}")
+    return m.group(1)
+
+
+def search_and_download(title: str, author: str = ""):
+    """Поиск книги по названию на readli → скачать (best-effort, вторичный фоллбэк)."""
+    from urllib.parse import quote
+    with httpx.Client(timeout=40, follow_redirects=True,
+                      headers={"User-Agent": _UA, "Accept-Language": "ru"}) as c:
+        html = _get(c, f"{_BASE}/?s={quote(title)}").text
+    soup = BeautifulSoup(html, "lxml")
+    # ссылки на книги в результатах (slug-страницы), берём первую как кандидат
+    art = soup.select_one("div.book__title a, .book a[href^='/'], a.book__name")
+    href = art.get("href") if art else None
+    if not href:
+        m = re.search(r"/chitat-online/\?b=(\d+)", html)
+        if not m:
+            return None
+        return download(f"{_BASE}/chitat-online/?b={m.group(1)}")
+    return download(href if href.startswith("http") else _BASE + href)
 
 
 def _get(c: httpx.Client, url: str, attempts: int = 4) -> httpx.Response:

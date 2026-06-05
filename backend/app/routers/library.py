@@ -7,11 +7,80 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from ..db.models import Work, utcnow
+import os
+
+from .. import covers
+from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
+from ..services import _norm
 from ..storage import detect_format, import_file, sha1_of_file
 
 router = APIRouter(prefix="/api/library", tags=["library"])
+
+
+def _fsize(p: str) -> int:
+    try:
+        return os.path.getsize(p)
+    except OSError:
+        return 0
+
+
+@router.post("/maintenance")
+def maintenance(session: Session = Depends(get_session)) -> dict:
+    """Убрать дубликаты книг (оставить самый полный файл), подчистить мониторинг,
+    добэкафиллить обложки."""
+    # 1) Группировка по (название, автор).
+    groups: dict[tuple, list[Work]] = {}
+    for w in session.exec(select(Work)).all():
+        groups.setdefault((_norm(w.title), _norm(w.author)), []).append(w)
+
+    removed_works = 0
+    for ws in groups.values():
+        if len(ws) <= 1:
+            continue
+        ws.sort(key=lambda w: _fsize(w.file_path), reverse=True)  # самый полный — первым
+        keep = ws[0]
+        for dup in ws[1:]:
+            for m in session.exec(select(Monitored).where(Monitored.work_id == dup.id)).all():
+                m.work_id = keep.id
+                session.add(m)
+            for p in session.exec(select(Progress).where(Progress.work_id == dup.id)).all():
+                session.delete(p)
+            if dup.file_path and dup.file_path != keep.file_path:
+                try:
+                    os.remove(dup.file_path)
+                except OSError:
+                    pass
+            session.delete(dup)
+            removed_works += 1
+    session.commit()
+
+    # 2) Дедуп мониторинга по work_id / source_url.
+    seen: set = set()
+    removed_mon = 0
+    for m in session.exec(select(Monitored)).all():
+        key = ("w", m.work_id) if m.work_id else ("u", m.source_url)
+        if key in seen:
+            session.delete(m)
+            removed_mon += 1
+        else:
+            seen.add(key)
+    session.commit()
+
+    # 3) Бэкафилл обложек.
+    added_covers = 0
+    for w in session.exec(select(Work)).all():
+        if w.cover_path and os.path.exists(w.cover_path):
+            continue
+        if w.file_path and os.path.exists(w.file_path):
+            c = covers.extract_cover(w.file_path, w.file_format, w.sha1)
+            if c:
+                w.cover_path = str(c)
+                session.add(w)
+                added_covers += 1
+    session.commit()
+    return {"removed_duplicates": removed_works, "removed_monitored": removed_mon,
+            "covers_added": added_covers}
 
 
 @router.get("")

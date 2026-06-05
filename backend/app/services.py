@@ -1,62 +1,77 @@
-"""Сервисные функции: регистрация скачанной книги как Work (хранилище + Calibre)."""
+"""Сервисные функции: регистрация скачанной книги как Work (хранилище + Calibre).
+
+Дедуп: одна книга, скачанная из разных источников/прогонов, не плодит карточки —
+совпадение по source_url ИЛИ по нормализованным (название, автор); при совпадении
+оставляем более полный файл (по размеру).
+"""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from sqlmodel import Session, select
 
 from ..calibre import client as calibre
 from ..downloaders.base import DownloadResult
+from . import covers
 from .db.models import Work, utcnow
 from .storage import import_file, sha1_of_file
 
 
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r'["“”«»\'`]', "", (s or "")).strip().lower())
+
+
 def _push_readera(dest) -> None:
-    """Best-effort: положить книгу в ReadEra/Books (Drive) — ReadEra Premium
-    подтянет её на телефон, и doc_sha1 совпадёт с нашим (включает sync прогресса)."""
     try:
         from ..readera import gdrive
         gdrive.push_book(dest)
-    except Exception:  # noqa: BLE001 — не критично для скачивания
+    except Exception:  # noqa: BLE001
         pass
 
 
-def register_download(result: DownloadResult, session: Session) -> Work:
-    """Импортировать скачанный файл в хранилище, создать/обновить Work, добавить
-    в Calibre/ReadEra.
+def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> None:
+    """Прописать в Work новый файл книги + Calibre/ReadEra/обложка."""
+    work.file_path = str(dest)
+    work.file_format = result.file_format
+    work.sha1 = sha1
+    if result.num_chapters:
+        work.chapters_count = result.num_chapters
+    work.calibre_id = calibre.add_book(dest) or work.calibre_id
+    cover = covers.extract_cover(dest, result.file_format, sha1)
+    if cover:
+        work.cover_path = str(cover)
+    _push_readera(dest)
 
-    Дедуп/обновление:
-    - если по source_url уже есть Work — обновляем его (новый файл/sha1/число глав),
-      сохраняя work_id (значит прогресс/мониторинг не теряются);
-    - иначе дедуп по sha1 (тот же самый файл) — возвращаем существующий;
-    - иначе создаём новый Work.
-    """
+
+def _find_existing(session: Session, result: DownloadResult) -> Work | None:
+    if result.source_url:
+        w = session.exec(select(Work).where(Work.source_url == result.source_url)).first()
+        if w:
+            return w
+    title_n = _norm(result.title)
+    if title_n:
+        for w in session.exec(select(Work)).all():
+            if _norm(w.title) == title_n and _norm(w.author) == _norm(result.author):
+                return w
+    return None
+
+
+def register_download(result: DownloadResult, session: Session) -> Work:
     src = Path(result.file_path)
     sha1 = sha1_of_file(src)
+    new_size = src.stat().st_size
 
-    # Обновление по источнику (например, при докачке обновлённого фика).
-    if result.source_url:
-        same_src = session.exec(
-            select(Work).where(Work.source_url == result.source_url)
-        ).first()
-        if same_src:
-            if same_src.sha1 != sha1:
-                dest, _ = import_file(src, sha1)
-                same_src.file_path = str(dest)
-                same_src.file_format = result.file_format
-                same_src.sha1 = sha1
-                same_src.chapters_count = result.num_chapters or same_src.chapters_count
-                same_src.calibre_id = calibre.add_book(dest) or same_src.calibre_id
-                _push_readera(dest)
-            same_src.updated_at = utcnow()
-            session.add(same_src)
-            session.commit()
-            session.refresh(same_src)
-            return same_src
-
-    existing = session.exec(select(Work).where(Work.sha1 == sha1)).first()
+    existing = _find_existing(session, result)
     if existing:
-        # Тот же самый файл уже есть.
+        if existing.sha1 != sha1:
+            # Заменяем файл только если новый «полнее» (крупнее) — берём полную книгу.
+            cur_size = Path(existing.file_path).stat().st_size if existing.file_path and Path(existing.file_path).exists() else 0
+            if new_size >= cur_size:
+                dest, _ = import_file(src, sha1)
+                _apply_file(existing, dest, result, sha1)
+        if result.source_url and not existing.source_url:
+            existing.source_url = result.source_url
         existing.updated_at = utcnow()
         session.add(existing)
         session.commit()
@@ -64,24 +79,12 @@ def register_download(result: DownloadResult, session: Session) -> Work:
         return existing
 
     dest, _ = import_file(src, sha1)
-
-    # Best-effort: добавить в Calibre (на VPS). Локально без Calibre -> None.
-    calibre_id = calibre.add_book(dest)
-    _push_readera(dest)
-
     work = Work(
-        title=result.title or dest.stem,
-        author=result.author,
-        site=result.site,
-        source_url=result.source_url,
-        file_path=str(dest),
-        file_format=result.file_format,
-        sha1=sha1,
-        calibre_id=calibre_id,
-        chapters_count=result.num_chapters,
-        created_at=utcnow(),
-        updated_at=utcnow(),
+        title=result.title or dest.stem, author=result.author, site=result.site,
+        source_url=result.source_url, chapters_count=result.num_chapters,
+        created_at=utcnow(), updated_at=utcnow(),
     )
+    _apply_file(work, dest, result, sha1)
     session.add(work)
     session.commit()
     session.refresh(work)

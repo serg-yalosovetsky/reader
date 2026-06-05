@@ -36,9 +36,10 @@ function bookCard(w, ratio) {
   const card = document.createElement('div')
   card.className = 'book-card'
   const pct = Math.round((ratio || 0) * 100)
+  const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const cover = w.cover_path
-    ? `<img src="/api/reader/${w.id}/cover" alt="" />`
-    : `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
+    ? `<img src="/api/reader/${w.id}/cover" alt="" onerror="this.remove()" />${fallback}`
+    : fallback
   card.innerHTML = `
     <div class="book-cover">${cover}</div>
     <div class="book-meta">
@@ -217,11 +218,12 @@ function bookCSS() {
   const fam = prefs.fontFamily === 'sans'
     ? 'var(--font-sans, system-ui, sans-serif)'
     : '"PT Serif", Georgia, "Times New Roman", serif'
-  // В режиме «лента» foliate не центрирует узкую колонку — центрируем текст сами:
-  // даём foliate полную ширину, а body ограничиваем и центрируем.
-  const colW = MARGIN_INLINE[prefs.marginLevel]
+  // В режиме «лента» одна колонка должна занимать всю ширину экрана.
+  // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
+  const sidePad = { 0: 4, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
   const scrolledBody = prefs.flow === 'scrolled'
-    ? `body { max-width: ${colW}px; margin-inline: auto; padding: 0 16px; }`
+    ? `html, body { max-width: none !important; width: auto !important; margin: 0 !important; }
+       body { padding: 0 ${sidePad}% !important; }`
     : ''
   return `
     html { color: ${fg}; background: ${bg}; font-size: ${Math.round(prefs.fontScale * 100)}%; }

@@ -96,13 +96,18 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
 
 
 def list_monitored(session: Session) -> list[dict]:
-    """Список отслеживаемого с заголовками работ (для UI)."""
+    """Список отслеживаемого с заголовками работ (для UI), без дубликатов."""
     out = []
+    seen: set = set()
     for mon in session.exec(select(Monitored)).all():
         title = ""
         if mon.work_id:
             w = session.get(Work, mon.work_id)
             title = w.title if w else ""
+        key = (title.strip().lower() or mon.source_url)
+        if key in seen:
+            continue
+        seen.add(key)
         out.append({
             "id": mon.id, "source_url": mon.source_url, "title": title,
             "last_seen_chapters": mon.last_seen_chapters,

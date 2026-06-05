@@ -31,13 +31,16 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     host = (urlparse(url).hostname or "").lower()
     opts = {"_creds": creds} if creds else None
 
-    # 1) author.today — отдельный адаптер (если доступен).
+    # 1) сайты со своими адаптерами.
     if host.endswith("author.today"):
-        try:
-            from . import authortoday
-        except ImportError:
-            raise DownloaderError("Адаптер author.today ещё не подключён.")
+        from . import authortoday
         return authortoday.download(url)
+    if host.endswith("readli.net"):
+        from . import readli
+        return readli.download(url)
+    if host.endswith("searchfloor.org"):
+        from . import searchfloor
+        return searchfloor.download(url)
 
     # 2) известные FanFicFare-домены.
     if fff.supports(url):

@@ -88,6 +88,23 @@ $('#upload-input').addEventListener('change', async (e) => {
   e.target.value = ''
 })
 
+// Синхронизация с ReadEra (импорт прогресса из бэкапа + экспорт веб-прогресса).
+$('#readera-sync').addEventListener('click', async () => {
+  const status = $('#ingest-status')
+  status.hidden = false; status.classList.remove('error'); status.textContent = 'Синхронизирую с ReadEra…'
+  try {
+    const r = await api.post('/api/readera/sync', {})
+    const imp = r.import || {}, exp = r.export || {}
+    let msg = `ReadEra: импортировано позиций — ${imp.updated ?? 0}`
+    if (!imp.ok && imp.reason) msg += ` (${imp.reason})`
+    if (exp.patched) msg += `; для restore в ReadEra создан файл ${exp.restore_file}`
+    status.textContent = msg
+    await loadLibrary()
+  } catch (err) {
+    status.classList.add('error'); status.textContent = 'Sync ошибка: ' + err.message.slice(0, 160)
+  }
+})
+
 // ===================== ЧИТАЛКА =====================
 let view = null
 let currentWork = null
@@ -115,10 +132,14 @@ async function openReader(work) {
   applyViewStyles()
   buildTOC()
 
-  // Восстановить позицию (locator = CFI). Иначе — начало текста.
+  // Восстановить позицию: точный CFI, иначе ratio (напр. импорт из ReadEra), иначе начало.
   const prog = await api.get(`/api/progress/${work.id}`).catch(() => null)
-  if (prog && prog.locator) await view.init({ lastLocation: prog.locator })
-  else await view.init({ showTextStart: true })
+  if (prog && prog.locator) {
+    await view.init({ lastLocation: prog.locator })
+  } else {
+    await view.init({ showTextStart: true })
+    if (prog && prog.ratio > 0) { try { await view.goToFraction(prog.ratio) } catch {} }
+  }
 }
 
 function onRelocate(e) {

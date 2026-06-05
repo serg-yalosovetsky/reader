@@ -35,7 +35,14 @@ CALIBRE_PASSWORD = os.getenv("READER_CALIBRE_PASSWORD", "")
 # --- ReadEra sync (этап 3) ---
 # rclone-remote и путь к каталогу с бэкапами ReadEra в Google Drive.
 RCLONE_BIN = os.getenv("READER_RCLONE_BIN", "rclone")
-READERA_BACKUP_REMOTE = os.getenv("READER_READERA_BACKUP_REMOTE", "")  # напр. "gdrive:ReadEra"
+# Папка Drive, куда пользователь кладёт ручные бэкапы ReadEra (*.bak) и куда мы
+# кладём пере-собранный .bak для restore. Напр. "gdrive:ReadEra".
+READERA_BACKUP_REMOTE = os.getenv("READER_READERA_BACKUP_REMOTE", "")
+# Папка Drive с книгами ReadEra Premium — туда можно класть скачанные книги,
+# чтобы ReadEra на телефоне подхватил их авто-синком. Напр. "gdrive:ReadEra/Books".
+READERA_BOOKS_REMOTE = os.getenv("READER_READERA_BOOKS_REMOTE", "")
+# Период авто-импорта прогресса из бэкапа ReadEra (минуты; 0 — выключить).
+READERA_SYNC_INTERVAL_MIN = int(os.getenv("READER_READERA_SYNC_INTERVAL_MIN", "0"))
 
 # --- Скачивание (этап 2) ---
 FICHUB_API = os.getenv("READER_FICHUB_API", "https://fichub.net/api/v0")

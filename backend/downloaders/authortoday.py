@@ -99,8 +99,14 @@ def download(url: str) -> DownloadResult:
             if idx + 1 < len(chapters):
                 time.sleep(0.25)
 
-    # 4) Сборка EPUB.
-    out = _build_epub(work_id, title, author, annotation, chapter_htmls)
+    # 4) Сборка EPUB (со встроенной обложкой).
+    cover = None
+    try:
+        from ..app import covers
+        cover = covers.fetch_cover_bytes(f"{_BASE}/work/{work_id}")
+    except Exception:  # noqa: BLE001
+        cover = None
+    out = _build_epub(work_id, title, author, annotation, chapter_htmls, cover=cover)
     return DownloadResult(
         file_path=out,
         file_format="epub",
@@ -194,7 +200,7 @@ def _parse_chapters(reader_html: str) -> list[dict]:
 
 def _build_epub(
     work_id: str, title: str, author: str, annotation: str,
-    chapters: list[tuple[str, str]],
+    chapters: list[tuple[str, str]], cover: bytes | None = None,
 ) -> Path:
     book = epub.EpubBook()
     book.set_identifier(f"authortoday_{work_id}")
@@ -204,6 +210,12 @@ def _build_epub(
         book.add_author(author)
     if annotation:
         book.add_metadata("DC", "description", annotation)
+    if cover:
+        ext = "png" if cover[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
+        try:
+            book.set_cover(f"cover.{ext}", cover)
+        except Exception:  # noqa: BLE001
+            pass
 
     spine: list = []
     toc: list = []

@@ -24,31 +24,40 @@ def extract_cover(file_path: str | Path, fmt: str, sha1: str) -> Path | None:
     return out
 
 
-def fetch_source_cover(source_url: str, sha1: str) -> Path | None:
-    """Скачать обложку со страницы-источника по og:image (есть у большинства сайтов).
-    ficbook закрыт анти-ботом → cloudscraper."""
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def fetch_cover_bytes(source_url: str) -> bytes | None:
+    """Скачать байты обложки со страницы-источника по og:image. None при неудаче."""
     if not source_url:
         return None
-    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
     try:
-        html = _fetch(source_url, ua)
+        html = _fetch(source_url, _UA)
         if not html:
             return None
         m = (re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html)
              or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html))
         if not m:
             return None
-        img_url = m.group(1)
-        data = _fetch(img_url, ua, binary=True, base=source_url)
-        if not data or len(data) < 200:
-            return None
-        COVERS_DIR.mkdir(parents=True, exist_ok=True)
-        out = COVERS_DIR / f"{sha1}{_img_ext(data)}"
-        out.write_bytes(data)
-        return out
+        data = _fetch(m.group(1), _UA, binary=True, base=source_url)
+        return data if data and len(data) > 200 else None
     except Exception:  # noqa: BLE001
         return None
+
+
+def save_cover_bytes(data: bytes, sha1: str) -> Path | None:
+    if not data:
+        return None
+    COVERS_DIR.mkdir(parents=True, exist_ok=True)
+    out = COVERS_DIR / f"{sha1}{_img_ext(data)}"
+    out.write_bytes(data)
+    return out
+
+
+def fetch_source_cover(source_url: str, sha1: str) -> Path | None:
+    """Скачать обложку источника и сохранить файлом (для cover_path)."""
+    return save_cover_bytes(fetch_cover_bytes(source_url), sha1)
 
 
 def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):

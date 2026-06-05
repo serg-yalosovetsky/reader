@@ -93,7 +93,13 @@ def download(url: str) -> DownloadResult:
     if not any(html.strip() for _, html in sections):
         raise DownloaderError("readli: не удалось извлечь текст книги")
 
-    out = build_epub(f"readli_{bid}", title, author, sections)
+    cover = None
+    try:
+        from ..app import covers
+        cover = covers.fetch_cover_bytes(page_url(1))
+    except Exception:  # noqa: BLE001
+        cover = None
+    out = build_epub(f"readli_{bid}", title, author, sections, cover=cover)
     return DownloadResult(
         file_path=out, file_format="epub", title=title, author=author,
         site="readli", source_url=f"{_BASE}/chitat-online/?b={bid}",

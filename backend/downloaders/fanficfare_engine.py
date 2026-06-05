@@ -94,6 +94,7 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         "--non-interactive",
         "-o", f"is_adult={'true' if is_adult else 'false'}",
         "-o", "output_filename=book.${formatext}",
+        "-o", "include_images=true",   # встраивать обложку (и иллюстрации) сайта
     ]
     if _needs_cloudscraper(url):
         cmd += ["-o", "use_cloudscraper=true"]

@@ -125,7 +125,13 @@ def _download_boosty(url: str) -> DownloadResult:
     title = h1.get_text(strip=True) if h1 else f"Boosty post {post_id}"
     ps = box.find_all("p")
     body = "".join(str(p) for p in ps) if ps else box.decode_contents()
-    out = build_epub(f"searchfloor_{post_id}", title, "", [(None, body)])
+    cover = None
+    try:
+        from ..app import covers
+        cover = covers.fetch_cover_bytes(url)
+    except Exception:  # noqa: BLE001
+        cover = None
+    out = build_epub(f"searchfloor_{post_id}", title, "", [(None, body)], cover=cover)
     return DownloadResult(file_path=out, file_format="epub", title=title, author="",
                           site="searchfloor", source_url=url, num_chapters=1,
                           extra={"workdir": str(out.parent)})

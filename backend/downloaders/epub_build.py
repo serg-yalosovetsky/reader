@@ -23,8 +23,10 @@ def build_epub(
     *,
     lang: str = "ru",
     annotation: str = "",
+    cover: bytes | None = None,
 ) -> Path:
-    """sections: список (заголовок|None, html). Возвращает путь к .epub."""
+    """sections: список (заголовок|None, html). cover — байты обложки (встраивается).
+    Возвращает путь к .epub."""
     book = epub.EpubBook()
     book.set_identifier(identifier)
     book.set_title(title or "Без названия")
@@ -33,6 +35,12 @@ def build_epub(
         book.add_author(author)
     if annotation:
         book.add_metadata("DC", "description", annotation)
+    if cover:
+        ext = "png" if cover[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
+        try:
+            book.set_cover(f"cover.{ext}", cover)
+        except Exception:  # noqa: BLE001 — обложка не критична для сборки
+            pass
 
     spine: list = []
     toc: list = []

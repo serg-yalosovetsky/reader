@@ -1,8 +1,12 @@
 """Фиды обновлений подписок per-site (требуют залогиненной сессии).
 
-Каждый адаптер: login(client, user, pw) -> bool; updates(client) -> [work_url, ...].
-Найденные работы ставятся на отслеживание (Monitored); фактический детект новых
-глав и докачку делает accounts/monitor.check_all (по числу глав, надёжно).
+Каждый адаптер сам управляет сессией и логином, возвращает список URL работ.
+Найденные работы ставятся на отслеживание (Monitored); детект новых глав и
+докачку делает accounts/monitor.check_all.
+
+ficbook закрыт анти-ботом (DDoS-Guard) — для него используем cloudscraper
+(httpx/обычный requests получают страницу «Проверка безопасности»).
+author.today и fanfics.me доступны обычным клиентом.
 """
 from __future__ import annotations
 
@@ -18,99 +22,86 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
-# ----------------- ficbook -----------------
-def _ficbook_login(c: httpx.Client, user: str, pw: str) -> bool:
-    c.get("https://ficbook.net/")
-    r = c.post("https://ficbook.net/login_check_static",
-               data={"login": user, "password": pw})
-    return "Войти используя аккаунт на сайте" not in r.text
-
-
-def _ficbook_updates(c: httpx.Client) -> list[str]:
-    r = c.post("https://ficbook.net/user_notifications/get_new",
-               headers={"X-Requested-With": "XMLHttpRequest"})
-    try:
-        data = r.json()
-    except ValueError:
-        return []
-    urls = []
-    for n in (data.get("data", {}) or {}).get("notifications", []):
-        url = n.get("url", "")
-        # type 17 = обновления избранных авторов; берём всё, что ведёт на /readfic/.
-        if "/readfic/" in url:
-            urls.append("https://ficbook.net" + url)
-    return urls
-
-
-# ----------------- author.today -----------------
-def _at_login(c: httpx.Client, user: str, pw: str) -> bool:
-    page = c.get("https://author.today/account/login")
-    token = _antiforgery(page.text)
-    data = {"Login": user, "Password": pw, "RememberMe": "true"}
-    if token:
-        data["__RequestVerificationToken"] = token
-    r = c.post("https://author.today/account/login", data=data,
-               headers={"Referer": "https://author.today/account/login"})
-    # после успеха обычно редирект/наличие меню профиля; грубая проверка:
-    return "logOff" in r.text or "account/logoff" in r.text or r.url.path == "/feed"
-
-
 def _antiforgery(html: str) -> str:
     m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', html)
     return m.group(1) if m else ""
 
 
-def _at_updates(c: httpx.Client) -> list[str]:
-    r = c.get("https://author.today/feed")
-    soup = BeautifulSoup(r.text, "lxml")
+# ----------------- ficbook (cloudscraper) -----------------
+def _ficbook_feed(user: str, pw: str) -> list[str]:
+    import cloudscraper
+    c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
+    c.get("https://ficbook.net/")
+    r = c.post("https://ficbook.net/login_check_static",
+               data={"login": user, "password": pw})
+    if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
+        raise RuntimeError("ficbook: не удалось войти")
+    rn = c.post("https://ficbook.net/user_notifications/get_new",
+                headers={"X-Requested-With": "XMLHttpRequest"})
+    try:
+        data = rn.json()
+    except ValueError:
+        return []
+    urls = []
+    for n in (data.get("data", {}) or {}).get("notifications", []):
+        url = n.get("url", "")
+        if "/readfic/" in url:
+            urls.append("https://ficbook.net" + url)
+    return list(dict.fromkeys(urls))
+
+
+# ----------------- author.today -----------------
+def _at_feed(user: str, pw: str) -> list[str]:
+    with httpx.Client(timeout=40, follow_redirects=True,
+                      headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+        page = c.get("https://author.today/account/login")
+        data = {"Login": user, "Password": pw, "RememberMe": "true"}
+        token = _antiforgery(page.text)
+        if token:
+            data["__RequestVerificationToken"] = token
+        r = c.post("https://author.today/account/login", data=data,
+                   headers={"Referer": "https://author.today/account/login"})
+        if not ("account/logoff" in r.text or "logOff" in r.text or r.url.path == "/feed"):
+            raise RuntimeError("author.today: не удалось войти")
+        feed = c.get("https://author.today/feed")
+    soup = BeautifulSoup(feed.text, "lxml")
     urls = []
     for art in soup.select("article.feed-row"):
         header = art.select_one("h3.title") or art.select_one("header")
         htext = header.get_text(" ", strip=True) if header else ""
-        # Берём обновления произведений и новые публикации; пропускаем подборки и пр.
         if "обновил произведение" in htext or "опубликовал новое произведение" in htext:
             a = art.select_one('a[href^="/work/"]')
-            if a:
-                m = re.match(r"/work/(\d+)", a.get("href", ""))
-                if m:
-                    urls.append(f"https://author.today/work/{m.group(1)}")
-    return list(dict.fromkeys(urls))  # дедуп, сохраняя порядок
+            if a and (m := re.match(r"/work/(\d+)", a.get("href", ""))):
+                urls.append(f"https://author.today/work/{m.group(1)}")
+    return list(dict.fromkeys(urls))
 
 
 # ----------------- fanfics.me -----------------
-def _fanfics_login(c: httpx.Client, user: str, pw: str) -> bool:
-    c.get("https://fanfics.me/autent.php")
-    r = c.post("https://fanfics.me/autent.php", data={"name": user, "pass": pw})
-    return '<form name="autent"' not in r.text
-
-
-def _fanfics_updates(c: httpx.Client) -> list[str]:
-    # TODO: разведать страницу подписок/обновлений fanfics.me на реальной сессии.
-    return []
+def _fanfics_feed(user: str, pw: str) -> list[str]:
+    with httpx.Client(timeout=40, follow_redirects=True,
+                      headers={"User-Agent": _UA}) as c:
+        c.get("https://fanfics.me/autent.php")
+        r = c.post("https://fanfics.me/autent.php", data={"name": user, "pass": pw})
+        if '<form name="autent"' in r.text:
+            raise RuntimeError("fanfics.me: не удалось войти")
+        # TODO: разведать страницу обновлений подписок fanfics.me на живой сессии.
+        return []
 
 
 _ADAPTERS = {
-    "ficbook": (_ficbook_login, _ficbook_updates),
-    "authortoday": (_at_login, _at_updates),
-    "fanfics": (_fanfics_login, _fanfics_updates),
+    "ficbook": _ficbook_feed,
+    "authortoday": _at_feed,
+    "fanfics": _fanfics_feed,
 }
 
 
 def fetch_site_updates(site: str, user: str, pw: str) -> list[str]:
-    adapter = _ADAPTERS.get(site)
-    if not adapter:
-        return []
-    login, updates = adapter
-    with httpx.Client(timeout=40, follow_redirects=True,
-                      headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
-        if not login(c, user, pw):
-            raise RuntimeError(f"{site}: не удалось войти (проверьте логин/пароль)")
-        return updates(c)
+    fn = _ADAPTERS.get(site)
+    return fn(user, pw) if fn else []
 
 
 def pull_all(session: Session) -> dict:
-    """Для каждого аккаунта забрать фид обновлений и поставить работы на отслеживание.
-    Возвращает {site: {found, error?}}."""
+    """Для каждого аккаунта забрать фид и поставить работы на отслеживание."""
     result = {}
     for site in _ADAPTERS:
         creds = store.creds_for_site(session, site)

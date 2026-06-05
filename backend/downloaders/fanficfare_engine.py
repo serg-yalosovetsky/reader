@@ -37,6 +37,12 @@ def supports(url: str) -> bool:
     return host in KNOWN_DOMAINS
 
 
+def _needs_cloudscraper(url: str) -> bool:
+    """ficbook закрыт анти-ботом (DDoS-Guard) — нужен cloudscraper."""
+    host = (urlparse(url).hostname or "").lower()
+    return host.endswith("ficbook.net")
+
+
 def _ff_executable() -> list[str]:
     """Команда запуска FanFicFare. Через -c и cli.main, чтобы не зависеть от PATH
     и работать одинаково в venv на Windows и на Linux-VPS."""
@@ -50,6 +56,8 @@ def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 1
         "-m", "--json-meta", "--non-interactive",
         "-o", "is_adult=true",
     ]
+    if _needs_cloudscraper(url):
+        cmd += ["-o", "use_cloudscraper=true"]
     if creds:
         cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]
     cmd.append(url)
@@ -87,6 +95,8 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         "-o", f"is_adult={'true' if is_adult else 'false'}",
         "-o", "output_filename=book.${formatext}",
     ]
+    if _needs_cloudscraper(url):
+        cmd += ["-o", "use_cloudscraper=true"]
     creds = (extra_options or {}).pop("_creds", None) if extra_options else None
     if creds:
         cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]

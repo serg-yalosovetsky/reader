@@ -30,12 +30,17 @@ def get_book_file(work_id: int, session: Session = Depends(get_session)) -> File
 
 
 @router.get("/{work_id}/cover")
+@router.head("/{work_id}/cover")
 def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResponse:
-    """Обложка книги, если извлечена (этап 2). Иначе 404 → фронт рисует заглушку."""
+    """Обложка книги. Иначе 404 → фронт рисует заглушку."""
     work = session.get(Work, work_id)
     if not work or not work.cover_path:
         raise HTTPException(404, "обложки нет")
     path = Path(work.cover_path)
     if not path.exists():
         raise HTTPException(404, "файл обложки отсутствует")
-    return FileResponse(path)
+    mtime = int(path.stat().st_mtime)
+    resp = FileResponse(path)
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    resp.headers["ETag"] = f'"{work.sha1}-{mtime}"'
+    return resp

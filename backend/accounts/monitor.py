@@ -75,6 +75,43 @@ def _check_at_source(mon: "Monitored", session: Session) -> tuple[str, int] | No
 
 
 
+def _refresh_at_cover(work: Work, session: Session) -> None:
+    """После скачивания обновить обложку с author.today (ficbook/readli/searchfloor дают логотип)."""
+    from urllib.parse import urlparse
+    from ..app import covers as _cov
+    from ..downloaders import authortoday as _at
+
+    _ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
+    # Ищем source_url по monitored
+    mon = session.exec(
+        __import__('sqlmodel', fromlist=['select']).select(
+            __import__('backend.app.db.models', fromlist=['Monitored']).Monitored
+        ).where(
+            __import__('backend.app.db.models', fromlist=['Monitored']).Monitored.work_id == work.id
+        )
+    ).first()
+    src_url = mon.source_url if mon else ""
+    host = (urlparse(src_url).hostname or "").lower()
+    if not any(host.endswith(e) for e in _ELIGIBLE):
+        return
+    if not work.title:
+        return
+    try:
+        at_url = _at.search_work(work.title, work.author or "")
+        if not at_url:
+            return
+        img = _cov.fetch_cover_bytes(at_url)
+        if not img or len(img) < 10000:
+            return
+        p = _cov.save_cover_bytes(img, work.sha1)
+        if p:
+            work.cover_path = str(p)
+            session.add(work)
+            session.commit()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True) -> dict:
     """Проверить обновления: сперва фиды подписок (ставят новые работы на
     отслеживание), затем детект новых глав по каждому отслеживаемому фику."""
@@ -121,6 +158,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                     downloaded += 1
                     detail["downloaded"] = True
                     detail["source_used"] = best_url
+                    # Обновляем обложку с AT если книга из ficbook/readli/searchfloor
+                    _refresh_at_cover(work, session)
                 except Exception as e:  # noqa: BLE001 — фон, не валим весь прогон
                     detail["error"] = str(e)[:200]
             details.append(detail)

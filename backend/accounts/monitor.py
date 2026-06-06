@@ -36,7 +36,12 @@ def add_monitor(session: Session, source_url: str, work_id: int | None = None,
 
 
 def _chapter_count(url: str, session: Session) -> int | None:
-    creds = store.creds_for_host(session, _host(url))
+    host = _host(url)
+    # author.today: FanFicFare не поддерживает — используем наш адаптер
+    if host.endswith("author.today"):
+        from ..downloaders import authortoday as _at
+        return _at.count_chapters(url)
+    creds = store.creds_for_host(session, host)
     meta = fff.get_meta(url, creds=creds)
     if not meta:
         return None

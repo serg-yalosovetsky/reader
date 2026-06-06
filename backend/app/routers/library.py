@@ -4,7 +4,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 import os
@@ -93,13 +93,13 @@ def list_works(session: Session = Depends(get_session)) -> list[Work]:
 
 
 
-@router.post("/refresh-covers")
-def refresh_covers(session: Session = Depends(get_session)) -> dict:
-    """Обновить обложки с author.today.
-    Только для книг из ficbook/readli/searchfloor (у них обложки — логотипы сайта).
-    Проверяет что AT вернул книгу того же автора."""
+def _do_refresh_covers() -> None:
+    """Фоновое обновление обложек — запускается из refresh_covers."""
     from ...downloaders import authortoday as _at
+    from ..db.session import get_session as _gs
     from urllib.parse import urlparse
+    import re as _re
+    import httpx as _httpx
 
     _ELIGIBLE_HOSTS = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
 
@@ -108,7 +108,6 @@ def refresh_covers(session: Session = Depends(get_session)) -> dict:
         return any(h.endswith(e) for e in _ELIGIBLE_HOSTS)
 
     def _author_match(our: str, at_author: str) -> bool:
-        """Грубое сравнение авторов: хотя бы одно слово совпадает."""
         if not our or not at_author:
             return False
         our_words = {w.lower().strip(".,") for w in our.split() if len(w) > 2}
@@ -116,13 +115,10 @@ def refresh_covers(session: Session = Depends(get_session)) -> dict:
         return bool(our_words & at_words)
 
     def _at_author(at_url: str) -> str:
-        """Получить автора с AT-страницы книги."""
         try:
-            import httpx as _httpx
-            import re as _re
             r = _httpx.get(at_url, timeout=10, follow_redirects=True,
                            headers={"User-Agent": "Mozilla/5.0"})
-            _pat = "itemprop=['\"]{0,1}author['\"]{0,1}[^>]*>([^<]{2,60})<"
+            _pat = "itemprop=['\"{0,1}author['\"{0,1}[^>]*>([^<]{2,60})<"
             m = _re.search(_pat, r.text)
             if not m:
                 m = _re.search(r"book-authors[^>]*>.*?href=[^>]+>([^<]{2,60})<", r.text, _re.S)
@@ -130,42 +126,35 @@ def refresh_covers(session: Session = Depends(get_session)) -> dict:
         except Exception:
             return ""
 
-    updated = 0
-    skipped = 0
-    failed = 0
+    for session in _gs():
+        works = session.exec(select(Work)).all()
+        for w in works:
+            if not w.title or not w.source_url or not _host_ok(w.source_url):
+                continue
+            try:
+                at_url = _at.search_work(w.title, w.author or "")
+                if not at_url:
+                    continue
+                at_author = _at_author(at_url)
+                if not _author_match(w.author or "", at_author):
+                    continue
+                img_bytes = covers.fetch_cover_bytes(at_url)
+                if not img_bytes or len(img_bytes) < 5000:
+                    continue
+                new_path = covers.save_cover_bytes(img_bytes, w.sha1)
+                if new_path:
+                    w.cover_path = str(new_path)
+                    session.add(w)
+                    session.commit()
+            except Exception:  # noqa: BLE001
+                pass
 
-    for w in session.exec(select(Work)).all():
-        if not w.title:
-            skipped += 1
-            continue
-        # Только ficbook/readli/searchfloor
-        if not w.source_url or not _host_ok(w.source_url):
-            skipped += 1
-            continue
-        try:
-            at_url = _at.search_work(w.title, w.author or "")
-            if not at_url:
-                skipped += 1
-                continue
-            # Проверяем автора на AT-странице
-            at_author = _at_author(at_url)
-            if not _author_match(w.author or "", at_author):
-                skipped += 1
-                continue
-            img_bytes = covers.fetch_cover_bytes(at_url)
-            if not img_bytes or len(img_bytes) < 5000:
-                skipped += 1
-                continue
-            new_path = covers.save_cover_bytes(img_bytes, w.sha1)
-            if new_path:
-                w.cover_path = str(new_path)
-                session.add(w)
-                session.commit()
-                updated += 1
-        except Exception:  # noqa: BLE001
-            failed += 1
 
-    return {"updated": updated, "skipped": skipped, "failed": failed}
+@router.post("/refresh-covers")
+def refresh_covers(background_tasks: BackgroundTasks) -> dict:
+    """Запускает обновление обложек с author.today в фоне, возвращает сразу."""
+    background_tasks.add_task(_do_refresh_covers)
+    return {"status": "started"}
 
 @router.get("/{work_id}")
 def get_work(work_id: int, session: Session = Depends(get_session)) -> Work:

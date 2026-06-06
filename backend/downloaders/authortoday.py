@@ -62,6 +62,46 @@ def _decrypt(text: str, secret: str, user_id: str = "") -> str:
     )
 
 
+
+def search_work(title: str, author: str = "") -> str | None:
+    """Найти работу на author.today по названию (+ автор для уточнения).
+    Возвращает URL первого подходящего результата или None."""
+    q = f"{title} {author}".strip() if author else title
+    with httpx.Client(
+        timeout=20, follow_redirects=True,
+        headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
+    ) as c:
+        try:
+            r = c.get("https://author.today/search", params={"q": q, "type": "works"})
+            if r.status_code != 200:
+                return None
+            work_ids = list(dict.fromkeys(re.findall(r'href="/work/(\d+)"', r.text)))
+            if not work_ids:
+                return None
+            # Берём первый результат — поиск по точному названию обычно точный
+            return f"https://author.today/work/{work_ids[0]}"
+        except Exception:
+            return None
+
+
+def count_chapters(url: str) -> int | None:
+    """Быстро получить число глав без скачивания текста."""
+    import json as _json
+    work_id = _work_id(url)
+    with httpx.Client(
+        timeout=20, follow_redirects=True,
+        headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
+    ) as c:
+        try:
+            rr = c.get(f"https://author.today/reader/{work_id}")
+            m = _CHAPTERS_RE.search(rr.text)
+            if not m:
+                return None
+            arr = _json.loads(m.group(1))
+            return len([ch for ch in arr if ch.get("id")])
+        except Exception:
+            return None
+
 def download(url: str) -> DownloadResult:
     work_id = _work_id(url)
     with httpx.Client(

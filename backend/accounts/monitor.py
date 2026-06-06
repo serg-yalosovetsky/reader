@@ -51,6 +51,30 @@ def _host(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
+def _check_at_source(mon: "Monitored", session: Session) -> tuple[str, int] | None:
+    """Если книга отслеживается на ficbook/fanfics — ищем её же на author.today.
+    Возвращает (at_url, at_chapters) если AT-версия найдена, иначе None."""
+    from urllib.parse import urlparse
+    host = (urlparse(mon.source_url).hostname or "").lower()
+    # Только для ficbook / fanfics / fanfiction (AT имеет смысл как альтернатива рус.фанфиков)
+    if not any(h in host for h in ("ficbook", "fanfics.me", "fanfiction.net")):
+        return None
+    if not mon.work_id:
+        return None
+    w = session.get(Work, mon.work_id)
+    if not w or not w.title:
+        return None
+    from ..downloaders import authortoday as _at
+    at_url = _at.search_work(w.title, w.author or "")
+    if not at_url:
+        return None
+    at_cnt = _at.count_chapters(at_url)
+    if not at_cnt:
+        return None
+    return (at_url, at_cnt)
+
+
+
 def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True) -> dict:
     """Проверить обновления: сперва фиды подписок (ставят новые работы на
     отслеживание), затем детект новых глав по каждому отслеживаемому фику."""
@@ -71,19 +95,32 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         if cur is None:
             session.add(mon); session.commit()
             continue
-        if cur > mon.last_seen_chapters:
+        # Проверяем author.today как альтернативный источник (может выходить быстрее)
+        at_info = _check_at_source(mon, session)
+        # Используем источник с большим числом глав
+        best_url = mon.source_url
+        best_cur = cur or 0
+        if at_info:
+            at_url, at_cnt = at_info
+            if at_cnt > best_cur:
+                best_url = at_url
+                best_cur = at_cnt
+        if best_cur > mon.last_seen_chapters:
             mon.has_update = True
             updated += 1
-            detail = {"url": mon.source_url, "from": mon.last_seen_chapters, "to": cur}
+            detail = {"url": best_url, "from": mon.last_seen_chapters, "to": best_cur}
+            if at_info and best_url != mon.source_url:
+                detail["alt_source"] = best_url
             if auto_download:
                 try:
-                    creds = store.creds_for_host(session, _host(mon.source_url))
-                    res = chain.fetch(mon.source_url, creds=creds)
+                    creds = store.creds_for_host(session, _host(best_url))
+                    res = chain.fetch(best_url, creds=creds)
                     work = register_download(res, session)
                     mon.work_id = work.id
                     mon.has_update = False  # докачали — обновление применено
                     downloaded += 1
                     detail["downloaded"] = True
+                    detail["source_used"] = best_url
                 except Exception as e:  # noqa: BLE001 — фон, не валим весь прогон
                     detail["error"] = str(e)[:200]
             details.append(detail)

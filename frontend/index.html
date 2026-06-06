@@ -7,6 +7,9 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" />
 </head>
 <body>
   <!-- ======================= БИБЛИОТЕКА ======================= -->
@@ -26,6 +29,7 @@
       </div>
     </header>
     <div id="ingest-status" class="ingest-status" hidden></div>
+    <div class="lib-filter-bar"><input id="lib-filter" type="search" placeholder="Фильтр по названию, автору…" autocomplete="off" /></div>
     <div id="book-grid" class="book-grid"></div>
     <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
 
@@ -72,6 +76,7 @@
       <button id="back-btn" class="icon-btn" title="К библиотеке">‹ Библиотека</button>
       <span id="reader-title" class="reader-title"></span>
       <div class="reader-top-actions">
+        <button id="tts-btn" class="icon-btn" title="Читать вслух">🔊</button>
         <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
@@ -81,6 +86,21 @@
     <div id="view-host" class="view-host">
       <div id="tap-prev" class="tap-zone tap-prev" title="Назад"></div>
       <div id="tap-next" class="tap-zone tap-next" title="Вперёд"></div>
+    </div>
+
+    <!-- TTS -->
+    <div id="tts-bar" class="tts-bar" hidden>
+      <button id="tts-stop" class="icon-btn" title="Стоп">■</button>
+      <button id="tts-play" class="icon-btn" title="Пауза / Продолжить">⏸</button>
+      <span id="tts-info" class="tts-info"></span>
+      <select id="tts-rate" class="select tts-rate-sel">
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2×</option>
+      </select>
+      <select id="tts-voice" class="select tts-voice-sel"></select>
     </div>
 
     <div id="reader-bottom" class="reader-bar reader-bottom">
@@ -114,9 +134,11 @@
         <div class="theme-swatches">
           <button class="swatch" data-theme="day" title="День" style="background:#ffffff;color:#222"></button>
           <button class="swatch" data-theme="sepia" title="Сепия" style="background:#f5ecd9;color:#5b4636"></button>
-          <button class="swatch" data-theme="grey" title="Серая" style="background:#cfd2d4;color:#222"></button>
-          <button class="swatch" data-theme="night" title="Ночь" style="background:#15171a;color:#cbd0d6"></button>
-          <button class="swatch" data-theme="black" title="Чёрная" style="background:#000;color:#bdbdbd"></button>
+          <button class="swatch" data-theme="grey"     title="Серая"    style="background:#cfd2d4;color:#222"></button>
+          <button class="swatch" data-theme="dusk"     title="Сумерки"  style="background:#2b2e33;color:#dde1e7"></button>
+          <button class="swatch" data-theme="night"    title="Ночь"     style="background:#15171a;color:#cbd0d6"></button>
+          <button class="swatch" data-theme="terminal" title="Терминал" style="background:#0d1117;color:#3fb950">●</button>
+          <button class="swatch" data-theme="black"    title="Чёрная"   style="background:#000;color:#bdbdbd"></button>
         </div>
       </div>
       <div class="setting-row">
@@ -138,8 +160,17 @@
       <div class="setting-row">
         <span class="setting-label">Шрифт</span>
         <select id="font-family" class="select">
-          <option value="serif">С засечками</option>
-          <option value="sans">Без засечек</option>
+          <optgroup label="С засечками">
+            <option value="merriweather">Merriweather</option>
+            <option value="lora">Lora</option>
+            <option value="pt-serif">PT Serif</option>
+            <option value="georgia">Georgia</option>
+          </optgroup>
+          <optgroup label="Без засечек">
+            <option value="open-sans">Open Sans</option>
+            <option value="nunito">Nunito</option>
+            <option value="pt-sans">PT Sans</option>
+          </optgroup>
         </select>
       </div>
       <div class="setting-row">

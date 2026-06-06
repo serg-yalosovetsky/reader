@@ -39,16 +39,61 @@ SPA без сборки: `frontend/index.html` + `css/theme.css` + `js/app.js` +
   SSH-туннелю (`ssh -N -L 8124:127.0.0.1:8123`, в обход SSO) + `getComputedStyle`/
   `getBoundingClientRect` (см. историю фикса).
 
+## foliate-js — координаты в scrolled-режиме (критично для TTS)
+- `pager.start` = `#container.scrollTop` (смещение от верха документа)
+- `pager.size` = высота видимой области (viewport height)
+- iframe = вся глава (30 000–50 000 px), `document.scrollTop = 0` всегда
+- `elementFromPoint(x, y)` внутри iframe: **document-координаты** (не viewport)
+- `getBoundingClientRect()` внутри iframe: относительно iframe viewport (= видимая область)
+- Прокрутка: `view.renderer.shadowRoot?.querySelector('#container')?.scrollBy({top, behavior:'smooth'})`
+
+## TTS (Text-to-Speech)
+Состояние: `ttsSt` (константа, не реактивная). Весь код в `app.js`.
+
+### Архитектура
+- `ttsExtract()` — извлекает текст видимой страницы. Три уровня fallback:
+  1. `elementFromPoint`-зонд → видимые блоки `p/div/li/blockquote`
+  2. `bookDoc.body.innerText` если блоков < 5 и iframe высокий (EPUB без `<p>`)
+  3. Второй fallback если extracted < 300 символов — весь body
+  Вырезает «Примечания:» / «Footnotes» и ниже (`TTS_NOTES_RE`), URL, пустые строки.
+- `ttsSplit(text)` — режет на чанки по предложениям (не более ~500 символов).
+- `ttsSpeakChunk()` — async: `fetch /api/tts/synth` → `new Audio(url)` → `play()` →
+  `requestAnimationFrame(ttsWordRaf)`. Хранит prefetch следующего чанка для устранения паузы.
+- `ttsWordRaf()` — RAF-цикл подсветки слов + **автопрокрутка**:
+  - Подсветка: `findCharRange(bookDoc.body, _chunkBodyOffset + wt.charIndex, wt.charLength)` →
+    `CSS.highlights.set('tts-word', new Highlight(range))` (CSS Highlight API)
+  - **Автопрокрутка** (scrolled-режим): если `rect.bottom > viewH * 0.82`,
+    `#container.scrollBy({top: rect.top - viewH * 0.25, behavior:'smooth'})`
+- `ttsStart()` — если `chunks.length > 0 && idx < chunks.length`, возобновляет с
+  сохранённой позиции (не перечитывает страницу).
+- `ttsStop()` — обнуляет `audio`, сохраняет `chunks`/`idx` (пауза с позицией).
+
+### Вспомогательные функции
+- `findTextOffset(el, searchText)` — TreeWalker для поиска char-смещения.
+- `findCharRange(root, start, len)` — TreeWalker для Range по char-позиции.
+- `ttsClearHighlights()` — очищает `CSS.highlights` и RAF.
+- `_chunkBodyOffset` — смещение начала текущего чанка в `bookDoc.body`.
+
+### Автодетект языка
+Кириллица → ru-голос из `allVoices`, иначе → en-голос. Дефолт: `xenia`.
+
+### bookCSS()
+Содержит `::highlight(tts-word) { background: #e8a000; color: #000 }` —
+подсветка текущего слова. Работает только в браузерах с CSS Highlight API (Chrome 105+).
+
+## Библиотека
+- `bookCard(w)` — карточка с кнопкой `×` (`.book-del-btn`) в левом верхнем углу обложки.
+  Появляется при hover, удаляет книгу через `DELETE /api/library/{id}`.
+- Фильтр `#lib-filter` — поиск по заголовку/автору, включая Calibre-карточки.
+- Calibre-карточка (`calibreCard`) — бейдж «Calibre», клик = импорт + открытие.
+
 ## Навигация (app.js)
 - **Зоны клика**: `#tap-prev`/`#tap-next` (по 22% по краям, поверх foliate-view); центр
   свободен для выделения/ссылок.
 - **Клавиши** (`handleKey`, на document и на каждом doc книги через `load`): ←/PageUp →
   prev; →/PageDown → next; пробел → next, Shift+пробел → prev; Home/End → 0/1.
-
-## Библиотека и обложки
-- Карточки: `bookCard` — обложка `<img src="/api/reader/{id}/cover" onerror="this.remove()">`
-  поверх заглушки с названием (если обложки нет/ошибка — видна заглушка).
-- Прогресс-бар по `ratio`.
+- **Колесо прокрутки** в scrolled-режиме: в конце главы → `view.next()`.
+- **TOC**: первый элемент → `view.goToFraction(0)` (весь файл с начала).
 
 ## Прочие экраны
 - Форма «Добавить» (ingest), «Загрузить файл», «⇄ ReadEra» (sync), «↻ Обновления»

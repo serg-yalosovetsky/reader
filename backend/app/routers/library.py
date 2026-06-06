@@ -139,3 +139,24 @@ async def upload_book(
     session.commit()
     session.refresh(work)
     return work
+
+
+@router.delete("/{work_id}")
+def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
+    """Удалить книгу из библиотеки (файл + БД)."""
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "work not found")
+    for p in session.exec(select(Progress).where(Progress.work_id == work_id)).all():
+        session.delete(p)
+    for m in session.exec(select(Monitored).where(Monitored.work_id == work_id)).all():
+        session.delete(m)
+    if work.file_path:
+        try: os.remove(work.file_path)
+        except OSError: pass
+    if work.cover_path:
+        try: os.remove(work.cover_path)
+        except OSError: pass
+    session.delete(work)
+    session.commit()
+    return {"ok": True}

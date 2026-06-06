@@ -11,28 +11,65 @@ const api = {
 // ===================== Настройки вида (localStorage) =====================
 const PREFS_KEY = 'reader.prefs'
 const prefs = Object.assign(
-  { theme: 'day', fontScale: 1, marginLevel: 1, fontFamily: 'serif', flow: 'paginated', columns: 1 },
+  { theme: 'day', fontScale: 1, marginLevel: 1, fontFamily: 'merriweather', flow: 'paginated', columns: 1 },
   JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'),
 )
+if (prefs.fontFamily === 'serif') prefs.fontFamily = 'merriweather'
+if (prefs.fontFamily === 'sans')  prefs.fontFamily = 'open-sans'
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
 const MARGIN_INLINE = { 0: 760, 1: 620, 2: 480 } // уровень полей → max-inline-size (меньше = шире поля)
 const MARGIN_NAME = { 0: 'узк.', 1: 'сред.', 2: 'шир.' }
+const FONT_STACKS = {
+  'merriweather': '"Merriweather", Georgia, serif',
+  'lora':         '"Lora", Georgia, serif',
+  'pt-serif':     '"PT Serif", Georgia, serif',
+  'georgia':      'Georgia, "Times New Roman", serif',
+  'open-sans':    '"Open Sans", system-ui, sans-serif',
+  'nunito':       '"Nunito", system-ui, sans-serif',
+  'pt-sans':      '"PT Sans", system-ui, sans-serif',
+}
+const GFONTS = 'https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap'
 
 document.documentElement.dataset.theme = prefs.theme
 
 // ===================== БИБЛИОТЕКА =====================
+let libWorks = [], libCalibre = [], libProgress = {}, libUpdated = new Set()
+
 async function loadLibrary() {
-  const works = await api.get('/api/library')
-  // Отметить книги, у которых мониторинг нашёл новые главы.
+  libWorks = await api.get('/api/library')
   const monitored = await api.get('/api/monitored').catch(() => [])
-  const updated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
+  libUpdated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
+  libProgress = {}
+  for (const w of libWorks) {
+    const prog = await api.get(`/api/progress/${w.id}`).catch(() => ({ ratio: 0 }))
+    libProgress[w.id] = prog.ratio || 0
+  }
+  // Загружаем Calibre один раз (фоном, не блокируем рендер)
+  api.get('/api/calibre/books').then(books => { libCalibre = books || [] }).catch(() => {})
+  applyLibFilter('')
+}
+
+function applyLibFilter(q) {
+  const norm = (s) => (s || '').toLowerCase()
+  const match = (s) => norm(s).includes(norm(q))
   const grid = $('#book-grid')
   grid.innerHTML = ''
-  $('#lib-empty').hidden = works.length > 0
-  for (const w of works) {
-    const prog = await api.get(`/api/progress/${w.id}`).catch(() => ({ ratio: 0 }))
-    grid.append(bookCard(w, prog.ratio || 0, updated.has(w.id)))
+  // Свои книги: показываем всегда (с фильтром если есть)
+  const filtered = q
+    ? libWorks.filter(w => match(w.title) || match(w.author))
+    : libWorks
+  for (const w of filtered) {
+    grid.append(bookCard(w, libProgress[w.id] || 0, libUpdated.has(w.id)))
   }
+  // Calibre: показываем только при активном фильтре (и только не импортированные)
+  if (q && libCalibre.length) {
+    const importedIds = new Set(libWorks.map(w => w.calibre_id).filter(Boolean))
+    const calFiltered = libCalibre.filter(
+      b => !importedIds.has(b.calibre_id) && (match(b.title) || match(b.authors))
+    )
+    for (const b of calFiltered) grid.append(calibreCard(b))
+  }
+  $('#lib-empty').hidden = grid.children.length > 0
 }
 
 function bookCard(w, ratio, hasUpdate) {
@@ -45,13 +82,51 @@ function bookCard(w, ratio, hasUpdate) {
     : fallback
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}${badge}</div>
+    <div class="book-cover">${cover}${badge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
     <div class="book-progress"><i style="width:${pct}%"></i></div>`
   card.addEventListener('click', () => openReader(w))
+  card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
+    e.stopPropagation()
+    if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return
+    card.style.opacity = '0.4'; card.style.pointerEvents = 'none'
+    try {
+      const r = await fetch(`/api/library/${w.id}`, { method: 'DELETE' })
+      if (r.ok) card.remove()
+      else { card.style.opacity = ''; card.style.pointerEvents = ''; alert('Ошибка удаления') }
+    } catch { card.style.opacity = ''; card.style.pointerEvents = '' }
+  })
+  return card
+}
+
+function calibreCard(b) {
+  const card = document.createElement('div')
+  card.className = 'book-card'
+  const fallback = `<span class="cover-fallback">${escapeHtml(b.title || 'Без названия')}</span>`
+  const cover = b.has_cover
+    ? `<img src="/api/calibre/${b.calibre_id}/cover" alt="" onerror="this.remove()" />${fallback}`
+    : fallback
+  card.innerHTML = `
+    <div class="book-cover" style="position:relative">${cover}<span class="calibre-badge">Calibre</span></div>
+    <div class="book-meta">
+      <div class="b-title">${escapeHtml(b.title || 'Без названия')}</div>
+      <div class="b-author">${escapeHtml(b.authors || '')}</div>
+    </div>
+    <div class="book-progress"><i style="width:0%"></i></div>`
+  card.addEventListener('click', async () => {
+    card.style.opacity = '0.5'; card.style.pointerEvents = 'none'
+    try {
+      const work = await api.post(`/api/calibre/import/${b.calibre_id}`, {})
+      await loadLibrary()
+      openReader(work)
+    } catch (err) {
+      card.style.opacity = ''; card.style.pointerEvents = ''
+      alert('Не удалось открыть книгу из Calibre: ' + err.message)
+    }
+  })
   return card
 }
 
@@ -177,6 +252,7 @@ let currentWork = null
 let saveTimer = null
 
 async function openReader(work) {
+  ttsStop()
   currentWork = work
   $('#library').hidden = true
   $('#reader').hidden = false
@@ -220,6 +296,7 @@ function onRelocate(e) {
     if (!currentWork) return
     api.put(`/api/progress/${currentWork.id}`, { ratio: fraction || 0, locator: cfi || '' }).catch(() => {})
   }, 900)
+  if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
 }
 
 // Применение темы/шрифта/полей к содержимому книги.
@@ -228,9 +305,9 @@ function resolvedColor(varName) {
 }
 function bookCSS() {
   const fg = resolvedColor('--fg'), bg = resolvedColor('--bg'), accent = resolvedColor('--accent')
-  const fam = prefs.fontFamily === 'sans'
-    ? 'var(--font-sans, system-ui, sans-serif)'
-    : '"PT Serif", Georgia, "Times New Roman", serif'
+  const isDark = ['dusk', 'night', 'terminal', 'black'].includes(prefs.theme)
+  const colorScheme = isDark ? 'dark' : 'light'
+  const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['merriweather']
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.
   // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
   const sidePad = { 0: 4, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
@@ -245,13 +322,16 @@ function bookCSS() {
        body { padding: 0 ${sidePad}% !important; }
        img, svg, video, figure { max-width: 100% !important; }`
     : ''
-  return `
-    html { color: ${fg}; background: ${bg}; font-size: ${Math.round(prefs.fontScale * 100)}%; }
+  return `@import url('${GFONTS}');
+    html, body { color-scheme: ${colorScheme}; background: ${bg} !important; color: ${fg} !important; }
+    html { font-size: ${Math.round(prefs.fontScale * 100)}%; }
     body { font-family: ${fam}; }
     ${scrolledBody}
     a:link, a:visited { color: ${accent}; }
     p, li, blockquote, dd { line-height: 1.55; text-align: justify; hyphens: auto; }
     img { max-width: 100%; height: auto; }
+    .tts-reading { background: ${accent}28 !important; outline: 2px solid ${accent}88; outline-offset: 3px; border-radius: 3px; }
+    ::highlight(tts-word) { background-color: ${accent}; color: #fff; border-radius: 2px; }
   `
 }
 function applyViewStyles() {
@@ -277,13 +357,20 @@ function applyViewStyles() {
 function buildTOC() {
   const toc = view?.book?.toc || []
   const list = $('#toc-list'); list.innerHTML = ''
+  let _firstToc = true
   const add = (items, sub) => {
     for (const it of items) {
       const a = document.createElement('a')
       a.textContent = it.label || '—'
       if (sub) a.className = 'toc-sub'
       a.href = '#'
-      a.addEventListener('click', (ev) => { ev.preventDefault(); view.goTo(it.href); closePanels() })
+      const _isFirst = _firstToc && !sub
+      if (!sub) _firstToc = false
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault()
+        if (_isFirst) view.goToFraction(0); else view.goTo(it.href)
+        closePanels()
+      })
       list.append(a)
       if (it.subitems?.length) add(it.subitems, true)
     }
@@ -293,6 +380,7 @@ function buildTOC() {
 
 // ===================== Навигация и панели =====================
 $('#back-btn').addEventListener('click', () => {
+  ttsStop()
   $('#reader').hidden = true
   $('#library').hidden = false
   $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
@@ -319,7 +407,43 @@ function handleKey(e) {
 }
 document.addEventListener('keydown', handleKey)
 // Когда фокус внутри книги (iframe), события клавиш ловим и там.
-function attachKeysToDoc(e) { try { e.detail.doc.addEventListener('keydown', handleKey) } catch {} }
+let wheelThrottle = false
+function wheelNav(deltaY) {
+  if (!view || prefs.flow === 'scrolled') return
+  if (wheelThrottle) return
+  wheelThrottle = true
+  setTimeout(() => { wheelThrottle = false }, 400)
+  if (deltaY > 0) view.next(); else view.prev()
+}
+let bookDoc = null
+function attachKeysToDoc(e) {
+  bookDoc = e.detail.doc
+  try {
+    e.detail.doc.addEventListener('keydown', handleKey)
+    e.detail.doc.addEventListener('wheel', (ev) => {
+      if (prefs.flow === 'scrolled') {
+        if (ev.deltaY < 0 && (view?.renderer?.start || 0) <= 0) {
+          ev.preventDefault(); view.prev(); return
+        }
+        if (ev.deltaY > 0) {
+          const _p = view?.renderer
+          const _iH = bookDoc?.defaultView?.innerHeight || 99999
+          if (_p && (_p.start + _p.size) >= _iH - 150) {
+            ev.preventDefault(); view.next(); return
+          }
+        }
+        return
+      }
+      ev.preventDefault()
+      wheelNav(ev.deltaY)
+    }, { passive: false })
+  } catch {}
+}
+$('#view-host').addEventListener('wheel', (e) => {
+  if ($('#reader').hidden || !view || prefs.flow === 'scrolled') return
+  e.preventDefault()
+  wheelNav(e.deltaY)
+}, { passive: false })
 
 // Переприменять раскладку при изменении размера окна (особенно ширину «ленты»).
 let resizeTimer = null
@@ -351,17 +475,29 @@ $('#search-form').addEventListener('submit', async (e) => {
   view.clearSearch?.()
   if (!q) { meta.textContent = ''; return }
   const seq = ++searchSeq // отменяем результаты прошлого запроса
-  meta.textContent = 'Поиск…'
+  // OR-поиск: «слово1|слово2» → несколько последовательных запросов.
+  const terms = q.split('|').map(t => t.trim()).filter(Boolean)
+  const isMulti = terms.length > 1
+  meta.textContent = isMulti ? `Поиск по ${terms.length} словам…` : 'Поиск…'
   let count = 0
   try {
-    for await (const r of view.search({ query: q })) {
-      if (seq !== searchSeq) return // начался новый поиск
-      if (r === 'done') break
-      if (r.subitems) {
-        for (const sub of r.subitems) { count++; results.append(searchResult(r.label, sub)) }
-        meta.textContent = `Найдено: ${count}`
-      } else if (typeof r.progress === 'number') {
-        meta.textContent = `Поиск… ${Math.round(r.progress * 100)}% (найдено ${count})`
+    for (const term of terms) {
+      if (seq !== searchSeq) return
+      for await (const r of view.search({ query: term })) {
+        if (seq !== searchSeq) return
+        if (r === 'done') break
+        if (r.subitems) {
+          for (const sub of r.subitems) {
+            count++
+            const lbl = isMulti ? ((r.label ? r.label + ' ' : '') + '[' + term + ']') : r.label
+            results.append(searchResult(lbl, sub))
+          }
+          meta.textContent = `Найдено: ${count}`
+        } else if (typeof r.progress === 'number') {
+          meta.textContent = isMulti
+            ? `«${term}»: ${Math.round(r.progress * 100)}% (всего ${count})`
+            : `Поиск… ${Math.round(r.progress * 100)}% (найдено ${count})`
+        }
       }
     }
     if (seq === searchSeq) meta.textContent = count ? `Найдено совпадений: ${count}` : 'Ничего не найдено'
@@ -380,6 +516,458 @@ function searchResult(label, sub) {
   a.addEventListener('click', (ev) => { ev.preventDefault(); view.goTo(sub.cfi); closePanels() })
   return a
 }
+
+
+// ===================== TTS =====================
+const ttsSt = { active: false, paused: false, chunks: [], idx: 0, rate: 1, voiceId: 'xenia', voiceLang: 'ru-RU', advance: false, currentEl: null, audio: null, rafId: null, wordIdx: 0, wordTimings: [], allVoices: [], _chunkBodyOffset: 0, prefetch: {} }
+
+// Паттерн «визуального шума» — строки, которые TTS не должен произносить
+const TTS_SKIP = /^[\s*\-~=_|•·×✦◦∗#—]{2,}$|^(\*\s+){2,}\*?$|^(-\s+){2,}-?$/
+
+function ttsCleanLine(s) {
+  if (TTS_SKIP.test(s)) return ''
+  if (s.length <= 6 && /^[\d\s.,;:!?()/\\\[\]]+$/.test(s)) return ''
+  s = s.replace(/https?:\/\/\S+/gi, '').trim()
+  if (!s || s.length < 2) return ''
+  return s
+}
+
+function ttsSplit(text) {
+  const chunks = []
+  for (const raw of text.split(/\n+/)) {
+    const s = ttsCleanLine(raw.trim())
+    if (!s || s.length < 2) continue
+    if (s.length <= 3800) { chunks.push(s); continue }
+    const sents = s.match(/[^.!?…]+[.!?…»]+\s*/g) || [s]
+    for (const sent of sents) { const t = sent.trim(); if (t.length > 1) chunks.push(t) }
+  }
+  return chunks
+}
+
+// Заголовки, после которых начинается секция примечаний/сносок
+const TTS_NOTES_RE = /^(примечани[яе]|сноск[аи]|footnotes?|notes?|переводчик|перевод\s*:)\s*:?\s*$/i
+
+function ttsExtract() {
+  if (!bookDoc) return []
+  let blocks = [...bookDoc.querySelectorAll('p, h1, h2, h3, h4, h5, li, blockquote')]
+
+  // Fallback: EPUB с текстом прямо в body (без <p>) — используем body.innerText
+  const _iH = bookDoc.defaultView?.innerHeight || 0
+  if (blocks.length < 5 && _iH > 2000) {
+    try {
+      const rawText = (bookDoc.body?.innerText || '').trim()
+      if (rawText.length > 200) {
+        const lines = rawText.split(/\n/).map(l => l.trim()).filter(l => l.length >= 5)
+        const notesLine = lines.findIndex(l => TTS_NOTES_RE.test(l))
+        const storyLines = notesLine > 0 ? lines.slice(0, notesLine) : lines
+        if (storyLines.length > 0) {
+          const pager = view?.renderer
+          const pct = pager ? Math.max(0, pager.start / Math.max(_iH - (pager.size||800), 1)) : 0
+          const startLine = Math.floor(pct * storyLines.length)
+          return ttsSplit(storyLines.slice(Math.max(0, startLine - 1)).join('\n'))
+        }
+      }
+    } catch {}
+  }
+
+  if (!blocks.length) return ttsSplit(bookDoc.body?.innerText || '')
+
+  const notesIdx = blocks.findIndex(el => TTS_NOTES_RE.test(el.innerText?.trim() || ''))
+  if (notesIdx > 0) blocks = blocks.slice(0, notesIdx)
+
+  let startIdx = 0
+  let startFound = false
+
+  // 1. Старт с выделения
+  try {
+    const sel = bookDoc.getSelection()
+    if (sel && !sel.isCollapsed) {
+      let el = sel.anchorNode?.nodeType === Node.TEXT_NODE ? sel.anchorNode.parentElement : sel.anchorNode
+      while (el && !['P','H1','H2','H3','H4','H5','LI','BLOCKQUOTE'].includes(el.tagName || '')) el = el.parentElement
+      const i = el ? blocks.indexOf(el) : -1
+      if (i >= 0) { startIdx = i; startFound = true }
+    }
+  } catch {}
+
+  // 2. Определяем первый видимый блок
+  if (!startFound) {
+    try {
+      const pager = view?.renderer
+      const pgStart = pager?.start ?? 0
+      const pgSize  = pager?.size  ?? 800
+      if (pager?.scrolled) {
+        // SCROLLED: iframe = вся глава (высота 30000-50000px), docScrollY=0
+        // pager.start = #container.scrollTop = document-координата видимой области
+        // elementFromPoint(x, y) принимает y в document-пространстве (не viewport!)
+        // поэтому y = pager.start + смещение
+        outer: for (let row = 0; row < 6; row++) {
+          for (let col = 0; col < 5; col++) {
+            const x = 20 + col * 80
+            const y = pgStart + 15 + row * 30
+            let node = bookDoc.elementFromPoint(x, y)
+            while (node && node.tagName !== 'HTML' && node.tagName !== 'BODY') {
+              const i = blocks.indexOf(node)
+              if (i >= 0) { startIdx = i; startFound = true; break outer }
+              node = node.parentElement
+            }
+          }
+        }
+        // Запасной вариант: первый блок, чья нижняя граница >= pgStart
+        if (!startFound) {
+          const i = blocks.findIndex(el => (el.offsetTop || 0) + (el.offsetHeight || 30) > pgStart)
+          if (i >= 0) startIdx = i
+        }
+      } else {
+        // PAGINATED: iframe горизонтально расширен, x = pager.start + offset
+        outer: for (let row = 0; row < 5; row++) {
+          for (let col = 0; col < 5; col++) {
+            const x = pgStart + 20 + col * Math.round(pgSize * 0.18)
+            const y = 15 + row * 30
+            let node = bookDoc.elementFromPoint(x, y)
+            while (node && node.tagName !== 'HTML' && node.tagName !== 'BODY') {
+              const i = blocks.indexOf(node)
+              if (i >= 0) { startIdx = i; break outer }
+              node = node.parentElement
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Фильтр: только блоки видимой области
+  let src
+  try {
+    const pager = view?.renderer
+    if (pager) {
+      const pgStart = pager.start ?? 0
+      const pgEnd   = pgStart + (pager.size ?? 800)
+      const pageBlocks = blocks.slice(startIdx).filter(el => {
+        try {
+          if (pager.scrolled) {
+            // scrolled: offsetTop = document y = те же координаты что pager.start
+            const top = el.offsetTop || 0
+            return top + (el.offsetHeight || 30) > pgStart + 2 && top < pgEnd - 2
+          } else {
+            const r = el.getBoundingClientRect()
+            return r.width > 0 && r.height > 0 && r.right > pgStart + 2 && r.left < pgEnd - 2
+          }
+        } catch { return false }
+      })
+      src = pageBlocks.length > 0 ? pageBlocks : blocks.slice(startIdx, startIdx + 8)
+    }
+  } catch {}
+  if (!src) src = blocks.slice(startIdx)
+  const extracted = src.map(el => el.innerText?.trim()).filter(Boolean).join('\n')
+
+  // Если текст подозрительно короткий, а body содержит намного больше — fallback на body
+  try {
+    const bodyText = (bookDoc.body?.innerText || '').trim()
+    if (extracted.length < 300 && bodyText.length > extracted.length + 500) {
+      const lines = bodyText.split(/\n/).map(l => l.trim()).filter(l => l.length >= 5)
+      const notesLine = lines.findIndex(l => TTS_NOTES_RE.test(l))
+      const storyLines = notesLine > 0 ? lines.slice(0, notesLine) : lines
+      if (storyLines.join('').length > extracted.length + 200) {
+        const pager = view?.renderer
+        const iH2 = bookDoc.defaultView?.innerHeight || 0
+        const pct2 = (pager && iH2 > 0) ? Math.max(0, pager.start / Math.max(iH2 - (pager.size||800), 1)) : 0
+        const sl = Math.floor(pct2 * storyLines.length)
+        return ttsSplit(storyLines.slice(Math.max(0, sl - 1)).join('\n'))
+      }
+    }
+  } catch {}
+
+  return ttsSplit(extracted)
+}
+
+// Вспомогательные: подсветка абзаца и слова
+function findTextOffset(el, searchText) {
+  if (!el || !bookDoc || !searchText) return -1
+  try {
+    const walker = bookDoc.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let pos = 0, node
+    while ((node = walker.nextNode())) {
+      const idx = node.nodeValue.indexOf(searchText)
+      if (idx >= 0) return pos + idx
+      pos += node.nodeValue.length
+    }
+  } catch {}
+  return -1
+}
+function ttsFindEl(text) { return null } // legacy stub
+function ttsClearHighlights() {
+  if (!bookDoc) return
+  try { bookDoc.querySelectorAll('.tts-reading').forEach(el => el.classList.remove('tts-reading')) } catch {}
+  try { bookDoc.defaultView?.CSS?.highlights?.delete('tts-word') } catch {}
+}
+function findCharRange(root, start, len) {
+  if (!bookDoc || !root) return null
+  const walker = bookDoc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let pos = 0, sNode, sOff, eNode, eOff, node
+  while ((node = walker.nextNode())) {
+    const nl = node.length
+    if (!sNode && pos + nl > start) { sNode = node; sOff = start - pos }
+    if (sNode && pos + nl >= start + len) { eNode = node; eOff = start + len - pos; break }
+    pos += nl
+  }
+  if (!sNode) return null
+  try {
+    const r = bookDoc.createRange()
+    r.setStart(sNode, Math.min(sOff, sNode.length))
+    r.setEnd(eNode || sNode, Math.min(eOff ?? sOff + len, (eNode || sNode).length))
+    return r
+  } catch { return null }
+}
+
+function ttsPrecomputeWords(text, words) {
+  let pos = 0
+  const result = []
+  for (const w of words || []) {
+    if (!w.text) continue
+    const idx = text.indexOf(w.text, pos)
+    if (idx >= 0) { result.push({ t: w.t, charIndex: idx, charLength: w.text.length }); pos = idx + w.text.length }
+  }
+  return result
+}
+
+function ttsWordRaf() {
+  if (!ttsSt.active || ttsSt.paused || !ttsSt.audio || !bookDoc) return
+  const ms = ttsSt.audio.currentTime * 1000
+  while (ttsSt.wordIdx < ttsSt.wordTimings.length && ttsSt.wordTimings[ttsSt.wordIdx].t <= ms) {
+    const wt = ttsSt.wordTimings[ttsSt.wordIdx++]
+    try {
+      const range = findCharRange(bookDoc.body, ttsSt._chunkBodyOffset + wt.charIndex, wt.charLength)
+      if (range) {
+        const H = bookDoc.defaultView?.Highlight
+        const hs = bookDoc.defaultView?.CSS?.highlights
+        if (H && hs) hs.set('tts-word', new H(range))
+        // Auto-scroll: keep highlighted word in view (scrolled mode only)
+        try {
+          const pager = view?.renderer
+          if (pager?.scrolled) {
+            const rect = range.getBoundingClientRect()
+            const viewH = pager.size || bookDoc.defaultView?.innerHeight || 800
+            if (rect.bottom > viewH * 0.82 || rect.top < 0) {
+              const container = view.renderer.shadowRoot?.querySelector('#container')
+              if (container) container.scrollBy({ top: rect.top - viewH * 0.25, behavior: 'smooth' })
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  if (ttsSt.wordIdx < ttsSt.wordTimings.length) ttsSt.rafId = requestAnimationFrame(ttsWordRaf)
+}
+
+async function ttsSpeakChunk() {
+  if (!ttsSt.active || ttsSt.idx >= ttsSt.chunks.length) {
+    if (ttsSt.active) { ttsClearHighlights(); ttsSt.advance = true; view?.next() }
+    return
+  }
+  const text = ttsSt.chunks[ttsSt.idx]
+  ttsClearHighlights()
+  ttsSt.wordIdx = 0; ttsSt.wordTimings = []
+
+  // Позиция чанка в body для подсветки слов
+  ttsSt._chunkBodyOffset = 0
+  if (bookDoc?.body) {
+    const s = text.trim().substring(0, 30)
+    if (s) { const off = findTextOffset(bookDoc.body, s); if (off >= 0) ttsSt._chunkBodyOffset = off }
+  }
+
+  const total = ttsSt.chunks.length
+  if (total) $('#tts-info').textContent = `${ttsSt.idx + 1} / ${total} (${Math.round((ttsSt.idx + 1) / total * 100)}%)`
+
+  // Автодетект языка: Кириллица → русский голос, Latin → английский
+  const _cyr = (text.match(/[\u0400-\u04FF]/g) || []).length
+  const _lat = (text.match(/[a-zA-Z]/g) || []).length
+  let voiceId = ttsSt.voiceId
+  if (_cyr > _lat * 0.5 + 2 && !ttsSt.voiceLang.startsWith('ru'))
+    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('ru')) || {}).id || voiceId
+  else if (_lat > _cyr * 0.5 + 5 && !ttsSt.voiceLang.startsWith('en'))
+    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('en')) || {}).id || voiceId
+
+  const rateNum = Math.round((ttsSt.rate - 1) * 100)
+  const rateStr = (rateNum >= 0 ? '+' : '') + rateNum + '%'
+
+  // Prefetch: ждём если уже есть, иначе запрашиваем
+  let audioUrl, wordTimingsReady
+  if (ttsSt.prefetch[ttsSt.idx] instanceof Promise) {
+    const cached = await ttsSt.prefetch[ttsSt.idx].catch(() => null)
+    delete ttsSt.prefetch[ttsSt.idx]
+    if (cached && ttsSt.active) { audioUrl = cached.audioUrl; wordTimingsReady = cached.wordTimings }
+  }
+  if (!audioUrl) {
+    try {
+      const resp = await fetch('/api/tts/synth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: voiceId, rate: rateStr })
+      })
+      if (!resp.ok) throw new Error(await resp.text())
+      const d = await resp.json()
+      audioUrl = d.audio_url
+      wordTimingsReady = ttsPrecomputeWords(text, d.words)
+    } catch (e) {
+      console.error('TTS synth:', e)
+      if (ttsSt.active) { ttsSt.idx++; ttsSpeakChunk() }
+      return
+    }
+  }
+  if (!ttsSt.active) return
+
+  ttsSt.wordTimings = wordTimingsReady || []
+  ttsSt.wordIdx = 0
+
+  // Prefetch следующего чанка пока играет текущий
+  const _nextIdx = ttsSt.idx + 1
+  if (ttsSt.active && _nextIdx < ttsSt.chunks.length && !ttsSt.prefetch[_nextIdx]) {
+    const _nText = ttsSt.chunks[_nextIdx]
+    const _nCyr = (_nText.match(/[\u0400-\u04FF]/g) || []).length
+    const _nLat = (_nText.match(/[a-zA-Z]/g) || []).length
+    let _nVoice = ttsSt.voiceId
+    if (_nCyr > _nLat * 0.5 + 2 && !ttsSt.voiceLang.startsWith('ru'))
+      _nVoice = (ttsSt.allVoices.find(v => v.lang.startsWith('ru')) || {}).id || _nVoice
+    else if (_nLat > _nCyr * 0.5 + 5 && !ttsSt.voiceLang.startsWith('en'))
+      _nVoice = (ttsSt.allVoices.find(v => v.lang.startsWith('en')) || {}).id || _nVoice
+    ttsSt.prefetch[_nextIdx] = fetch('/api/tts/synth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: _nText, voice: _nVoice, rate: rateStr })
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => d ? { audioUrl: d.audio_url, wordTimings: ttsPrecomputeWords(_nText, d.words) } : null)
+      .catch(() => null)
+  }
+
+  const audio = new Audio(audioUrl)
+  ttsSt.audio = audio
+  audio.addEventListener('ended', () => {
+    if (ttsSt.audio !== audio) return
+    if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+    if (ttsSt.active && !ttsSt.paused) { ttsSt.idx++; ttsSpeakChunk() }
+  })
+  audio.addEventListener('error', () => {
+    if (ttsSt.audio !== audio) return
+    if (ttsSt.active) { ttsSt.idx++; ttsSpeakChunk() }
+  })
+  try { await audio.play() } catch {}
+  ttsSt.rafId = requestAnimationFrame(ttsWordRaf)
+}
+
+function ttsReadPage() {
+  ttsSt.chunks = ttsExtract()
+  ttsSt.idx = 0
+  ttsSpeakChunk()
+}
+
+function ttsStart() {
+  if (!view) return
+  const _oldAudio = ttsSt.audio; ttsSt.audio = null
+  if (_oldAudio) { _oldAudio.pause(); _oldAudio.src = '' }
+  if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+  ttsSt.active = true; ttsSt.paused = false; ttsSt.advance = false
+  // Возобновить с сохранённой позиции или начать с нуля
+  if (ttsSt.chunks.length > 0 && ttsSt.idx < ttsSt.chunks.length) {
+    ttsSpeakChunk()
+  } else {
+    ttsReadPage()
+  }
+  ttsUpdateUI()
+}
+
+function ttsStop() {
+  ttsSt.active = false; ttsSt.paused = false; ttsSt.advance = false; ttsSt.prefetch = {}
+  const _oldAudio = ttsSt.audio; ttsSt.audio = null
+  if (_oldAudio) { _oldAudio.pause(); _oldAudio.src = '' }
+  if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+  ttsClearHighlights()
+  ttsUpdateUI()
+}
+
+function ttsPauseResume() {
+  if (!ttsSt.active) { ttsStart(); return }
+  if (!ttsSt.paused) {
+    ttsSt.paused = true
+    if (ttsSt.audio) ttsSt.audio.pause()
+    if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+  } else {
+    ttsSt.paused = false
+    if (ttsSt.audio) { ttsSt.audio.play().catch(() => {}); ttsSt.rafId = requestAnimationFrame(ttsWordRaf) }
+    else ttsSpeakChunk()
+  }
+  ttsUpdateUI()
+}
+
+function ttsUpdateUI() {
+  const bar = $('#tts-bar'), btn = $('#tts-btn')
+  if (!bar || !btn) return
+  if (ttsSt.active) {
+    bar.hidden = false
+    $('#tts-play').textContent = ttsSt.paused ? '▶' : '⏸'
+    btn.classList.add('tts-active')
+  } else {
+    bar.hidden = true
+    $('#tts-info').textContent = ''
+    btn.classList.remove('tts-active')
+  }
+}
+
+async function ttsLoadVoices() {
+  const sel = $('#tts-voice')
+  if (!sel) return
+  try {
+    const data = await fetch('/api/tts/voices').then(r => r.json())
+    const voices = data.voices || []
+    ttsSt.allVoices = voices
+    sel.innerHTML = ''
+    const groups = {}
+    for (const v of voices) {
+      const grp = v.lang.startsWith('ru') ? 'Русский' : v.lang.startsWith('uk') ? 'Українська' : 'English'
+      if (!groups[grp]) groups[grp] = []
+      groups[grp].push(v)
+    }
+    for (const [label, list] of Object.entries(groups)) {
+      if (!list.length) continue
+      const g = document.createElement('optgroup')
+      g.label = label
+      for (const v of list) {
+        const o = document.createElement('option')
+        o.value = v.id; o.textContent = v.name
+        if (v.id === ttsSt.voiceId) o.selected = true
+        g.append(o)
+      }
+      sel.append(g)
+    }
+    if (!sel.value && voices.length) {
+      const first = voices[0]
+      sel.value = first.id; ttsSt.voiceId = first.id; ttsSt.voiceLang = first.lang
+    }
+  } catch (e) { console.error('ttsLoadVoices:', e) }
+}
+ttsLoadVoices()
+
+$('#tts-btn').addEventListener('click', () => ttsSt.active ? ttsPauseResume() : ttsStart())
+$('#tts-stop').addEventListener('click', ttsStop)
+$('#tts-play').addEventListener('click', ttsPauseResume)
+$('#tts-rate').addEventListener('change', (e) => {
+  ttsSt.rate = parseFloat(e.target.value)
+  if (ttsSt.active) {
+    ttsSt.prefetch = {}
+    const _ra = ttsSt.audio; ttsSt.audio = null
+    if (_ra) { _ra.pause(); _ra.src = '' }
+    if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+    ttsSpeakChunk()
+  }
+})
+$('#tts-voice').addEventListener('change', (e) => {
+  const v = ttsSt.allVoices.find(v => v.id === e.target.value)
+  ttsSt.voiceId = v?.id || e.target.value; ttsSt.voiceLang = v?.lang || ''
+  if (ttsSt.active) {
+    ttsSt.prefetch = {}
+    const _va = ttsSt.audio; ttsSt.audio = null
+    if (_va) { _va.pause(); _va.src = '' }
+    if (ttsSt.rafId) { cancelAnimationFrame(ttsSt.rafId); ttsSt.rafId = null }
+    ttsSpeakChunk()
+  }
+})
 
 // ===================== Настройки вида (UI) =====================
 function syncSettingsUI() {
@@ -417,3 +1005,7 @@ loadLibrary()
     }
   })
   .catch((e) => { $('#ingest-status').hidden = false; $('#ingest-status').textContent = 'Сервер недоступен: ' + e.message })
+
+$('#lib-filter').addEventListener('input', (e) => {
+  applyLibFilter(e.target.value.trim())
+})

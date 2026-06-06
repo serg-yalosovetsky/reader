@@ -15,11 +15,13 @@
 }
 
 /* --- Палитры --- */
-html[data-theme="day"]   { --bg:#ffffff; --bg-soft:#f3f4f6; --fg:#1f2227; --fg-dim:#6b7280; --line:#e5e7eb; --card:#ffffff; }
-html[data-theme="sepia"] { --bg:#f5ecd9; --bg-soft:#efe3c8; --fg:#5b4636; --fg-dim:#8a7256; --line:#e0d2b4; --card:#f8f1e2; }
-html[data-theme="grey"]  { --bg:#cfd2d4; --bg-soft:#c2c6c9; --fg:#23262a; --fg-dim:#565b60; --line:#b3b8bc; --card:#d6d9db; }
-html[data-theme="night"] { --bg:#15171a; --bg-soft:#1d2024; --fg:#cbd0d6; --fg-dim:#8b929b; --line:#2a2e34; --card:#1b1e22; }
-html[data-theme="black"] { --bg:#000000; --bg-soft:#0c0c0c; --fg:#bdbdbd; --fg-dim:#6f6f6f; --line:#1a1a1a; --card:#0a0a0a; }
+html[data-theme="day"]   { color-scheme: light; --bg:#ffffff; --bg-soft:#f3f4f6; --fg:#1f2227; --fg-dim:#6b7280; --line:#e5e7eb; --card:#ffffff; }
+html[data-theme="sepia"] { color-scheme: light; --bg:#f5ecd9; --bg-soft:#efe3c8; --fg:#5b4636; --fg-dim:#8a7256; --line:#e0d2b4; --card:#f8f1e2; }
+html[data-theme="grey"]  { color-scheme: light; --bg:#cfd2d4; --bg-soft:#c2c6c9; --fg:#23262a; --fg-dim:#565b60; --line:#b3b8bc; --card:#d6d9db; }
+html[data-theme="dusk"]     { color-scheme: dark; --bg:#2b2e33; --bg-soft:#32363c; --fg:#dde1e7; --fg-dim:#8b929b; --line:#3e4249; --card:#32363c; }
+html[data-theme="night"]    { color-scheme: dark; --bg:#15171a; --bg-soft:#1d2024; --fg:#cbd0d6; --fg-dim:#8b929b; --line:#2a2e34; --card:#1b1e22; }
+html[data-theme="terminal"] { color-scheme: dark; --bg:#0d1117; --bg-soft:#161b22; --fg:#3fb950; --fg-dim:#256935; --line:#21262d; --card:#161b22; --accent:#3fb950; --accent-text:#0d1117; }
+html[data-theme="black"]    { color-scheme: dark; --bg:#000000; --bg-soft:#0c0c0c; --fg:#bdbdbd; --fg-dim:#6f6f6f; --line:#1a1a1a; --card:#0a0a0a; }
 
 * { box-sizing: border-box; }
 
@@ -196,3 +198,46 @@ foliate-view { width: 100%; height: 100%; display: block; }
 .mon-row .mon-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 11px; background: var(--accent); color: var(--accent-text);
   padding: 2px 8px; border-radius: 999px; }
+
+/* ===================== TTS ===================== */
+.tts-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; flex: 0 0 auto;
+  background: var(--bg-soft); border-top: 1px solid var(--line);
+}
+.tts-info {
+  flex: 1; font-size: 12px; color: var(--fg-dim); text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tts-rate-sel { width: 5.5em; }
+.tts-voice-sel { flex: 1; min-width: 0; max-width: 200px; }
+.icon-btn.tts-active { color: var(--accent); }
+
+
+/* ===================== Lib filter + Calibre ===================== */
+.lib-filter-bar {
+  padding: 8px 20px 0;
+}
+#lib-filter {
+  width: 100%; max-width: 480px;
+  padding: 7px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+  color: var(--fg); font-size: 14px; outline: none;
+}
+#lib-filter:focus { border-color: var(--accent); }
+.calibre-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  background: #5c7cfa22; color: #5c7cfa;
+  border: 1px solid #5c7cfa55; border-radius: 4px;
+  padding: 1px 5px; position: absolute; top: 6px; left: 6px;
+}
+
+.book-del-btn {
+  position: absolute; top: 6px; left: 6px; z-index: 3;
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 13px; line-height: 1;
+  cursor: pointer; display: none; align-items: center; justify-content: center;
+  padding: 0; backdrop-filter: blur(2px);
+}
+.book-card:hover .book-del-btn { display: flex; }
+.book-del-btn:hover { background: #c0392b; }

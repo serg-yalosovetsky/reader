@@ -21,6 +21,8 @@
 - **beautifulsoup4 + lxml** — парсинг страниц (author.today/readli/searchfloor/фиды).
 - **FanFicFare** — движок скачивания для ficbook/fanfics.me/AO3/ffn. Запускается
   **в subprocess** (`python -c "from fanficfare.cli import main; main()"`).
+- **edge-tts** (pip) — TTS для en/uk голосов (WordBoundary тайминги).
+- **Silero TTS** (torch + soundfile + omegaconf) — локальный PyTorch-синтез для ru-голосов. Модель v4_ru (~130 MB), кеш: /root/.cache/torch/hub/.
 - **EbookLib** — сборка EPUB из HTML-секций (адаптеры author.today/readli/boosty).
 - **cloudscraper** — обход анти-бота **ficbook** (DDoS-Guard «Проверка безопасности»);
   httpx/обычный requests с дата-центрового IP получают 403.

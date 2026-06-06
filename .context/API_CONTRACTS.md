@@ -5,10 +5,11 @@
 FastAPI threadpool. Источник — `backend/app/routers/`.
 
 ## Библиотека — `library.py`
-- `GET  /api/library` → `[Work]` (новые сверху).
-- `GET  /api/library/{id}` → `Work` (404 если нет).
-- `POST /api/library/upload` (multipart `file`) → `Work`. Только .epub/.fb2; дедуп по SHA-1.
-- `POST /api/library/maintenance` → `{removed_duplicates, removed_monitored, covers_added}`.
+- `GET    /api/library` → `[Work]` (новые сверху).
+- `GET    /api/library/{id}` → `Work` (404 если нет).
+- `POST   /api/library/upload` (multipart `file`) → `Work`. Только .epub/.fb2; дедуп по SHA-1.
+- `DELETE /api/library/{id}` → `{deleted}`. Удаляет Work, прогресс, мониторинг, файл и обложку.
+- `POST   /api/library/maintenance` → `{removed_duplicates, removed_monitored, covers_added}`.
   Дедуп книг (оставляет самый полный файл), чистка мониторинга, бэкафилл обложек.
 
 ## Чтение — `reader.py`
@@ -19,6 +20,19 @@ FastAPI threadpool. Источник — `backend/app/routers/`.
 - `GET /api/progress/{work_id}` → `Progress` (пустой, если не открывалась).
 - `PUT /api/progress/{work_id}` `{ratio:0..1, locator}` → `Progress` (source=web).
 
+## TTS — `tts.py`
+- `GET  /api/tts/voices` → `{voices:[{id,name,lang}], default:"xenia"}`.
+- `POST /api/tts/synth` `{text, voice, rate}` → `{audio_url, words}`.
+  `words = [{t:ms, d:ms, text, charIndex, charLength}]` — пословные тайминги.
+  Кеш по SHA-1(voice|rate|text) → `.wav`/`.mp3` + `.json` в `data/tts/`.
+- `GET  /api/tts/audio/{key}` → бинарь WAV (Silero) или MP3 (edge-tts).
+
+**Движки:**
+- **Silero** (ru-RU): aidar / baya / kseniya / xenia (дефолт) / eugene.
+  Локальный PyTorch (venv: torch, soundfile, omegaconf). Тайминги — пропорциональные.
+- **edge-tts** (en-US/en-GB/uk-UA): jenny / guy / aria / sonia / polina / ostap.
+  Точные тайминги от WordBoundary.
+
 ## Скачивание — `ingest.py`
 - `POST /api/ingest` `{query}` → `Work`. query = URL (поиск по названию — TODO).
   Подставляет креды аккаунта для домена; ставит фик на мониторинг.
@@ -27,7 +41,8 @@ FastAPI threadpool. Источник — `backend/app/routers/`.
 ## Calibre — `calibre.py`
 - `GET  /api/calibre/status` → `{configured}`.
 - `GET  /api/calibre/books` → список книг библиотеки Calibre (из metadata.db).
-- `POST /api/calibre/import/{calibre_id}` → `Work` (копия в хранилище для чтения).
+- `GET  /api/calibre/{id}/cover` → обложка книги из Calibre (cover.jpg).
+- `POST /api/calibre/import/{calibre_id}` → `Work` (копия в хранилище + обложка если есть).
 
 ## ReadEra sync — `readera.py`
 - `GET  /api/readera/status` → `{available, latest_backup}`.

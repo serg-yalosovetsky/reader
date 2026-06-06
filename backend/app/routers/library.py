@@ -95,10 +95,40 @@ def list_works(session: Session = Depends(get_session)) -> list[Work]:
 
 @router.post("/refresh-covers")
 def refresh_covers(session: Session = Depends(get_session)) -> dict:
-    """Обновить обложки из author.today для всех книг библиотеки.
-    Для каждой книги ищем её на AT по названию+автору и берём og:image.
-    Перезаписывает обложку если AT вернул картинку."""
+    """Обновить обложки с author.today.
+    Только для книг из ficbook/readli/searchfloor (у них обложки — логотипы сайта).
+    Проверяет что AT вернул книгу того же автора."""
     from ...downloaders import authortoday as _at
+    from urllib.parse import urlparse
+
+    _ELIGIBLE_HOSTS = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
+
+    def _host_ok(url: str) -> bool:
+        h = (urlparse(url).hostname or "").lower()
+        return any(h.endswith(e) for e in _ELIGIBLE_HOSTS)
+
+    def _author_match(our: str, at_author: str) -> bool:
+        """Грубое сравнение авторов: хотя бы одно слово совпадает."""
+        if not our or not at_author:
+            return False
+        our_words = {w.lower().strip(".,") for w in our.split() if len(w) > 2}
+        at_words  = {w.lower().strip(".,") for w in at_author.split() if len(w) > 2}
+        return bool(our_words & at_words)
+
+    def _at_author(at_url: str) -> str:
+        """Получить автора с AT-страницы книги."""
+        try:
+            import httpx as _httpx
+            import re as _re
+            r = _httpx.get(at_url, timeout=10, follow_redirects=True,
+                           headers={"User-Agent": "Mozilla/5.0"})
+            _pat = "itemprop=['\"]{0,1}author['\"]{0,1}[^>]*>([^<]{2,60})<"
+            m = _re.search(_pat, r.text)
+            if not m:
+                m = _re.search(r"book-authors[^>]*>.*?href=[^>]+>([^<]{2,60})<", r.text, _re.S)
+            return m.group(1).strip() if m else ""
+        except Exception:
+            return ""
 
     updated = 0
     skipped = 0
@@ -108,28 +138,31 @@ def refresh_covers(session: Session = Depends(get_session)) -> dict:
         if not w.title:
             skipped += 1
             continue
+        # Только ficbook/readli/searchfloor
+        if not w.source_url or not _host_ok(w.source_url):
+            skipped += 1
+            continue
         try:
             at_url = _at.search_work(w.title, w.author or "")
             if not at_url:
                 skipped += 1
                 continue
-            img_bytes = covers.fetch_cover_bytes(at_url)
-            if not img_bytes or len(img_bytes) < 500:
+            # Проверяем автора на AT-странице
+            at_author = _at_author(at_url)
+            if not _author_match(w.author or "", at_author):
                 skipped += 1
                 continue
-            # Если уже есть обложка такого же размера — пропускаем
-            if w.cover_path and os.path.exists(w.cover_path):
-                existing_size = os.path.getsize(w.cover_path)
-                if abs(existing_size - len(img_bytes)) < 100:
-                    skipped += 1
-                    continue
+            img_bytes = covers.fetch_cover_bytes(at_url)
+            if not img_bytes or len(img_bytes) < 5000:
+                skipped += 1
+                continue
             new_path = covers.save_cover_bytes(img_bytes, w.sha1)
             if new_path:
                 w.cover_path = str(new_path)
                 session.add(w)
                 session.commit()
                 updated += 1
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             failed += 1
 
     return {"updated": updated, "skipped": skipped, "failed": failed}

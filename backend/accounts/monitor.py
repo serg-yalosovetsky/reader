@@ -147,7 +147,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
             if at_cnt > best_cur:
                 best_url = at_url
                 best_cur = at_cnt
-        if best_cur > mon.last_seen_chapters:
+        needs_initial = not mon.work_id and best_cur > 0
+        if best_cur > mon.last_seen_chapters or needs_initial:
             mon.has_update = True
             updated += 1
             detail = {"url": best_url, "from": mon.last_seen_chapters, "to": best_cur}

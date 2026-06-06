@@ -41,6 +41,6 @@ def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResp
         raise HTTPException(404, "файл обложки отсутствует")
     mtime = int(path.stat().st_mtime)
     resp = FileResponse(path)
-    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    resp.headers["Cache-Control"] = "public, max-age=3600, must-revalidate"
     resp.headers["ETag"] = f'"{work.sha1}-{mtime}"'
     return resp

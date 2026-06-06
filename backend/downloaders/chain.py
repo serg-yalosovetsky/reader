@@ -43,7 +43,7 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     if host.endswith("author.today"):
         from . import authortoday
         try:
-            return authortoday.download(url)
+            return authortoday.download(url, creds=creds)
         except PaidContentError as e:
             # Платная на AT — ищем полную книгу в бесплатных источниках.
             return _fallback_free(e.title, e.author)

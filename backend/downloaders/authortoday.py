@@ -102,21 +102,49 @@ def count_chapters(url: str) -> int | None:
         except Exception:
             return None
 
-def download(url: str) -> DownloadResult:
+def _login(c: httpx.Client, email: str, password: str) -> bool:
+    """Войти в author.today через JSON API. Возвращает True если успешно."""
+    import re as _re
+    try:
+        r = _get(c, f"{_BASE}/account/login")
+        form_start = r.text.find('id="loginForm"')
+        block = r.text[form_start:form_start + 1000] if form_start >= 0 else r.text
+        token_m = _re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', block)
+        if not token_m:
+            return False
+        token = token_m.group(1)
+        resp = c.post(
+            f"{_BASE}/account/login",
+            json={"Login": email, "Password": password},
+            headers={
+                "X-Requested-With": "XMLHttpRequest",
+                "RequestVerificationToken": token,
+                "Content-Type": "application/json",
+            },
+            follow_redirects=True,
+        )
+        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        return bool(data.get("isSuccessful"))
+    except Exception:
+        return False
+
+
+def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     work_id = _work_id(url)
     with httpx.Client(
         timeout=60, follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
+        if creds:
+            _login(c, creds[0], creds[1])
         # 1) Страница книги — метаданные.
         wr = _get(c, f"{_BASE}/work/{work_id}")
         if wr.status_code != 200:
             raise DownloaderError(f"author.today: страница книги вернула {wr.status_code}")
         title, author, annotation = _parse_work_meta(wr.text)
 
-        # Платная книга — анонимно доступно лишь превью. Сигналим наверх для
-        # фоллбэка на бесплатный источник (searchfloor/readli).
-        if not _is_free(wr.text):
+        # Без входа — платная/18+ недоступна; если залогинились, пробуем скачать.
+        if not _is_free(wr.text) and not creds:
             raise PaidContentError(title=title, author=author)
 
         # 2) Страница ридера — список глав (+ cookies сессии для запросов глав).

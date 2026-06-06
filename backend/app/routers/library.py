@@ -87,9 +87,19 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("")
-def list_works(session: Session = Depends(get_session)) -> list[Work]:
+def list_works(session: Session = Depends(get_session)) -> list[dict]:
     """Все произведения, новые сверху."""
-    return list(session.exec(select(Work).order_by(Work.updated_at.desc())).all())
+    from pathlib import Path as _P
+    result = []
+    for w in session.exec(select(Work).order_by(Work.updated_at.desc())).all():
+        d = w.model_dump()
+        if w.cover_path:
+            p = _P(w.cover_path)
+            d["cover_v"] = int(p.stat().st_mtime) if p.exists() else 0
+        else:
+            d["cover_v"] = 0
+        result.append(d)
+    return result
 
 
 

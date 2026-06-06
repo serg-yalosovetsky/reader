@@ -51,6 +51,8 @@ def save_cover_bytes(data: bytes, sha1: str) -> Path | None:
         return None
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     out = COVERS_DIR / f"{sha1}{_img_ext(data)}"
+    if out.exists() and out.stat().st_size == len(data):
+        return out  # обложка не изменилась — не перезаписываем
     out.write_bytes(data)
     return out
 

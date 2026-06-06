@@ -78,7 +78,7 @@ function bookCard(w, ratio, hasUpdate) {
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const cover = w.cover_path
-    ? `<img src="/api/reader/${w.id}/cover" alt="" onerror="this.remove()" />`
+    ? `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" onerror="this.remove()" />`
     : fallback
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   card.innerHTML = `

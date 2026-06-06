@@ -72,6 +72,7 @@
       <button id="back-btn" class="icon-btn" title="К библиотеке">‹ Библиотека</button>
       <span id="reader-title" class="reader-title"></span>
       <div class="reader-top-actions">
+        <button id="tts-btn" class="icon-btn" title="Слушать">🔊</button>
         <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
@@ -81,6 +82,28 @@
     <div id="view-host" class="view-host">
       <div id="tap-prev" class="tap-zone tap-prev" title="Назад"></div>
       <div id="tap-next" class="tap-zone tap-next" title="Вперёд"></div>
+    </div>
+
+    <!-- Панель озвучивания (TTS) -->
+    <div id="tts-bar" class="tts-bar" hidden>
+      <button id="tts-toggle" class="icon-btn" title="Пауза / продолжить">⏸</button>
+      <span id="tts-status" class="tts-status">Озвучивание…</span>
+      <label class="tts-ctl">Голос
+        <select id="tts-voice" class="select">
+          <option value="svetlana">Светлана</option>
+          <option value="dmitry">Дмитрий</option>
+        </select>
+      </label>
+      <label class="tts-ctl">Скорость
+        <select id="tts-rate" class="select">
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <button id="tts-stop" class="icon-btn" title="Остановить">✕</button>
     </div>
 
     <div id="reader-bottom" class="reader-bar reader-bottom">

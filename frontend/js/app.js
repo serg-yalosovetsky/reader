@@ -1,5 +1,6 @@
 // Фронтенд читалки: библиотека + reader на foliate-js, синхронизация прогресса.
 import '/vendor/foliate-js/view.js'
+import { TTSController } from './tts.js'
 
 const $ = (s) => document.querySelector(s)
 const api = {
@@ -183,6 +184,7 @@ async function openReader(work) {
   $('#reader-title').textContent = work.title || ''
 
   // Очистить прошлый экземпляр.
+  tts?.stop(); tts = null
   $('#view-host').innerHTML = ''
   view = document.createElement('foliate-view')
   $('#view-host').append(view)
@@ -296,6 +298,7 @@ $('#back-btn').addEventListener('click', () => {
   $('#reader').hidden = true
   $('#library').hidden = false
   $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
+  tts?.stop(); tts = null
   currentWork = null; view = null
   loadLibrary()
 })
@@ -380,6 +383,31 @@ function searchResult(label, sub) {
   a.addEventListener('click', (ev) => { ev.preventDefault(); view.goTo(sub.cfi); closePanels() })
   return a
 }
+
+// ===================== Озвучивание (TTS) =====================
+let tts = null
+const ttsUI = {
+  setStatus: (s) => { $('#tts-status').textContent = s },
+  setPlaying: (p) => { $('#tts-toggle').textContent = p ? '⏸' : '▶' },
+  show: () => { $('#tts-bar').hidden = false },
+  hide: () => { $('#tts-bar').hidden = true },
+}
+$('#tts-btn').addEventListener('click', () => {
+  if (!view) return
+  closePanels()
+  if (!tts) tts = new TTSController(view, ttsUI)
+  if ($('#tts-bar').hidden) {
+    tts.voice = $('#tts-voice').value
+    tts.setRate(parseFloat($('#tts-rate').value) || 1)
+    tts.start()
+  } else {
+    tts.toggle()
+  }
+})
+$('#tts-toggle').addEventListener('click', () => tts?.toggle())
+$('#tts-stop').addEventListener('click', () => tts?.stop())
+$('#tts-voice').addEventListener('change', (e) => tts?.setVoice(e.target.value))
+$('#tts-rate').addEventListener('change', (e) => tts?.setRate(parseFloat(e.target.value) || 1))
 
 // ===================== Настройки вида (UI) =====================
 function syncSettingsUI() {

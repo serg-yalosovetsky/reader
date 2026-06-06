@@ -118,6 +118,14 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reader-top-actions { display: flex; gap: 6px; }
 
+/* Панель озвучивания (TTS) */
+.tts-bar { display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+  padding: 8px 14px; background: var(--bg-soft); color: var(--fg-dim);
+  border-top: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
+.tts-bar .tts-status { flex: 1; min-width: 120px; color: var(--fg); }
+.tts-bar .tts-ctl { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tts-bar .select { padding: 4px 8px; font-size: 13px; }
+
 .icon-btn {
   cursor: pointer; border: none; background: transparent; color: var(--fg-dim);
   font-size: 16px; padding: 6px 10px; border-radius: 8px;

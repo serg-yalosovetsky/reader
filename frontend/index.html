@@ -6,7 +6,7 @@
   <title>Читалка</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
-  <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/theme.css?v=20260608b" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" />
@@ -21,11 +21,12 @@
           <input id="ingest-input" type="text" placeholder="Ссылка или название фанфика…" />
           <button type="submit" class="btn-primary" title="Скачать и открыть">Добавить</button>
         </form>
-        <label class="btn-ghost" for="upload-input">Загрузить файл</label>
+        <button id="more-actions-btn" type="button" class="btn-ghost more-toggle" aria-expanded="false" title="Ещё действия">··· Ещё</button>
+        <label class="btn-ghost lib-secondary" for="upload-input">Загрузить файл</label>
         <input id="upload-input" type="file" accept=".epub,.fb2,.pdf" hidden />
-        <button id="readera-sync" class="btn-ghost" title="Синхронизировать прогресс с ReadEra">⇄ ReadEra</button>
-        <button id="check-updates-main" class="btn-ghost" title="Проверить обновления подписок">↻ Обновления</button>
-        <button id="accounts-btn" class="btn-ghost" title="Аккаунты и обновления">Аккаунты</button>
+        <button id="readera-sync" class="btn-ghost lib-secondary" title="Синхронизировать прогресс с ReadEra">⇄ ReadEra</button>
+        <button id="check-updates-main" class="btn-ghost lib-secondary" title="Проверить обновления подписок">↻ Обновления</button>
+        <button id="accounts-btn" class="btn-ghost lib-secondary" title="Аккаунты и обновления">Аккаунты</button>
       </div>
     </header>
     <div id="ingest-status" class="ingest-status" hidden></div>
@@ -191,6 +192,6 @@
     <div id="panel-overlay" class="panel-overlay" hidden></div>
   </section>
 
-  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/app.js?v=20260608"></script>
 </body>
 </html>

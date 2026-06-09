@@ -220,6 +220,12 @@ async function loadMonitored() {
 $('#accounts-btn').addEventListener('click', () => {
   $('#accounts-overlay').hidden = false; loadAccounts(); loadMonitored()
 })
+// Мобильный тоггл «Ещё»: раскрывает/сворачивает вторичные действия библиотеки
+$('#more-actions-btn')?.addEventListener('click', () => {
+  const acts = $('.lib-actions')
+  const open = acts.classList.toggle('more-open')
+  $('#more-actions-btn').setAttribute('aria-expanded', String(open))
+})
 $('#accounts-close').addEventListener('click', () => { $('#accounts-overlay').hidden = true })
 $('#accounts-overlay').addEventListener('click', (e) => { if (e.target.id === 'accounts-overlay') $('#accounts-overlay').hidden = true })
 $('#account-form').addEventListener('submit', async (e) => {
@@ -257,6 +263,12 @@ async function openReader(work) {
   $('#library').hidden = true
   $('#reader').hidden = false
   $('#reader-title').textContent = work.title || ''
+
+  // История: открытие книги — отдельная запись, чтобы браузерный «назад»
+  // возвращал в библиотеку, а не уводил с сайта.
+  if (!(history.state && history.state.reader)) {
+    history.pushState({ reader: true }, '', '#read')
+  }
 
   // Очистить прошлый экземпляр.
   $('#view-host').innerHTML = ''
@@ -379,13 +391,24 @@ function buildTOC() {
 }
 
 // ===================== Навигация и панели =====================
-$('#back-btn').addEventListener('click', () => {
+// Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
+function closeReader() {
   ttsStop()
   $('#reader').hidden = true
   $('#library').hidden = false
   $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
   currentWork = null; view = null
   loadLibrary()
+}
+$('#back-btn').addEventListener('click', () => {
+  // Если открытие книги в истории — откатываемся через history.back(),
+  // чтобы кнопка и браузерный «назад» вели себя одинаково (без накопления записей).
+  if (history.state && history.state.reader) history.back()
+  else closeReader()
+})
+// Браузерный «назад» из читалки: закрываем читалку, остаёмся на сайте.
+window.addEventListener('popstate', () => {
+  if (!$('#reader').hidden) closeReader()
 })
 $('#prev-btn').addEventListener('click', () => view?.prev())
 $('#next-btn').addEventListener('click', () => view?.next())

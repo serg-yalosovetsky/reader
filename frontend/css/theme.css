@@ -123,34 +123,11 @@ html, body {
 }
 .reader-top { border-bottom: 1px solid var(--line); }
 .reader-bottom { border-top: 1px solid var(--line); }
-/* Авто-скрытие панелей при прокрутке вниз (моб., режим «Лента»)
-   Десктоп/страницы: max-height анимация (bars в flex-flow).
-   Мобиль+лента (.mobile-scroll): bars абсолютный оверлей → только transform,
-   layout не меняется → контент не подпрыгивает при scroll туда-сюда. */
-#reader:not(.mobile-scroll).chrome-hidden .reader-top,
-#reader:not(.mobile-scroll).chrome-hidden .reader-bottom {
+/* Авто-скрытие панелей при прокрутке вниз (моб., режим «Лента») */
+#reader.chrome-hidden .reader-top,
+#reader.chrome-hidden .reader-bottom {
   max-height: 0; padding-top: 0; padding-bottom: 0;
   opacity: 0; border-width: 0; pointer-events: none;
-}
-/* mobile-scroll: bars — абсолютный оверлей, анимация через transform */
-#reader.mobile-scroll { position: relative; }
-#reader.mobile-scroll .reader-bar {
-  position: absolute; left: 0; right: 0; z-index: 20;
-  max-height: none; overflow: visible;
-  transition: transform .22s ease, opacity .18s ease;
-}
-#reader.mobile-scroll .reader-top  { top: 0; }
-#reader.mobile-scroll .reader-bottom { bottom: 0; }
-#reader.mobile-scroll .view-host {
-  padding-top: var(--bar-top-h, 52px);
-  padding-bottom: var(--bar-bot-h, 52px);
-  box-sizing: border-box;
-}
-#reader.mobile-scroll.chrome-hidden .reader-top  {
-  transform: translateY(-100%); opacity: 0; pointer-events: none;
-}
-#reader.mobile-scroll.chrome-hidden .reader-bottom {
-  transform: translateY(100%);  opacity: 0; pointer-events: none;
 }
 .reader-title { flex: 1; text-align: center; font-size: 13px; color: var(--fg-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

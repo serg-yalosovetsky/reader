@@ -357,19 +357,6 @@ function bookCSS() {
     ::highlight(tts-word) { background-color: ${accent}; color: #fff; border-radius: 2px; }
   `
 }
-function updateMobileScrollLayout() {
-  const reader = document.getElementById('reader')
-  if (!reader) return
-  const ms = prefs.flow === 'scrolled' && window.innerWidth <= 560
-  reader.classList.toggle('mobile-scroll', ms)
-  if (ms) {
-    const th = document.getElementById('reader-top')?.offsetHeight || 52
-    const bh = document.getElementById('reader-bottom')?.offsetHeight || 52
-    document.documentElement.style.setProperty('--bar-top-h', th + 'px')
-    document.documentElement.style.setProperty('--bar-bot-h', bh + 'px')
-  }
-}
-
 function applyViewStyles() {
   if (!view || !view.renderer) return
   const r = view.renderer
@@ -393,7 +380,6 @@ function applyViewStyles() {
   r.setAttribute('margin', String({ 0: 8, 1: 22, 2: 38 }[prefs.marginLevel] ?? 22))
   r.setAttribute('flow', prefs.flow)
   r.setStyles?.(bookCSS())
-  updateMobileScrollLayout()
 }
 
 function buildTOC() {
@@ -448,15 +434,16 @@ function onBookScroll() {
   const y = view?.renderer?.start || 0
   const dy = y - _hideLastY
   _hideLastY = y
-  // кулдаун: после переключения панелей сдвиг вёрстки сам генерит scroll — игнорим его,
-  // иначе появление панелей при скролле вверх входит в дрожащую петлю.
+  // Пока палец на экране — не трогаем панели: layout-reflow во время скролла
+  // вызывает подпрыгивание контента при движении туда-сюда.
+  if (_isTouching) return
   if (Date.now() < _hideCooldown) return
-  if (Math.abs(dy) < 24) return
+  if (Math.abs(dy) < 48) return
   const el = document.getElementById('reader')
   if (!el) return
   const hidden = el.classList.contains('chrome-hidden')
-  if (dy > 0 && !hidden && y > 40) { el.classList.add('chrome-hidden'); _hideCooldown = Date.now() + 450 }
-  else if (dy < 0 && hidden) { el.classList.remove('chrome-hidden'); _hideCooldown = Date.now() + 450 }
+  if (dy > 0 && !hidden && y > 60) { el.classList.add('chrome-hidden'); _hideCooldown = Date.now() + 900 }
+  else if (dy < 0 && hidden) { el.classList.remove('chrome-hidden'); _hideCooldown = Date.now() + 900 }
 }
 // Между главами: всегда в НАЧАЛО целевой главы, в любом режиме.
 async function gotoChapterStart(dir) {
@@ -520,13 +507,14 @@ function attachKeysToDoc(e) {
 
     // Жесты «Ленты»: горизонтальный свайп листает главы (влево->предыд., вправо->след.);
     // вертикаль = чтение, смена главы только на доскролле за верх/низ.
-    let _sx = 0, _sy = 0, _st = 0, _lastTY = null
+    let _sx = 0, _sy = 0, _st = 0, _lastTY = null, _isTouching = false
     e.detail.doc.addEventListener('touchstart', (ev) => {
-      const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY
+      const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY; _isTouching = true
     }, { passive: true })
     // (авто-скрытие перенесено на foliate-событие 'scroll' — см. onBookScroll)
     e.detail.doc.addEventListener('touchend', (ev) => {
-      if (!view) return
+      _isTouching = false
+            if (!view) return
       const t = ev.changedTouches[0]
       const dx = t.clientX - _sx, dy = t.clientY - _sy
       if (Date.now() - _st > 900) return

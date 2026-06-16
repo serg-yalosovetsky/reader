@@ -82,3 +82,13 @@ class SyncState(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str = ""
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Blacklist(SQLModel, table=True):
+    """Удалённые «крестиком» книги: не показывать в библиотеке и не докачивать."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title_norm: str = Field(default="", index=True)
+    author_norm: str = Field(default="", index=True)
+    source_url: str = Field(default="", index=True)
+    created_at: datetime = Field(default_factory=utcnow)

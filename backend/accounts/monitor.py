@@ -20,6 +20,9 @@ from . import store
 def add_monitor(session: Session, source_url: str, work_id: int | None = None,
                 chapters: int = 0) -> Monitored:
     """Поставить фик на отслеживание (идемпотентно по source_url)."""
+    from ..app import blacklist
+    if blacklist.is_blacklisted(session, source_url=source_url):
+        return None  # книга в чёрном списке — не возвращаем на отслеживание
     mon = session.exec(select(Monitored).where(Monitored.source_url == source_url)).first()
     if mon:
         if work_id and not mon.work_id:
@@ -131,6 +134,12 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
     for mon in mons:
         if not mon.source_url:
             continue
+        from ..app import blacklist as _bl
+        _w = session.get(Work, mon.work_id) if mon.work_id else None
+        if _bl.is_blacklisted(session, source_url=mon.source_url,
+                              title=(_w.title if _w else ""),
+                              author=(_w.author if _w else "")):
+            session.delete(mon); session.commit(); continue
         cur = _chapter_count(mon.source_url, session)
         mon.last_checked = utcnow()
         checked += 1
@@ -148,7 +157,7 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 best_url = at_url
                 best_cur = at_cnt
         needs_initial = not mon.work_id and best_cur > 0
-        if best_cur > mon.last_seen_chapters or needs_initial:
+        if best_cur > mon.last_seen_chapters or needs_initial or (mon.has_update and auto_download):
             mon.has_update = True
             updated += 1
             detail = {"url": best_url, "from": mon.last_seen_chapters, "to": best_cur}
@@ -169,7 +178,10 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 except Exception as e:  # noqa: BLE001 — фон, не валим весь прогон
                     detail["error"] = str(e)[:200]
             details.append(detail)
-        mon.last_seen_chapters = max(mon.last_seen_chapters, cur)
+        # last_seen двигаем только если докачка удалась (has_update сброшен) либо
+        # обновлений нет — иначе фик не «застрянет» при ошибке докачки (будет ретрай).
+        if not mon.has_update:
+            mon.last_seen_chapters = max(mon.last_seen_chapters, cur)
         session.add(mon)
         session.commit()
         time.sleep(0.3)  # вежливость к сайтам

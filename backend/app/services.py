@@ -59,6 +59,28 @@ def _find_existing(session: Session, result: DownloadResult) -> Work | None:
     return None
 
 
+def _richness(path, fmt: str) -> int:
+    """Длина извлекаемого ТЕКСТА книги (символы) — мера полноты для сравнения зеркал."""
+    import re
+    import zipfile
+    try:
+        p = str(path)
+        if (fmt or "").lower() == "epub" or p.lower().endswith(".epub"):
+            z = zipfile.ZipFile(p)
+            parts = []
+            for n in z.namelist():
+                if n.lower().endswith((".xhtml", ".html", ".htm")):
+                    parts.append(re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
+            return len(" ".join(parts))
+        with open(p, encoding="utf-8", errors="ignore") as fh:
+            return len(re.sub(r"<[^>]+>", " ", fh.read()))
+    except Exception:  # noqa: BLE001
+        try:
+            return Path(path).stat().st_size
+        except Exception:  # noqa: BLE001
+            return 0
+
+
 def register_download(result: DownloadResult, session: Session) -> Work:
     src = Path(result.file_path)
     sha1 = sha1_of_file(src)
@@ -67,9 +89,11 @@ def register_download(result: DownloadResult, session: Session) -> Work:
     existing = _find_existing(session, result)
     if existing:
         if existing.sha1 != sha1:
-            # Заменяем файл только если новый «полнее» (крупнее) — берём полную книгу.
-            cur_size = Path(existing.file_path).stat().st_size if existing.file_path and Path(existing.file_path).exists() else 0
-            if new_size >= cur_size:
+            # Заменяем файл только если новый «полнее» — по длине извлекаемого ТЕКСТА
+            # (байты ненадёжны: epub меньше fb2 при равном/большем контенте).
+            cur_rich = _richness(existing.file_path, existing.file_format) if existing.file_path and Path(existing.file_path).exists() else 0
+            new_rich = _richness(str(src), result.file_format)
+            if cur_rich == 0 or new_rich > cur_rich:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
         if result.source_url and not existing.source_url:

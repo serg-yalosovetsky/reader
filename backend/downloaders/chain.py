@@ -76,23 +76,52 @@ def _fallback_free(title: str, author: str) -> DownloadResult:
     )
 
 
+def _richness(result: "DownloadResult") -> int:
+    """Грубая мера полноты книги — длина извлекаемого ТЕКСТА (символы).
+    Надёжнее размера в байтах при сравнении разных форматов/зеркал (fb2 vs epub)."""
+    import os
+    import re
+    import zipfile
+    try:
+        p = str(result.file_path)
+        fmt = (result.file_format or "").lower()
+        if fmt == "epub" or p.lower().endswith(".epub"):
+            z = zipfile.ZipFile(p)
+            parts = []
+            for n in z.namelist():
+                if n.lower().endswith((".xhtml", ".html", ".htm")):
+                    parts.append(re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
+            return len(" ".join(parts))
+        with open(p, encoding="utf-8", errors="ignore") as fh:
+            return len(re.sub(r"<[^>]+>", " ", fh.read()))
+    except Exception:  # noqa: BLE001
+        try:
+            return os.path.getsize(result.file_path)
+        except Exception:  # noqa: BLE001
+            return 0
+
+
 def _search_free(title: str, author: str = "") -> DownloadResult | None:
-    """Найти книгу по названию в бесплатных агрегаторах (searchfloor → readli).
-    Возвращает результат скачивания или None, если нигде не нашлось."""
+    """Проверяем ВСЕ бесплатные зеркала (searchfloor + readli) и возвращаем самый
+    ПОЛНЫЙ вариант (по длине текста), а не первый успешный."""
     if not title:
         return None
+    cands: list[DownloadResult] = []
     from . import searchfloor
     try:
         bid = searchfloor.search_book(title, author)
         if bid:
-            return searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}")
+            cands.append(searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}"))
     except DownloaderError:
         pass
     from . import readli
     try:
         r = readli.search_and_download(title, author)
         if r:
-            return r
+            cands.append(r)
     except DownloaderError:
         pass
-    return None
+    if not cands:
+        return None
+    best = max(cands, key=_richness)
+    return best

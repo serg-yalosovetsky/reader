@@ -161,11 +161,19 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
 
         # 3) Текст каждой главы (с паузой — author.today мягко троттлит).
         chapter_htmls: list[tuple[str, str]] = []
-        for idx, ch in enumerate(chapters):
-            html = _fetch_chapter(c, work_id, str(ch["id"]), user_id)
-            chapter_htmls.append((ch.get("title") or "", html))
-            if idx + 1 < len(chapters):
-                time.sleep(0.25)
+        try:
+            for idx, ch in enumerate(chapters):
+                html = _fetch_chapter(c, work_id, str(ch["id"]), user_id)
+                chapter_htmls.append((ch.get("title") or "", html))
+                if idx + 1 < len(chapters):
+                    time.sleep(0.25)
+        except DownloaderError as e:
+            # 18+/возрастной гейт без входа -> отдаём как PaidContent, чтобы chain
+            # нашёл полный текст в бесплатных зеркалах (searchfloor/readli).
+            msg = str(e).lower()
+            if "18+" in msg or "unadulted" in msg or "возраст" in msg:
+                raise PaidContentError(title=title, author=author) from e
+            raise
 
     # 4) Сборка EPUB (со встроенной обложкой).
     cover = None

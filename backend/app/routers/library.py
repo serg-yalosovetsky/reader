@@ -166,6 +166,15 @@ def refresh_covers(background_tasks: BackgroundTasks) -> dict:
     background_tasks.add_task(_do_refresh_covers)
     return {"status": "started"}
 
+@router.post("/scan-drive-books")
+def scan_drive_books(days: int = 7, limit: int = 30, commit: bool = False,
+                     session: Session = Depends(get_session)) -> dict:
+    """Сканировать gdrive:ReadEra/Books и импортировать недавно добавленные книги.
+    dry-run по умолчанию (commit=false) — вернёт список кандидатов, ничего не меняя."""
+    from ..drive_books import scan
+    return scan(session, days=days, limit=limit, commit=commit)
+
+
 @router.get("/{work_id}")
 def get_work(work_id: int, session: Session = Depends(get_session)) -> Work:
     work = session.get(Work, work_id)
@@ -221,6 +230,12 @@ def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     work = session.get(Work, work_id)
     if not work:
         raise HTTPException(404, "work not found")
+    # Чёрный список: запоминаем книгу (название/автор + все source_url), чтобы
+    # фиды и монитор её больше не докачивали и не показывали в библиотеке.
+    from ..blacklist import add_entry as _bl_add
+    _urls = [work.source_url] + [m.source_url for m in session.exec(
+        select(Monitored).where(Monitored.work_id == work_id)).all()]
+    _bl_add(session, title=work.title, author=work.author, urls=_urls)
     for p in session.exec(select(Progress).where(Progress.work_id == work_id)).all():
         session.delete(p)
     for m in session.exec(select(Monitored).where(Monitored.work_id == work_id)).all():

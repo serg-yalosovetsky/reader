@@ -28,3 +28,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# local edit backups
+*.bak*

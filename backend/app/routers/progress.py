@@ -20,6 +20,13 @@ class ProgressIn(BaseModel):
     locator: str = ""
 
 
+@router.get("")
+def all_progress(session: Session = Depends(get_session)) -> dict[int, float]:
+    """Все позиции разом {work_id: ratio} — чтобы фронт не делал N запросов на список книг."""
+    rows = session.exec(select(Progress)).all()
+    return {int(p.work_id): float(p.ratio or 0.0) for p in rows}
+
+
 @router.get("/{work_id}")
 def get_progress(work_id: int, session: Session = Depends(get_session)) -> Progress:
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()

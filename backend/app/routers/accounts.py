@@ -50,7 +50,12 @@ def monitored(session: Session = Depends(get_session)) -> list[dict]:
 def add_monitored(body: MonitorIn, session: Session = Depends(get_session)) -> dict:
     if not body.url.strip():
         raise HTTPException(400, "нужен url")
+    # Явное ручное добавление снимает книгу с чёрного списка.
+    from ..blacklist import unblock as _bl_unblock
+    _bl_unblock(session, source_url=body.url.strip())
     m = monitor.add_monitor(session, body.url.strip())
+    if m is None:
+        raise HTTPException(409, "книга в чёрном списке")
     return {"id": m.id, "source_url": m.source_url}
 
 

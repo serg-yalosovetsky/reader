@@ -3,6 +3,14 @@ const normalizeWhitespace = str => str ? str
     .replace(/^[\t\n\f\r ]+/, '')
     .replace(/[\t\n\f\r ]+$/, '') : ''
 const getElementText = el => normalizeWhitespace(el?.textContent)
+// join block children (h1/h2/p) with a space so fb2 multi-<p> titles don't glue
+// together in the TOC, e.g. "Глава перваяГорький апельсин" -> "Глава первая Горький апельсин"
+const getTitleText = el => {
+    if (!el) return ''
+    const parts = Array.from(el.children,
+        c => normalizeWhitespace(c.textContent)).filter(Boolean)
+    return parts.length ? parts.join(' ') : normalizeWhitespace(el.textContent)
+}
 
 const NS = {
     XLINK: 'http://www.w3.org/1999/xlink',
@@ -293,7 +301,7 @@ export const makeFB2 = async blob => {
                 el.querySelectorAll(':scope > section > .title'),
                 (el, index) => {
                     el.setAttribute(dataID, index)
-                    return { title: getElementText(el), index }
+                    return { title: getTitleText(el), index }
                 })
             return { ids, titles, el }
         })
@@ -308,9 +316,9 @@ export const makeFB2 = async blob => {
             const blob = new Blob([str], { type: MIME.XHTML })
             const url = URL.createObjectURL(blob)
             urls.push(url)
-            const title = normalizeWhitespace(
-                el.querySelector('.title, .subtitle, p')?.textContent
-                ?? (el.classList.contains('title') ? el.textContent : ''))
+            const _tEl = el.querySelector('.title, .subtitle, p')
+            const title = _tEl ? getTitleText(_tEl)
+                : (el.classList.contains('title') ? getTitleText(el) : '')
             return {
                 ids, title, titles, load: () => url,
                 createDocument: () => new DOMParser().parseFromString(str, MIME.XHTML),

@@ -37,13 +37,13 @@ let libWorks = [], libCalibre = [], libProgress = {}, libUpdated = new Set()
 
 async function loadLibrary() {
   libWorks = await api.get('/api/library')
-  const monitored = await api.get('/api/monitored').catch(() => [])
+  // Один батч-запрос вместо N последовательных (раньше книги появлялись через 3-5с).
+  const [monitored, progAll] = await Promise.all([
+    api.get('/api/monitored').catch(() => []),
+    api.get('/api/progress').catch(() => ({})),
+  ])
   libUpdated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
-  libProgress = {}
-  for (const w of libWorks) {
-    const prog = await api.get(`/api/progress/${w.id}`).catch(() => ({ ratio: 0 }))
-    libProgress[w.id] = prog.ratio || 0
-  }
+  libProgress = progAll || {}
   // Загружаем Calibre один раз (фоном, не блокируем рендер)
   api.get('/api/calibre/books').then(books => { libCalibre = books || [] }).catch(() => {})
   applyLibFilter('')
@@ -78,7 +78,7 @@ function bookCard(w, ratio, hasUpdate) {
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const cover = w.cover_path
-    ? `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" onerror="this.remove()" />`
+    ? `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`
     : fallback
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   card.innerHTML = `

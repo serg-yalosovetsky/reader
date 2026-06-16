@@ -845,7 +845,21 @@ export class Paginator extends HTMLElement {
         const state = this.#touchState
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
-        if (this.scrolled || state.pinched) return
+        if (this.scrolled || state.pinched) {
+            if (this.scrolled && !state.pinched && e.touches.length === 1) {
+                e.preventDefault()
+                const touch = e.changedTouches[0]
+                const dx = state.x - touch.screenX
+                const dy = state.y - touch.screenY
+                state.x = touch.screenX
+                state.y = touch.screenY
+                state.t = e.timeStamp
+                this.#touchScrolled = true
+                // touch events don't cross iframe boundaries; scroll #container manually
+                this.#container.scrollBy(this.#vertical ? -dx : 0, this.#vertical ? 0 : dy)
+            }
+            return
+        }
         if (e.touches.length > 1) {
             if (this.#touchScrolled) e.preventDefault()
             return

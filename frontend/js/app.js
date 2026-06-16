@@ -87,7 +87,7 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
-    <div class="book-progress"><i style="width:${pct}%"></i></div>`
+    <div class="book-progress${ratio > 0 && ratio < 1 ? ' partial' : ''}"><i style="width:${ratio >= 1 ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
   card.addEventListener('click', () => openReader(w))
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
     e.stopPropagation()
@@ -255,6 +255,10 @@ $('#check-updates-main').addEventListener('click', () => checkUpdates((msg, err)
 // ===================== ЧИТАЛКА =====================
 let view = null
 let currentWork = null
+let lastCfi = '', lastIdx = null
+let _lastFrac = -1
+let _hideLastY = 0, _hideCooldown = 0
+const navStack = []
 let saveTimer = null
 
 async function openReader(work) {
@@ -282,9 +286,14 @@ async function openReader(work) {
   const file = new File([blob], name, { type: blob.type })
 
   await view.open(file)
+  navStack.length = 0
+  _lastFrac = -1
+  _hideLastY = 0
+  document.getElementById('reader')?.classList.remove('chrome-hidden')
   view.addEventListener('relocate', onRelocate)
   view.addEventListener('load', attachKeysToDoc)
   applyViewStyles()
+  view.renderer?.addEventListener('scroll', onBookScroll)
   buildTOC()
 
   // Восстановить позицию: точный CFI, иначе ratio (напр. импорт из ReadEra), иначе начало.
@@ -298,7 +307,9 @@ async function openReader(work) {
 }
 
 function onRelocate(e) {
-  const { fraction, cfi } = e.detail
+  const { fraction, cfi, index } = e.detail
+  lastCfi = cfi || lastCfi
+  if (typeof index === 'number') lastIdx = index
   const pct = Math.round((fraction || 0) * 100)
   $('#progress-slider').value = fraction || 0
   $('#progress-label').textContent = pct + '%'
@@ -322,7 +333,7 @@ function bookCSS() {
   const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['merriweather']
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.
   // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
-  const sidePad = { 0: 4, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
+  const sidePad = { 0: 1.3, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
   // Лента: распахиваем документ книги на всю ширину области (поля — паддингом body).
   // Корень узкой «ленты» был в shadow-гриде foliate (#top), пропатчен в paginator.js;
   // здесь — только распахивание самого документа и гашение возможных колонок.
@@ -361,7 +372,12 @@ function applyViewStyles() {
     r.setAttribute('max-column-count', String(prefs.columns || 1))
     r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
   }
-  r.setAttribute('gap', '6%')
+  const _sidePad = { 0: 1.3, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
+  // «Лента»: боковые поля даёт паддинг body -> gap 0 (иначе удваивается).
+  // «Страницы»: gap = боковые поля.
+  r.setAttribute('gap', (prefs.flow === 'scrolled' ? 0 : _sidePad) + '%')
+  // Вертикальные поля страницы (foliate --_margin, дефолт 48px) — компактные, в ритме уровня полей.
+  r.setAttribute('margin', String({ 0: 8, 1: 22, 2: 38 }[prefs.marginLevel] ?? 22))
   r.setAttribute('flow', prefs.flow)
   r.setStyles?.(bookCSS())
 }
@@ -397,6 +413,8 @@ function closeReader() {
   $('#reader').hidden = true
   $('#library').hidden = false
   $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
+  navStack.length = 0
+  document.getElementById('reader')?.classList.remove('chrome-hidden')
   currentWork = null; view = null
   loadLibrary()
 }
@@ -410,6 +428,31 @@ $('#back-btn').addEventListener('click', () => {
 window.addEventListener('popstate', () => {
   if (!$('#reader').hidden) closeReader()
 })
+// Авто-скрытие панелей (моб., «Лента») по событию scroll от foliate — оба направления.
+function onBookScroll() {
+  if (prefs.flow !== 'scrolled' || window.innerWidth > 560) return
+  const y = view?.renderer?.start || 0
+  const dy = y - _hideLastY
+  _hideLastY = y
+  // кулдаун: после переключения панелей сдвиг вёрстки сам генерит scroll — игнорим его,
+  // иначе появление панелей при скролле вверх входит в дрожащую петлю.
+  if (Date.now() < _hideCooldown) return
+  if (Math.abs(dy) < 24) return
+  const el = document.getElementById('reader')
+  if (!el) return
+  const hidden = el.classList.contains('chrome-hidden')
+  if (dy > 0 && !hidden && y > 40) { el.classList.add('chrome-hidden'); _hideCooldown = Date.now() + 450 }
+  else if (dy < 0 && hidden) { el.classList.remove('chrome-hidden'); _hideCooldown = Date.now() + 450 }
+}
+// Между главами: всегда в НАЧАЛО целевой главы, в любом режиме.
+async function gotoChapterStart(dir) {
+  if (!view) return
+  document.getElementById('reader')?.classList.remove('chrome-hidden')
+  if (lastIdx == null) { dir > 0 ? view.next() : view.prev(); return }
+  const target = lastIdx + dir
+  if (target < 0) return
+  try { await view.goTo(String(target)) } catch { dir > 0 ? view.next() : view.prev() }
+}
 $('#prev-btn').addEventListener('click', () => view?.prev())
 $('#next-btn').addEventListener('click', () => view?.next())
 $('#progress-slider').addEventListener('input', (e) => view?.goToFraction(parseFloat(e.target.value)))
@@ -460,6 +503,41 @@ function attachKeysToDoc(e) {
       ev.preventDefault()
       wheelNav(ev.deltaY)
     }, { passive: false })
+
+    // Жесты «Ленты»: горизонтальный свайп листает главы (влево->предыд., вправо->след.);
+    // вертикаль = чтение, смена главы только на доскролле за верх/низ.
+    let _sx = 0, _sy = 0, _st = 0, _lastTY = null
+    e.detail.doc.addEventListener('touchstart', (ev) => {
+      const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY
+    }, { passive: true })
+    // (авто-скрытие перенесено на foliate-событие 'scroll' — см. onBookScroll)
+    e.detail.doc.addEventListener('touchend', (ev) => {
+      if (!view) return
+      const t = ev.changedTouches[0]
+      const dx = t.clientX - _sx, dy = t.clientY - _sy
+      if (Date.now() - _st > 900) return
+      const ax = Math.abs(dx), ay = Math.abs(dy)
+      // Горизонталь -> между главами (в начало), в ЛЮБОМ режиме: влево=след., вправо=пред.
+      if (ax > 40 && ax > ay * 1.2) { dx < 0 ? gotoChapterStart(1) : gotoChapterStart(-1); return }
+      // Вертикаль в «Ленте» только на краях: верх -> конец пред. главы, низ -> начало след.
+      if (prefs.flow === 'scrolled' && ay > 60 && ay > ax * 1.2) {
+        const p = view?.renderer
+        const iH = e.detail.doc.defaultView?.innerHeight || 99999
+        if (dy > 0 && (p?.start || 0) <= 2) { view.prev(); return }
+        if (dy < 0 && p && (p.start + p.size) >= iH - 2) { view.next(); return }
+      }
+    }, { passive: true })
+
+    // Авто-скрытие верх/низ панелей при прокрутке вниз (моб., «Лента»); вверх -> показать.
+    let _lastScroll = -1
+    e.detail.doc.addEventListener('scroll', () => {
+      if (prefs.flow !== 'scrolled' || window.innerWidth > 560) return
+      const y = (view?.renderer?.start) ?? (e.detail.doc.defaultView?.scrollY) ?? 0
+      if (_lastScroll < 0) { _lastScroll = y; return }
+      if (Math.abs(y - _lastScroll) < 12) return
+      document.getElementById('reader')?.classList.toggle('chrome-hidden', y > _lastScroll && y > 40)
+      _lastScroll = y
+    }, { passive: true })
   } catch {}
 }
 $('#view-host').addEventListener('wheel', (e) => {

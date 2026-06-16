@@ -357,6 +357,19 @@ function bookCSS() {
     ::highlight(tts-word) { background-color: ${accent}; color: #fff; border-radius: 2px; }
   `
 }
+function updateMobileScrollLayout() {
+  const reader = document.getElementById('reader')
+  if (!reader) return
+  const ms = prefs.flow === 'scrolled' && window.innerWidth <= 560
+  reader.classList.toggle('mobile-scroll', ms)
+  if (ms) {
+    const th = document.getElementById('reader-top')?.offsetHeight || 52
+    const bh = document.getElementById('reader-bottom')?.offsetHeight || 52
+    document.documentElement.style.setProperty('--bar-top-h', th + 'px')
+    document.documentElement.style.setProperty('--bar-bot-h', bh + 'px')
+  }
+}
+
 function applyViewStyles() {
   if (!view || !view.renderer) return
   const r = view.renderer
@@ -380,6 +393,7 @@ function applyViewStyles() {
   r.setAttribute('margin', String({ 0: 8, 1: 22, 2: 38 }[prefs.marginLevel] ?? 22))
   r.setAttribute('flow', prefs.flow)
   r.setStyles?.(bookCSS())
+  updateMobileScrollLayout()
 }
 
 function buildTOC() {

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from ...accounts import monitor, store
+from ...accounts import check_job, monitor, store
 from ..db.session import get_session
 
 router = APIRouter(prefix="/api", tags=["accounts"])
@@ -60,6 +60,16 @@ def add_monitored(body: MonitorIn, session: Session = Depends(get_session)) -> d
 
 
 @router.post("/monitored/check")
-def check_now(session: Session = Depends(get_session)) -> dict:
-    """Проверить обновления сейчас (синхронно; FastAPI выполнит в threadpool)."""
-    return monitor.check_all(session, auto_download=True)
+def check_now() -> dict:
+    """Запустить проверку обновлений в фоне и сразу вернуть управление.
+
+    Раньше проверка шла синхронно и при 38 фиклах вылезала за nginx-таймаут (60s)
+    → 504. Теперь стартуем фоновый поток и отдаём {status}; результат фронт
+    забирает поллингом GET /api/monitored/check/status."""
+    return check_job.start("manual")
+
+
+@router.get("/monitored/check/status")
+def check_status() -> dict:
+    """Статус фоновой проверки: idle | running | done | error (+ result/error)."""
+    return check_job.state()

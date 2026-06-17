@@ -239,12 +239,46 @@ $('#account-form').addEventListener('submit', async (e) => {
   } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
 })
 async function checkUpdates(statusFn) {
-  statusFn('Проверяю обновления…')
+  // Проверка идёт в фоне на бэкенде (скрейп 38 фиклов > nginx-таймаута → раньше
+  // ловили 504). Стартуем и поллим статус вместо одного долгого запроса.
+  statusFn('Запускаю проверку обновлений…')
   try {
-    const r = await api.post('/api/monitored/check', {})
-    statusFn(`Проверено: ${r.checked}, с обновлениями: ${r.with_updates}, докачано: ${r.downloaded}`)
+    await api.post('/api/monitored/check', {})
+  } catch (err) { statusFn('Ошибка запуска: ' + err.message.slice(0, 140), true); return }
+
+  const POLL_MS = 3000
+  const DEADLINE = Date.now() + 5 * 60 * 1000  // клиентский кэп: 5 минут
+  const poll = async () => {
+    let st
+    try { st = await api.get('/api/monitored/check/status') }
+    catch (err) { statusFn('Ошибка опроса статуса: ' + err.message.slice(0, 120), true); return }
+
+    if (st.status === 'running') {
+      if (Date.now() > DEADLINE) {
+        statusFn('Проверка всё ещё идёт в фоне — загляни позже, списки обновятся сами')
+        loadMonitored(); loadLibrary()
+        return
+      }
+      statusFn('Проверяю обновления… (идёт в фоне)')
+      setTimeout(poll, POLL_MS)
+      return
+    }
+    if (st.status === 'error') {
+      statusFn('Ошибка проверки: ' + String(st.error || '').slice(0, 140), true)
+      loadMonitored(); loadLibrary()
+      return
+    }
+    if (st.status === 'done') {
+      const r = st.result || {}
+      statusFn(`Проверено: ${r.checked ?? 0}, с обновлениями: ${r.with_updates ?? 0}, докачано: ${r.downloaded ?? 0}`)
+      loadMonitored(); loadLibrary()
+      return
+    }
+    // idle/неизвестно: бэкенд перезапускался во время проверки — поток умер, статус сброшен
+    statusFn('Проверка не запущена или была прервана — попробуй ещё раз', true)
     loadMonitored(); loadLibrary()
-  } catch (err) { statusFn('Ошибка: ' + err.message.slice(0, 140), true) }
+  }
+  setTimeout(poll, 1500)
 }
 $('#check-updates').addEventListener('click', () => checkUpdates(accStatus))
 // Кнопка на главной: статус показываем в строке ingest-status.
@@ -257,7 +291,7 @@ let view = null
 let currentWork = null
 let lastCfi = '', lastIdx = null
 let _lastFrac = -1
-let _hideLastY = 0, _hideCooldown = 0
+let _hideLastY = 0, _hideCooldown = 0, _isTouching = false
 const navStack = []
 let saveTimer = null
 
@@ -333,7 +367,7 @@ function bookCSS() {
   const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['merriweather']
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.
   // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
-  const sidePad = { 0: 1.3, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
+  const sidePad = { 0: 0, 1: 5, 2: 12 }[prefs.marginLevel] ?? 5
   // Лента: распахиваем документ книги на всю ширину области (поля — паддингом body).
   // Корень узкой «ленты» был в shadow-гриде foliate (#top), пропатчен в paginator.js;
   // здесь — только распахивание самого документа и гашение возможных колонок.
@@ -372,12 +406,12 @@ function applyViewStyles() {
     r.setAttribute('max-column-count', String(prefs.columns || 1))
     r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
   }
-  const _sidePad = { 0: 1.3, 1: 8, 2: 14 }[prefs.marginLevel] ?? 8
+  const _sidePad = { 0: 0, 1: 5, 2: 12 }[prefs.marginLevel] ?? 5
   // «Лента»: боковые поля даёт паддинг body -> gap 0 (иначе удваивается).
   // «Страницы»: gap = боковые поля.
   r.setAttribute('gap', (prefs.flow === 'scrolled' ? 0 : _sidePad) + '%')
   // Вертикальные поля страницы (foliate --_margin, дефолт 48px) — компактные, в ритме уровня полей.
-  r.setAttribute('margin', String({ 0: 8, 1: 22, 2: 38 }[prefs.marginLevel] ?? 22))
+  r.setAttribute('margin', String({ 0: 0, 1: 16, 2: 34 }[prefs.marginLevel] ?? 16))
   r.setAttribute('flow', prefs.flow)
   r.setStyles?.(bookCSS())
 }
@@ -507,7 +541,7 @@ function attachKeysToDoc(e) {
 
     // Жесты «Ленты»: горизонтальный свайп листает главы (влево->предыд., вправо->след.);
     // вертикаль = чтение, смена главы только на доскролле за верх/низ.
-    let _sx = 0, _sy = 0, _st = 0, _lastTY = null, _isTouching = false
+    let _sx = 0, _sy = 0, _st = 0, _lastTY = null
     e.detail.doc.addEventListener('touchstart', (ev) => {
       const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY; _isTouching = true
     }, { passive: true })
@@ -524,22 +558,12 @@ function attachKeysToDoc(e) {
       // Вертикаль в «Ленте» только на краях: верх -> конец пред. главы, низ -> начало след.
       if (prefs.flow === 'scrolled' && ay > 60 && ay > ax * 1.2) {
         const p = view?.renderer
-        const iH = e.detail.doc.defaultView?.innerHeight || 99999
         if (dy > 0 && (p?.start || 0) <= 2) { view.prev(); return }
-        if (dy < 0 && p && (p.start + p.size) >= iH - 2) { view.next(); return }
+        if (dy < 0 && p && (p.start + p.size) >= p.viewSize - 2) { view.next(); return }
       }
     }, { passive: true })
 
-    // Авто-скрытие верх/низ панелей при прокрутке вниз (моб., «Лента»); вверх -> показать.
-    let _lastScroll = -1
-    e.detail.doc.addEventListener('scroll', () => {
-      if (prefs.flow !== 'scrolled' || window.innerWidth > 560) return
-      const y = (view?.renderer?.start) ?? (e.detail.doc.defaultView?.scrollY) ?? 0
-      if (_lastScroll < 0) { _lastScroll = y; return }
-      if (Math.abs(y - _lastScroll) < 12) return
-      document.getElementById('reader')?.classList.toggle('chrome-hidden', y > _lastScroll && y > 40)
-      _lastScroll = y
-    }, { passive: true })
+
   } catch {}
 }
 $('#view-host').addEventListener('wheel', (e) => {

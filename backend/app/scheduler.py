@@ -32,11 +32,18 @@ def _readera_import_job() -> None:
 
 
 def _monitor_job() -> None:
-    from ..accounts import monitor
+    # Через тот же guard, что и кнопка «Обновления»: один _lock сериализует
+    # плановый тик и ручной запуск → нет параллельных check_all и двойных докачек.
+    from ..accounts import check_job
     try:
-        with Session(engine) as session:
-            res = monitor.check_all(session, auto_download=True)
-        log.info("Monitor check: %s", {k: res[k] for k in ("checked", "with_updates", "downloaded")})
+        res = check_job.run_blocking("scheduled")
+        if res.get("status") == "skipped":
+            log.info("Monitor check skipped: ручная проверка уже идёт")
+        elif res.get("status") == "error":
+            log.warning("Monitor check failed: %s", res.get("error"))
+        else:
+            r = res.get("result") or {}
+            log.info("Monitor check: %s", {k: r.get(k) for k in ("checked", "with_updates", "downloaded")})
     except Exception as e:  # noqa: BLE001
         log.warning("Monitor check failed: %s", e)
 

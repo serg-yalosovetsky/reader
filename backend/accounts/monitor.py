@@ -3,10 +3,19 @@
 Надёжный приём: текущее число глав берём через FanFicFare --meta-only (публично,
 без логина; с кредами — для закрытого/18+). Сравниваем с last_seen_chapters;
 при росте помечаем has_update и (опц.) авто-докачиваем в Calibre/ReadEra.
+
+Скорость (check_all): самый дорогой кусок — поиск альтернативы на author.today
+(_check_at_source, ~0.8с на каждый ficbook-фикл, в сумме ~47с) — распараллелен
+(запросы к AT анонимные, их безопасно гонять пулом). Счёт глав ficbook остаётся
+на FanFicFare и идёт ПОСЛЕДОВАТЕЛЬНО, отдельной фазой: одновременный доступ к
+ficbook (anti-bot) и пул httpx душат друг друга, а агрессивный in-process
+cloudscraper ficbook быстро банит. Все записи в БД и докачки — потом,
+последовательно в главной сессии (никаких потоков с БД).
 """
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from sqlmodel import Session, select
 
@@ -38,14 +47,22 @@ def add_monitor(session: Session, source_url: str, work_id: int | None = None,
     return mon
 
 
-def _chapter_count(url: str, session: Session) -> int | None:
-    host = _host(url)
+def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
+    """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
+    из потоков, своей сессии у неё нет)."""
+    # searchfloor/readli: нет FanFicFare-адаптера — не мониторим по главам
+    if host.endswith(("searchfloor.org", "readli.net")):
+        return None
     # author.today: FanFicFare не поддерживает — используем наш адаптер
     if host.endswith("author.today"):
         from ..downloaders import authortoday as _at
         return _at.count_chapters(url)
-    creds = store.creds_for_host(session, host)
+    # ficbook: считаем через FanFicFare (свой cloudscraper в подпроцессе). Лёгкий
+    # in-process cloudscraper-счётчик пробовали — DDoS-Guard жёстко блокирует
+    # переиспользуемую сессию после ~десятка запросов, так что это тупик.
     meta = fff.get_meta(url, creds=creds)
+    if host.endswith("ficbook.net"):
+        time.sleep(0.25)  # вежливость к DDoS-Guard: он тригеристый, не частим
     if not meta:
         return None
     try:
@@ -59,27 +76,51 @@ def _host(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-def _check_at_source(mon: "Monitored", session: Session) -> tuple[str, int] | None:
-    """Если книга отслеживается на ficbook/fanfics — ищем её же на author.today.
-    Возвращает (at_url, at_chapters) если AT-версия найдена, иначе None."""
-    from urllib.parse import urlparse
-    host = (urlparse(mon.source_url).hostname or "").lower()
-    # Только для ficbook / fanfics / fanfiction (AT имеет смысл как альтернатива рус.фанфиков)
+def _at_eligible(host: str, work_id: int | None, title: str) -> bool:
+    """Стоит ли искать альтернативу на author.today (AT — быстрый рус.источник)."""
     if not any(h in host for h in ("ficbook", "fanfics.me", "fanfiction.net")):
-        return None
-    if not mon.work_id:
-        return None
-    w = session.get(Work, mon.work_id)
-    if not w or not w.title:
-        return None
+        return False
+    return bool(work_id) and bool(title)
+
+
+def _check_at_source(title: str, author: str) -> tuple[str, int] | None:
+    """Ищем работу на author.today по названию. (at_url, at_chapters) или None.
+    Чистая сеть, без БД — вызывается из потоков. Запросы к AT анонимные."""
     from ..downloaders import authortoday as _at
-    at_url = _at.search_work(w.title, w.author or "")
+    at_url = _at.search_work(title, author or "")
     if not at_url:
         return None
     at_cnt = _at.count_chapters(at_url)
     if not at_cnt:
         return None
     return (at_url, at_cnt)
+
+
+# Конкурентность поиска на author.today (анонимные httpx-запросы, безопасно).
+# 5 проверено (≈9.5с на 54). Выше не берём: _at._get ретраит 4× с backoff, и при
+# рейт-лимите AT на больших конкурентностях получаем каскад ретраев — медленнее и
+# агрессивнее. Гоняем ОТДЕЛЬНО от ficbook-счёта (одновременность их душит).
+_AT_WORKERS = 5
+
+
+# ВАЖНО: счёт глав ficbook (FanFicFare+cloudscraper) и пул AT-запросов (httpx)
+# НЕЛЬЗЯ гонять одновременно — эмпирически душат друг друга (контеншн CPU/сети на
+# маленьком VPS: anti-bot ficbook + конкурентные httpx), общий прогон раздувается
+# ~втрое. Поэтому фазы РАЗДЕЛЕНЫ: сперва счёт глав, потом отдельный пул на at_source.
+def _count_chapters_task(task: dict) -> int | None:
+    try:
+        return _chapter_count(task["url"], task["host"], task["creds"])
+    except Exception:  # noqa: BLE001 — фон, не валим прогон
+        return None
+
+
+def _at_task(task: dict) -> tuple[str, int] | None:
+    if not _at_eligible(task["host"], task["work_id"], task["title"]):
+        return None
+    try:
+        return _check_at_source(task["title"], task["author"])
+    except Exception:  # noqa: BLE001
+        return None
 
 
 
@@ -128,26 +169,56 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         from . import feeds  # ленивый импорт — избегаем цикла
         feeds_result = feeds.pull_all(session)
 
-    mons = session.exec(select(Monitored)).all()
-    checked = updated = downloaded = 0
-    details = []
-    for mon in mons:
+    from ..app import blacklist as _bl
+
+    # --- ФАЗА 0: чёрный список (последовательно, мутирует БД) ---
+    survivors: list[tuple] = []  # (mon, work_or_None)
+    for mon in session.exec(select(Monitored)).all():
         if not mon.source_url:
             continue
-        from ..app import blacklist as _bl
         _w = session.get(Work, mon.work_id) if mon.work_id else None
         if _bl.is_blacklisted(session, source_url=mon.source_url,
                               title=(_w.title if _w else ""),
                               author=(_w.author if _w else "")):
             session.delete(mon); session.commit(); continue
-        cur = _chapter_count(mon.source_url, session)
+        survivors.append((mon, _w))
+
+    # --- ФАЗА 1: read-only сбор (число глав + альтернатива на AT) ---
+    # Всё нужное для сети вытаскиваем заранее в plain-dict — потоки в БД не лезут.
+    creds_cache: dict[str, tuple[str, str] | None] = {}
+    tasks = []
+    for mon, _w in survivors:
+        host = _host(mon.source_url).lower()
+        if host not in creds_cache:
+            creds_cache[host] = store.creds_for_host(session, host)
+        tasks.append({
+            "mon_id": mon.id, "url": mon.source_url, "host": host,
+            "creds": creds_cache[host], "work_id": mon.work_id,
+            "title": _w.title if _w else "", "author": (_w.author if _w else "") or "",
+        })
+    # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
+    #     с пулом httpx — см. коммент у _count_chapters_task).
+    cur_by: dict[int, int | None] = {t["mon_id"]: _count_chapters_task(t) for t in tasks}
+    # 1b) Поиск на author.today — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
+    at_by: dict[int, tuple[str, int] | None] = {}
+    if tasks:
+        with ThreadPoolExecutor(max_workers=_AT_WORKERS) as ex:
+            for t, at_info in zip(tasks, ex.map(_at_task, tasks)):
+                at_by[t["mon_id"]] = at_info
+    counts: dict[int, tuple[int | None, tuple[str, int] | None]] = {
+        t["mon_id"]: (cur_by.get(t["mon_id"]), at_by.get(t["mon_id"])) for t in tasks
+    }
+
+    # --- ФАЗА 2: решения, докачки, запись — последовательно в главной сессии ---
+    checked = updated = downloaded = 0
+    details = []
+    for mon, _w in survivors:
+        cur, at_info = counts.get(mon.id, (None, None))
         mon.last_checked = utcnow()
         checked += 1
         if cur is None:
             session.add(mon); session.commit()
             continue
-        # Проверяем author.today как альтернативный источник (может выходить быстрее)
-        at_info = _check_at_source(mon, session)
         # Используем источник с большим числом глав
         best_url = mon.source_url
         best_cur = cur or 0
@@ -184,7 +255,6 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
             mon.last_seen_chapters = max(mon.last_seen_chapters, cur)
         session.add(mon)
         session.commit()
-        time.sleep(0.3)  # вежливость к сайтам
     return {"checked": checked, "with_updates": updated,
             "downloaded": downloaded, "feeds": feeds_result, "details": details}
 

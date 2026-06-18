@@ -106,3 +106,19 @@ class Bookmark(SQLModel, table=True):
     # Необязательная подпись (например, первые слова абзаца).
     label: str = ""
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Highlight(SQLModel, table=True):
+    """Выделение/цитата в книге. Много на work_id (как Bookmark)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_id: int = Field(foreign_key="work.id", index=True)
+    # Доля 0..1 — сортировка списка и кросс-девайс якорь.
+    ratio: float = 0.0
+    # Точный локатор выделения (Readium/foliate JSON-строка) для перехода/рендера.
+    locator: str = ""
+    # Выделенный текст — для списка цитат и поиска.
+    text: str = ""
+    # Цвет подсветки (yellow|green|blue|pink…).
+    color: str = "yellow"
+    created_at: datetime = Field(default_factory=utcnow)

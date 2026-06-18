@@ -92,3 +92,17 @@ class Blacklist(SQLModel, table=True):
     author_norm: str = Field(default="", index=True)
     source_url: str = Field(default="", index=True)
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Bookmark(SQLModel, table=True):
+    """Закладка в книге. Много закладок на work_id (в отличие от Progress)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_id: int = Field(foreign_key="work.id", index=True)
+    # Доля 0..1 — для сортировки списка и совместимости с ratio.
+    ratio: float = 0.0
+    # Точный локатор (Readium/foliate JSON-строка) для перехода.
+    locator: str = ""
+    # Необязательная подпись (например, первые слова абзаца).
+    label: str = ""
+    created_at: datetime = Field(default_factory=utcnow)

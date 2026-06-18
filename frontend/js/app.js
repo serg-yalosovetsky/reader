@@ -582,12 +582,60 @@ window.addEventListener('resize', () => {
 function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
 function closePanels() {
   $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
-  $('#search-panel').hidden = true; $('#panel-overlay').hidden = true
+  $('#search-panel').hidden = true; $('#bm-panel').hidden = true; $('#panel-overlay').hidden = true
 }
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
 $('#search-btn').addEventListener('click', () => { openPanel('#search-panel'); $('#search-input').focus() })
 $('#panel-overlay').addEventListener('click', closePanels)
+
+// ===================== Закладки (синк с сервером + Android) =====================
+// Сервер хранит locator как непрозрачную строку. Веб пишет foliate-CFI, Android —
+// Readium-Locator JSON; общий якорь для кросс-девайс перехода — ratio. Поэтому при
+// открытии закладки пробуем точный locator, а при неудаче откатываемся на goToFraction.
+async function loadBookmarks() {
+  if (!currentWork) return
+  const list = $('#bm-list'); list.innerHTML = ''
+  let items = []
+  try { items = await api.get(`/api/bookmarks/${currentWork.id}`) } catch { items = [] }
+  if (!items.length) {
+    const p = document.createElement('p'); p.className = 'panel-empty'; p.textContent = 'Закладок пока нет'
+    list.append(p); return
+  }
+  for (const bm of items) {
+    const row = document.createElement('div'); row.className = 'bm-row'
+    const a = document.createElement('a'); a.href = '#'; a.className = 'bm-link'
+    const pct = Math.round((bm.ratio || 0) * 100)
+    a.textContent = `${bm.label || 'Закладка'} · ${pct}%`
+    a.addEventListener('click', async (ev) => {
+      ev.preventDefault()
+      try { if (bm.locator) await view.goTo(bm.locator); else await view.goToFraction(bm.ratio || 0) }
+      catch { try { await view.goToFraction(bm.ratio || 0) } catch {} }
+      closePanels()
+    })
+    const del = document.createElement('button')
+    del.className = 'icon-btn bm-del'; del.textContent = '✕'; del.title = 'Удалить'
+    del.addEventListener('click', async (ev) => {
+      ev.stopPropagation(); ev.preventDefault()
+      try { await fetch(`/api/bookmarks/id/${bm.id}`, { method: 'DELETE' }) } catch {}
+      loadBookmarks()
+    })
+    row.append(a, del); list.append(row)
+  }
+}
+
+async function addBookmarkHere() {
+  if (!currentWork) return
+  const ratio = parseFloat($('#progress-slider').value) || 0
+  const label = `${Math.round(ratio * 100)}%`
+  try {
+    await api.post(`/api/bookmarks/${currentWork.id}`, { ratio, locator: lastCfi || '', label })
+    loadBookmarks()
+  } catch {}
+}
+
+$('#bm-btn').addEventListener('click', () => { openPanel('#bm-panel'); loadBookmarks() })
+$('#bm-add').addEventListener('click', addBookmarkHere)
 
 // ===================== Поиск по книге =====================
 // foliate view.search() — асинхронный генератор: по секциям выдаёт совпадения

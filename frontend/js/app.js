@@ -1,5 +1,6 @@
 // Фронтенд читалки: библиотека + reader на foliate-js, синхронизация прогресса.
 import '/vendor/foliate-js/view.js'
+import { Overlayer } from '/vendor/foliate-js/overlayer.js'
 
 const $ = (s) => document.querySelector(s)
 const api = {
@@ -326,6 +327,7 @@ async function openReader(work) {
   document.getElementById('reader')?.classList.remove('chrome-hidden')
   view.addEventListener('relocate', onRelocate)
   view.addEventListener('load', attachKeysToDoc)
+  view.addEventListener('draw-annotation', onDrawAnnotation)
   applyViewStyles()
   view.renderer?.addEventListener('scroll', onBookScroll)
   buildTOC()
@@ -338,9 +340,13 @@ async function openReader(work) {
     await view.init({ showTextStart: true })
     if (prog && prog.ratio > 0) { try { await view.goToFraction(prog.ratio) } catch {} }
   }
+
+  // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
+  loadHighlightsWeb()
 }
 
 function onRelocate(e) {
+  hideSelPopup()
   const { fraction, cfi, index } = e.detail
   lastCfi = cfi || lastCfi
   if (typeof index === 'number') lastIdx = index
@@ -519,7 +525,13 @@ function wheelNav(deltaY) {
 let bookDoc = null
 function attachKeysToDoc(e) {
   bookDoc = e.detail.doc
+  _selIndex = e.detail.index
   try {
+    // Выделение текста → плавающий попап (выделить/перевести/копировать).
+    e.detail.doc.addEventListener('pointerup', () => setTimeout(() => onSelectionChanged(e.detail.doc), 10))
+    e.detail.doc.addEventListener('selectionchange', () => {
+      const s = e.detail.doc.getSelection?.(); if (!s || s.isCollapsed) hideSelPopup()
+    })
     e.detail.doc.addEventListener('keydown', handleKey)
     e.detail.doc.addEventListener('wheel', (ev) => {
       if (prefs.flow === 'scrolled') {
@@ -582,7 +594,8 @@ window.addEventListener('resize', () => {
 function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
 function closePanels() {
   $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
-  $('#search-panel').hidden = true; $('#bm-panel').hidden = true; $('#panel-overlay').hidden = true
+  $('#search-panel').hidden = true; $('#bm-panel').hidden = true
+  $('#hl-panel').hidden = true; $('#panel-overlay').hidden = true
 }
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
@@ -636,6 +649,116 @@ async function addBookmarkHere() {
 
 $('#bm-btn').addEventListener('click', () => { openPanel('#bm-panel'); loadBookmarks() })
 $('#bm-add').addEventListener('click', addBookmarkHere)
+
+// ===================== Подсветки / цитаты (синк с сервером + Android) =====================
+// Сервер хранит locator как строку. Веб пишет foliate-CFI и рисует оверлей; Android
+// пишет Readium-JSON. Визуальный оверлей рисуется только на своей платформе, но список
+// цитат и переход (locator→fraction-фолбэк) общие. Цвет хранится именем.
+const HL_DRAW = { yellow: '#f2d544', green: '#79c267', blue: '#5aa9f0', pink: '#ef7db5' }
+let _highlights = []
+let _selIndex = -1
+let _pendingSel = null
+
+function onDrawAnnotation(e) {
+  const { draw, annotation } = e.detail
+  draw(Overlayer.highlight, { color: HL_DRAW[annotation.color] || annotation.color || HL_DRAW.yellow })
+}
+
+function hideSelPopup() { $('#sel-popup').hidden = true; _pendingSel = null }
+
+function onSelectionChanged(doc) {
+  const sel = doc.getSelection?.()
+  const text = sel?.toString().trim() || ''
+  if (!sel || sel.isCollapsed || !text) { hideSelPopup(); return }
+  const range = sel.getRangeAt(0)
+  _pendingSel = { range, index: _selIndex, text }
+  // Координаты выделения в iframe → в окно верхнего документа (попап position:fixed).
+  const rect = range.getBoundingClientRect()
+  const fr = doc.defaultView?.frameElement?.getBoundingClientRect() || { left: 0, top: 0 }
+  const popup = $('#sel-popup')
+  popup.hidden = false
+  const x = Math.max(8, Math.min(fr.left + rect.left, window.innerWidth - popup.offsetWidth - 8))
+  const y = Math.max(8, fr.top + rect.top - popup.offsetHeight - 8)
+  popup.style.left = x + 'px'
+  popup.style.top = y + 'px'
+}
+
+async function doHighlightSelection() {
+  const sel = _pendingSel
+  if (!sel || !currentWork || !view) { hideSelPopup(); return }
+  let cfi = ''
+  try { cfi = view.getCFI(sel.index, sel.range) } catch {}
+  hideSelPopup()
+  if (cfi) { try { await view.addAnnotation({ value: cfi, color: 'yellow' }) } catch {} }
+  const ratio = parseFloat($('#progress-slider').value) || 0
+  try {
+    await api.post(`/api/highlights/${currentWork.id}`, { ratio, locator: cfi, text: sel.text, color: 'yellow' })
+    loadHighlightsWeb()
+  } catch {}
+}
+
+function doTranslateSelection() {
+  const text = _pendingSel?.text
+  hideSelPopup()
+  if (!text) return
+  const url = 'https://translate.google.com/?sl=auto&tl=ru&op=translate&text=' + encodeURIComponent(text)
+  window.open(url, '_blank', 'noopener')
+}
+
+function doCopySelection() {
+  const text = _pendingSel?.text
+  hideSelPopup()
+  if (text) navigator.clipboard?.writeText(text).catch(() => {})
+}
+
+async function loadHighlightsWeb() {
+  if (!currentWork) return
+  let items = []
+  try { items = await api.get(`/api/highlights/${currentWork.id}`) } catch { items = [] }
+  _highlights = items
+  // Нарисовать свои (foliate-CFI) подсветки; чужие (Android Readium-JSON) пропустить.
+  for (const hl of items) {
+    if (hl.locator && hl.locator.startsWith('epubcfi(')) {
+      try { await view.addAnnotation({ value: hl.locator, color: hl.color || 'yellow' }) } catch {}
+    }
+  }
+  renderHighlights()
+}
+
+function renderHighlights() {
+  const list = $('#hl-list'); list.innerHTML = ''
+  if (!_highlights.length) {
+    const p = document.createElement('p'); p.className = 'panel-empty'
+    p.textContent = 'Выделите текст в книге → «Выделить»'
+    list.append(p); return
+  }
+  for (const hl of _highlights) {
+    const row = document.createElement('div'); row.className = 'bm-row'
+    const a = document.createElement('a'); a.href = '#'; a.className = 'bm-link'
+    const pct = Math.round((hl.ratio || 0) * 100)
+    a.textContent = `${(hl.text || 'Выделение').slice(0, 80)} · ${pct}%`
+    a.addEventListener('click', async (ev) => {
+      ev.preventDefault()
+      try { if (hl.locator) await view.goTo(hl.locator); else await view.goToFraction(hl.ratio || 0) }
+      catch { try { await view.goToFraction(hl.ratio || 0) } catch {} }
+      closePanels()
+    })
+    const del = document.createElement('button')
+    del.className = 'icon-btn bm-del'; del.textContent = '✕'; del.title = 'Удалить'
+    del.addEventListener('click', async (ev) => {
+      ev.stopPropagation(); ev.preventDefault()
+      try { await fetch(`/api/highlights/id/${hl.id}`, { method: 'DELETE' }) } catch {}
+      if (hl.locator && hl.locator.startsWith('epubcfi(')) { try { await view.deleteAnnotation({ value: hl.locator }) } catch {} }
+      loadHighlightsWeb()
+    })
+    row.append(a, del); list.append(row)
+  }
+}
+
+$('#hl-btn').addEventListener('click', () => { openPanel('#hl-panel'); loadHighlightsWeb() })
+$('#sel-highlight').addEventListener('click', doHighlightSelection)
+$('#sel-translate').addEventListener('click', doTranslateSelection)
+$('#sel-copy').addEventListener('click', doCopySelection)
 
 // ===================== Поиск по книге =====================
 // foliate view.search() — асинхронный генератор: по секциям выдаёт совпадения

@@ -27,6 +27,12 @@ def _antiforgery(html: str) -> str:
     return m.group(1) if m else ""
 
 
+def _ficbook_book_id(url: str) -> str | None:
+    """Извлечь book_id из ficbook URL (работает и с chapter_id и без)."""
+    m = re.search(r'/readfic/(\d+)', url)
+    return m.group(1) if m else None
+
+
 # ----------------- ficbook (cloudscraper) -----------------
 def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
     import cloudscraper
@@ -46,7 +52,10 @@ def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
     for n in (data.get("data", {}) or {}).get("notifications", []):
         url = n.get("url", "")
         if "/readfic/" in url:
-            urls.append("https://ficbook.net" + url)
+            book_id = _ficbook_book_id(url)
+            if book_id:
+                # нормализируем до URL книги (без chapter_id)
+                urls.append(f"https://ficbook.net/readfic/{book_id}")
     return list(dict.fromkeys(urls))
 
 
@@ -124,6 +133,9 @@ def fetch_site_updates(site: str, user: str, pw: str, cookies: dict | None = Non
 
 def pull_all(session: Session) -> dict:
     """Для каждого аккаунта забрать фид и поставить работы на отслеживание."""
+    from sqlmodel import select
+    from ..app.db.models import Monitored
+
     result = {}
     for site in _ADAPTERS:
         creds = store.creds_for_site(session, site)
@@ -132,6 +144,21 @@ def pull_all(session: Session) -> dict:
         cookies = store.get_cookies(session, site)
         try:
             urls = fetch_site_updates(site, creds[0], creds[1], cookies)
+            # Для ficbook: пометить уже отслеживаемые книги как has_update=True
+            # вместо поштучной проверки через FanFicFare (N запросов → 1 запрос).
+            if site == "ficbook" and urls:
+                notif_ids = {_ficbook_book_id(u) for u in urls} - {None}
+                all_mons = session.exec(select(Monitored)).all()
+                marked = 0
+                for m in all_mons:
+                    src = m.source_url or ""
+                    if "ficbook.net" in src and _ficbook_book_id(src) in notif_ids:
+                        if not m.has_update:
+                            m.has_update = True
+                            session.add(m)
+                            marked += 1
+                if marked:
+                    session.commit()
             for url in urls:
                 monitor.add_monitor(session, url)
             store.touch_check(session, site)

@@ -195,10 +195,18 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
             "mon_id": mon.id, "url": mon.source_url, "host": host,
             "creds": creds_cache[host], "work_id": mon.work_id,
             "title": _w.title if _w else "", "author": (_w.author if _w else "") or "",
+            "has_update": mon.has_update,
         })
     # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
     #     с пулом httpx — см. коммент у _count_chapters_task).
-    cur_by: dict[int, int | None] = {t["mon_id"]: _count_chapters_task(t) for t in tasks}
+    #     Пропускаем если обновление уже известно от ficbook notifications (has_update=True) —
+    #     это экономит N FanFicFare-запросов и укладывается в nginx-таймаут.
+    cur_by: dict[int, int | None] = {}
+    for t in tasks:
+        if t.get("has_update"):
+            cur_by[t["mon_id"]] = None  # skip; в фазе 2 — прямая докачка
+        else:
+            cur_by[t["mon_id"]] = _count_chapters_task(t)
     # 1b) Поиск на author.today — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
     at_by: dict[int, tuple[str, int] | None] = {}
     if tasks:
@@ -217,7 +225,35 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         mon.last_checked = utcnow()
         checked += 1
         if cur is None:
-            session.add(mon); session.commit()
+            if not (mon.has_update and auto_download):
+                session.add(mon); session.commit()
+                continue
+            # Known update от notifications — докачиваем без счёта глав
+            best_url = mon.source_url
+            best_cur = mon.last_seen_chapters  # реальный счётчик неизвестен — не трогаем
+            at_info = counts.get(mon.id, (None, None))[1]
+            if at_info:
+                at_url, at_cnt = at_info
+                best_url = at_url
+                best_cur = max(best_cur, at_cnt)
+            updated += 1
+            detail = {"url": best_url, "from": mon.last_seen_chapters, "source": "notifications"}
+            if at_info and best_url != mon.source_url:
+                detail["alt_source"] = best_url
+            try:
+                creds = store.creds_for_host(session, _host(best_url))
+                res = chain.fetch(best_url, creds=creds)
+                work = register_download(res, session)
+                mon.work_id = work.id
+                mon.has_update = False
+                downloaded += 1
+                detail["downloaded"] = True
+                _refresh_at_cover(work, session)
+            except Exception as e:  # noqa: BLE001
+                detail["error"] = str(e)[:200]
+            details.append(detail)
+            session.add(mon)
+            session.commit()
             continue
         # Используем источник с большим числом глав
         best_url = mon.source_url

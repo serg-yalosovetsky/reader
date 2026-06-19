@@ -75,7 +75,7 @@ function applyLibFilter(q) {
 
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
-  card.className = 'book-card'
+  card.className = hasUpdate ? 'book-card has-update' : 'book-card'
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const cover = w.cover_path

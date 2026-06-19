@@ -110,6 +110,10 @@ html, body {
 .book-progress > i { display: block; height: 100%; background: var(--accent); }
 /* непрочитанный хвост — оранжевым (трек), зелёная заливка — прочитанная часть */
 .book-progress.partial { background: #f0883e; }
+.book-card.has-update .book-cover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 
 /* ===================== ЧИТАЛКА ===================== */
 #reader { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overscroll-behavior: contain; }

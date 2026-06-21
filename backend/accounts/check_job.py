@@ -32,6 +32,13 @@ _state: dict = {
     "result": None,
     "error": None,
     "trigger": None,        # manual | scheduled
+    "progress": {
+        "current": 0,
+        "total": 0,
+        "current_title": "",
+        "current_site": "",
+        "updates_found": 0,
+    },
 }
 
 
@@ -45,9 +52,19 @@ def state() -> dict:
 
 
 def _run(trigger: str) -> None:
+    _state["progress"].update(current=0, total=0, current_title="", current_site="", updates_found=0)
+
+    def _progress_cb(current: int, total: int, title: str, site: str) -> None:
+        _state["progress"].update(current=current, total=total,
+                                  current_title=title, current_site=site)
+
+    def _update_cb(updates_found: int) -> None:
+        _state["progress"]["updates_found"] = updates_found
+
     try:
         with Session(engine) as session:
-            res = monitor.check_all(session, auto_download=True)
+            res = monitor.check_all(session, auto_download=True,
+                                    progress_cb=_progress_cb, update_cb=_update_cb)
         _state.update(status="done", finished_at=_now(), result=res, error=None)
     except Exception as e:  # noqa: BLE001 — фон, не роняем поток/планировщик
         _state.update(status="error", finished_at=_now(), error=str(e)[:300])

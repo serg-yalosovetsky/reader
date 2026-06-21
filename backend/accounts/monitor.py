@@ -161,7 +161,8 @@ def _refresh_at_cover(work: Work, session: Session) -> None:
         pass
 
 
-def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True) -> dict:
+def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True,
+              progress_cb=None, update_cb=None) -> dict:
     """Проверить обновления: сперва фиды подписок (ставят новые работы на
     отслеживание), затем детект новых глав по каждому отслеживаемому фику."""
     feeds_result = {}
@@ -173,7 +174,7 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
 
     # --- ФАЗА 0: чёрный список (последовательно, мутирует БД) ---
     survivors: list[tuple] = []  # (mon, work_or_None)
-    for mon in session.exec(select(Monitored)).all():
+    for mon in session.exec(select(Monitored).order_by(Monitored.id)).all():
         if not mon.source_url:
             continue
         _w = session.get(Work, mon.work_id) if mon.work_id else None
@@ -202,7 +203,10 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
     #     Пропускаем если обновление уже известно от ficbook notifications (has_update=True) —
     #     это экономит N FanFicFare-запросов и укладывается в nginx-таймаут.
     cur_by: dict[int, int | None] = {}
-    for t in tasks:
+    total_tasks = len(tasks)
+    for i, t in enumerate(tasks):
+        if progress_cb:
+            progress_cb(i + 1, total_tasks, t["title"] or t["url"], t["host"])
         if t.get("has_update"):
             cur_by[t["mon_id"]] = None  # skip; в фазе 2 — прямая докачка
         else:
@@ -267,6 +271,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         if best_cur > mon.last_seen_chapters or needs_initial or (mon.has_update and auto_download):
             mon.has_update = True
             updated += 1
+            if update_cb:
+                update_cb(updated)
             detail = {"url": best_url, "from": mon.last_seen_chapters, "to": best_cur}
             if at_info and best_url != mon.source_url:
                 detail["alt_source"] = best_url

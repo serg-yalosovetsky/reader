@@ -1,0 +1,16 @@
+# Образец server-only сниппета для reader-only токена мобильного приложения.
+#
+# Реальный файл (НЕ в git, с настоящим секретом) кладётся на VPS как:
+#   /etc/nginx/snippets/reader-token-map.conf
+# и подключается из nginx-reader.ibotz.fun.conf директивой include (http-контекст).
+#
+# Токен сопоставляется по заголовку X-Reader-Token; любое несовпадение/отсутствие
+# -> $reader_token_ok = 0 -> запрос идёт обычным путём через vps-sso.
+#
+# Сгенерировать новый токен: openssl rand -hex 32
+# Тот же токен прописывается в CI-секрет READER_TOKEN (см. reader-android).
+
+map $http_x_reader_token $reader_token_ok {
+    default                                                              0;
+    "REPLACE_WITH_openssl_rand_hex_32"                                   1;
+}

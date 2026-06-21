@@ -65,7 +65,14 @@ def _decrypt(text: str, secret: str, user_id: str = "") -> str:
 
 def search_work(title: str, author: str = "") -> str | None:
     """Найти работу на author.today по названию (+ автор для уточнения).
-    Возвращает URL первого подходящего результата или None."""
+    Возвращает URL наиболее похожего результата или None."""
+    from difflib import SequenceMatcher
+
+    def _sim(a: str, b: str) -> float:
+        a_n = re.sub(r"\W+", " ", a.lower()).strip()
+        b_n = re.sub(r"\W+", " ", b.lower()).strip()
+        return SequenceMatcher(None, a_n, b_n).ratio()
+
     q = f"{title} {author}".strip() if author else title
     with httpx.Client(
         timeout=20, follow_redirects=True,
@@ -78,8 +85,36 @@ def search_work(title: str, author: str = "") -> str | None:
             work_ids = list(dict.fromkeys(re.findall(r'href="/work/(\d+)"', r.text)))
             if not work_ids:
                 return None
-            # Берём первый результат — поиск по точному названию обычно точный
-            return f"https://author.today/work/{work_ids[0]}"
+
+            # Извлекаем заголовки из <div class="bookcard-title">…<a href="/work/ID">…</a>
+            # AT подсвечивает совпадения через <em>, поэтому убираем теги после извлечения.
+            title_by_id: dict[str, str] = {}
+            for m in re.finditer(
+                r'class="bookcard-title".*?href="/work/(\d+)"[^>]*>(.*?)</a>',
+                r.text, re.S,
+            ):
+                wid = m.group(1)
+                raw = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+                raw = re.sub(r"\s+", " ", raw)
+                if wid not in title_by_id and 3 < len(raw) < 200:
+                    title_by_id[wid] = raw
+
+            # Выбираем из топ-5 наиболее похожий на наш заголовок
+            best_id, best_sim = work_ids[0], -1.0
+            for wid in work_ids[:5]:
+                t = title_by_id.get(wid)
+                if not t:
+                    continue
+                s = _sim(title, t)
+                if s > best_sim:
+                    best_sim = s
+                    best_id = wid
+
+            # Если лучший результат явно не о той книге — не берём обложку
+            if best_sim >= 0 and best_sim < 0.35:
+                return None
+
+            return f"https://author.today/work/{best_id}"
         except Exception:
             return None
 

@@ -45,6 +45,8 @@ async function loadLibrary() {
   ])
   libUpdated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
   libProgress = progAll || {}
+  // Книги с обновлениями — наверх списка
+  libWorks.sort((a, b) => (libUpdated.has(b.id) ? 1 : 0) - (libUpdated.has(a.id) ? 1 : 0))
   // Загружаем Calibre один раз (фоном, не блокируем рендер)
   api.get('/api/calibre/books').then(books => { libCalibre = books || [] }).catch(() => {})
   applyLibFilter('')
@@ -249,6 +251,7 @@ async function checkUpdates(statusFn) {
 
   const POLL_MS = 3000
   const DEADLINE = Date.now() + 5 * 60 * 1000  // клиентский кэп: 5 минут
+  let prevUpdates = 0
   const poll = async () => {
     let st
     try { st = await api.get('/api/monitored/check/status') }
@@ -260,7 +263,20 @@ async function checkUpdates(statusFn) {
         loadMonitored(); loadLibrary()
         return
       }
-      statusFn('Проверяю обновления… (идёт в фоне)')
+      const p = st.progress || {}
+      if (p.total > 0) {
+        const site = p.current_site || '?'
+        const title = (p.current_title || '…').slice(0, 45)
+        statusFn(`${site} · ${title} · ${p.current}/${p.total}`)
+      } else {
+        statusFn('Проверяю обновления…')
+      }
+      // Нашли новые обновления с прошлого тика — перерисовываем список сразу
+      const updNow = p.updates_found || 0
+      if (updNow > prevUpdates) {
+        prevUpdates = updNow
+        loadMonitored(); loadLibrary()
+      }
       setTimeout(poll, POLL_MS)
       return
     }

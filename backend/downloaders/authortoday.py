@@ -64,8 +64,9 @@ def _decrypt(text: str, secret: str, user_id: str = "") -> str:
 
 
 def search_work(title: str, author: str = "") -> str | None:
-    """Найти работу на author.today по названию (+ автор для уточнения).
-    Возвращает URL наиболее похожего результата или None."""
+    """Найти работу на author.today по названию + автору.
+    Требует совпадения названия (>=0.80) и, если автор известен, автора (>=0.35).
+    Это предотвращает скачивание книг с похожим названием, но другим автором."""
     from difflib import SequenceMatcher
 
     def _sim(a: str, b: str) -> float:
@@ -86,8 +87,7 @@ def search_work(title: str, author: str = "") -> str | None:
             if not work_ids:
                 return None
 
-            # Извлекаем заголовки из <div class="bookcard-title">…<a href="/work/ID">…</a>
-            # AT подсвечивает совпадения через <em>, поэтому убираем теги после извлечения.
+            # Заголовки: class="bookcard-title"…<a href="/work/ID">…</a>
             title_by_id: dict[str, str] = {}
             for m in re.finditer(
                 r'class="bookcard-title".*?href="/work/(\d+)"[^>]*>(.*?)</a>',
@@ -99,25 +99,47 @@ def search_work(title: str, author: str = "") -> str | None:
                 if wid not in title_by_id and 3 < len(raw) < 200:
                     title_by_id[wid] = raw
 
-            # Выбираем из топ-5 наиболее похожий на наш заголовок
-            best_id, best_sim = work_ids[0], -1.0
+            # Авторы — идут в том же порядке, что буккарды на странице
+            author_by_id: dict[str, str] = {}
+            at_authors = re.findall(
+                r'class="bookcard-author[^"]*"[^>]*>.*?<a[^>]*>([^<]+)</a>',
+                r.text, re.S,
+            )
+            for i, wid in enumerate(work_ids):
+                if i < len(at_authors):
+                    author_by_id[wid] = re.sub(r"\s+", " ", at_authors[i]).strip()
+
+            TITLE_MIN = 0.80
+            AUTHOR_MIN = 0.35
+
+            best_id, best_score = None, -1.0
             for wid in work_ids[:5]:
                 t = title_by_id.get(wid)
                 if not t:
                     continue
-                s = _sim(title, t)
-                if s > best_sim:
-                    best_sim = s
+                title_s = _sim(title, t)
+                if title_s < TITLE_MIN:
+                    continue
+                if author:
+                    at_author = author_by_id.get(wid, "")
+                    if at_author:
+                        author_s = _sim(author, at_author)
+                        if author_s < AUTHOR_MIN:
+                            continue
+                        score = (title_s + author_s) / 2
+                    else:
+                        score = title_s
+                else:
+                    score = title_s
+                if score > best_score:
+                    best_score = score
                     best_id = wid
 
-            # Если лучший результат явно не о той книге — не берём обложку
-            if best_sim >= 0 and best_sim < 0.35:
+            if best_id is None:
                 return None
-
             return f"https://author.today/work/{best_id}"
         except Exception:
             return None
-
 
 def count_chapters(url: str) -> int | None:
     """Быстро получить число глав без скачивания текста."""

@@ -132,6 +132,10 @@ def _refresh_at_cover(work: Work, session: Session) -> None:
 
     _ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
     # Ищем source_url по monitored
+    # Коммитим любые pending-изменения прежде чем делать SELECT (triggering autoflush)
+    # и сетевые запросы — иначе write-транзакция остаётся открытой на время AT-запросов
+    # и другие запросы получают "database is locked".
+    session.commit()
     mon = session.exec(
         __import__('sqlmodel', fromlist=['select']).select(
             __import__('backend.app.db.models', fromlist=['Monitored']).Monitored

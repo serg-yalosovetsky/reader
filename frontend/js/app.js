@@ -633,21 +633,25 @@ $('#update-btn').addEventListener('click', async () => {
   const btn = $('#update-btn')
   if (btn.dataset.state === 'checking' || !currentWork) return
   btn.dataset.state = 'checking'; btn.textContent = '↻'; btn.title = 'Проверяем...'
+  const workId = currentWork?.id
   try {
-    const res = await api.post(`/api/monitored/check/${currentWork.id}`)
+    const res = await api.post(`/api/monitored/check/${workId}`)
     if (res.error) {
       btn.dataset.state = 'err'; btn.title = res.error === 'not_monitored' ? 'Книга не отслеживается' : res.error
-    } else if (res.downloaded) {
-      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.) — перезагружаем...`
-      await loadLibrary()
-      const workId = currentWork?.id
-      const freshWork = libWorks.find(w => w.id === workId)
-      if (freshWork) { await openReader(freshWork); return }
-    } else if (res.has_update) {
-      btn.dataset.state = 'ok'; btn.title = `Обновление есть (${res.chapters_found} гл.), но загрузить не удалось`
-    } else {
-      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет'
+      setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
+      return
     }
+    if (res.downloaded) {
+      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.) — перезагружаем...`
+    } else if (res.has_update) {
+      btn.dataset.state = 'ok'; btn.title = `Обновление есть, но загрузить не удалось`
+    } else {
+      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет — перезагружаем...'
+    }
+    // Всегда перезагружаем epub: он мог обновиться плановым чеком пока книга была открыта
+    await loadLibrary()
+    const freshWork = libWorks.find(w => w.id === workId)
+    if (freshWork) { await openReader(freshWork); return }
   } catch {
     btn.dataset.state = 'err'; btn.title = 'Ошибка проверки'
   }

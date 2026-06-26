@@ -26,7 +26,9 @@ def get_book_file(work_id: int, session: Session = Depends(get_session)) -> File
     if not path.exists():
         raise HTTPException(410, "файл книги отсутствует на диске")
     media = _MEDIA.get(work.file_format, "application/octet-stream")
-    return FileResponse(path, media_type=media, filename=path.name)
+    resp = FileResponse(path, media_type=media, filename=path.name)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @router.get("/{work_id}/cover")

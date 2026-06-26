@@ -51,9 +51,16 @@ def _monitor_job() -> None:
 
 def _ficbook_feed_job() -> None:
     from ..accounts import feeds
+    from ..accounts import check_job
     try:
         with Session(engine) as session:
             feeds.pull_all(session, sites=["ficbook"])
+        # Сразу докачать книги с has_update=True (без полного счёта глав)
+        res = check_job.run_blocking("ficbook_feed", only_pending=True, pull_feeds=False)
+        if res.get("status") not in ("skipped", "error"):
+            r = res.get("result") or {}
+            if r.get("downloaded"):
+                log.info("Ficbook auto-download: %s downloaded", r["downloaded"])
     except Exception as e:  # noqa: BLE001
         log.warning("Ficbook feed check failed: %s", e)
 

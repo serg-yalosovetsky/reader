@@ -211,9 +211,10 @@ def _download_and_write(
 
 
 def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True,
-              progress_cb=None, update_cb=None) -> dict:
+              progress_cb=None, update_cb=None, only_pending: bool = False) -> dict:
     """Проверить обновления: сперва фиды подписок (ставят новые работы на
-    отслеживание), затем детект новых глав по каждому отслеживаемому фику."""
+    отслеживание), затем детект новых глав по каждому отслеживаемому фику.
+    only_pending=True — только докачать книги с has_update=True (без счёта глав)."""
     feeds_result = {}
     if pull_feeds:
         from . import feeds  # ленивый импорт — избегаем цикла
@@ -232,6 +233,10 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                               author=(_w.author if _w else "")):
             session.delete(mon); session.commit(); continue
         survivors.append((mon, _w))
+
+    # В режиме only_pending обрабатываем только уже помеченные книги
+    if only_pending:
+        survivors = [(mon, w) for mon, w in survivors if mon.has_update]
 
     # --- ФАЗА 1: read-only сбор (число глав + альтернатива на AT) ---
     creds_cache: dict[str, tuple[str, str] | None] = {}

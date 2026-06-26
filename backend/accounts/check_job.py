@@ -51,7 +51,7 @@ def state() -> dict:
     return dict(_state)
 
 
-def _run(trigger: str) -> None:
+def _run(trigger: str, only_pending: bool = False, pull_feeds: bool = True) -> None:
     _state["progress"].update(current=0, total=0, current_title="", current_site="", updates_found=0)
 
     def _progress_cb(current: int, total: int, title: str, site: str) -> None:
@@ -64,7 +64,8 @@ def _run(trigger: str) -> None:
     try:
         with Session(engine) as session:
             res = monitor.check_all(session, auto_download=True,
-                                    progress_cb=_progress_cb, update_cb=_update_cb)
+                                    progress_cb=_progress_cb, update_cb=_update_cb,
+                                    pull_feeds=pull_feeds, only_pending=only_pending)
         _state.update(status="done", finished_at=_now(), result=res, error=None)
     except Exception as e:  # noqa: BLE001 — фон, не роняем поток/планировщик
         _state.update(status="error", finished_at=_now(), error=str(e)[:300])
@@ -83,7 +84,7 @@ def start(trigger: str = "manual") -> dict:
     return {"status": "started", "trigger": trigger}
 
 
-def run_blocking(trigger: str = "scheduled") -> dict:
+def run_blocking(trigger: str = "scheduled", only_pending: bool = False, pull_feeds: bool = True) -> dict:
     """Для APScheduler: выполнить в текущем (рабочем) потоке планировщика.
     Если ручная проверка уже идёт — пропустить тик (не плодим параллель)."""
     with _lock:
@@ -91,5 +92,5 @@ def run_blocking(trigger: str = "scheduled") -> dict:
             return {"status": "skipped", "reason": "already running"}
         _state.update(status="running", started_at=_now(), finished_at=None,
                       result=None, error=None, trigger=trigger)
-    _run(trigger)
+    _run(trigger, only_pending=only_pending, pull_feeds=pull_feeds)
     return state()

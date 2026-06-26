@@ -638,8 +638,11 @@ $('#update-btn').addEventListener('click', async () => {
     if (res.error) {
       btn.dataset.state = 'err'; btn.title = res.error === 'not_monitored' ? 'Книга не отслеживается' : res.error
     } else if (res.downloaded) {
-      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.)`
+      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.) — перезагружаем...`
       await loadLibrary()
+      const workId = currentWork?.id
+      const freshWork = libWorks.find(w => w.id === workId)
+      if (freshWork) { await openReader(freshWork); return }
     } else if (res.has_update) {
       btn.dataset.state = 'ok'; btn.title = `Обновление есть (${res.chapters_found} гл.), но загрузить не удалось`
     } else {

@@ -199,7 +199,13 @@ def _download_and_write(
     mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
     mon.last_checked = utcnow()
     session.add(mon)
-    session.commit()   # один быстрый commit: cover_path + mon
+    # Синхронизируем все дубликаты monitored для того же work_id
+    for dup in session.exec(select(Monitored).where(
+            Monitored.work_id == work.id, Monitored.id != mon_id)).all():
+        dup.has_update = False
+        dup.last_seen_chapters = max(dup.last_seen_chapters, best_cur)
+        session.add(dup)
+    session.commit()   # один быстрый commit: cover_path + mon + дубликаты
 
     return {"downloaded": True, "source_used": best_url}
 

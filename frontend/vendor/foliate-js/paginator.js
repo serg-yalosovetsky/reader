@@ -1029,6 +1029,7 @@ export class Paginator extends HTMLElement {
         return index >= 0 && index <= this.sections.length - 1
     }
     async #goTo({ index, anchor, select}) {
+        if (index == null) return
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index

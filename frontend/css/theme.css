@@ -120,7 +120,11 @@ body.reader-open { height: 100%; overflow: hidden; }
 .book-progress { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .book-progress > i { display: block; height: 100%; background: var(--accent); }
 /* непрочитанный хвост — оранжевым (трек), зелёная заливка — прочитанная часть */
-.book-progress.partial { background: #f0883e; }
+.book-card.unread  .book-progress { background: #f0883e; }
+.book-card.partial .book-progress { background: #f0883e55; }
+.book-card.partial .book-progress > i { background: #f0883e; }
+.book-card.read    .book-progress { background: #2ea86b33; }
+.book-card.read    .book-progress > i { background: #2ea86b; }
 .book-card.has-update .book-cover {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
@@ -356,4 +360,14 @@ foliate-view { width: 100%; height: 100%; display: block; }
 
   /* Статус-сообщения — под общий мобильный padding */
   .ingest-status { margin: 8px 14px 0; }
+}
+
+/* ---- reader: кнопка ↻ обновления ---- */
+#update-btn { font-size: 18px; min-width: 32px; }
+#update-btn[data-state="checking"] { opacity: .55; cursor: default; }
+#update-btn[data-state="ok"]  { color: #2ea86b; }
+#update-btn[data-state="err"] { color: #f85149; }
+
+@media (max-width: 600px) {
+  #hl-btn { display: none; }
 }

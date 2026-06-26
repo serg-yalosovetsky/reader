@@ -73,3 +73,9 @@ def check_now() -> dict:
 def check_status() -> dict:
     """Статус фоновой проверки: idle | running | done | error (+ result/error)."""
     return check_job.state()
+
+
+@router.post("/monitored/check/{work_id}")
+def check_one_now(work_id: int, session: Session = Depends(get_session)) -> dict:
+    """Проверить обновления для одной книги и немедленно вернуть результат."""
+    return monitor.check_one(session, work_id)

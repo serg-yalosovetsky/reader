@@ -35,7 +35,7 @@ const GFONTS = 'https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,
 document.documentElement.dataset.theme = prefs.theme
 
 // ===================== БИБЛИОТЕКА =====================
-let libWorks = [], libCalibre = [], libProgress = {}, libUpdated = new Set()
+let libWorks = [], libCalibre = [], libProgress = {}, libUpdated = new Set(), libMonitored = new Set()
 
 async function loadLibrary() {
   libWorks = await api.get('/api/library')
@@ -45,6 +45,7 @@ async function loadLibrary() {
     api.get('/api/progress').catch(() => ({})),
   ])
   libUpdated = new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id))
+  libMonitored = new Set(monitored.filter((m) => m.work_id).map((m) => m.work_id))
   libProgress = progAll || {}
   // Книги с обновлениями — наверх списка
   libWorks.sort((a, b) => (libUpdated.has(b.id) ? 1 : 0) - (libUpdated.has(a.id) ? 1 : 0))
@@ -78,7 +79,8 @@ function applyLibFilter(q) {
 
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
-  card.className = hasUpdate ? 'book-card has-update' : 'book-card'
+  const readState = ratio >= 0.98 ? 'read' : ratio > 0 ? 'partial' : 'unread'
+  card.className = ['book-card', readState, hasUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const cover = w.cover_path
@@ -91,7 +93,7 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
-    <div class="book-progress${ratio > 0 && ratio < 1 ? ' partial' : ''}"><i style="width:${ratio >= 1 ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
+    <div class="book-progress"><i style="width:${ratio >= 1 ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
   card.addEventListener('click', () => openReader(w))
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
     e.stopPropagation()
@@ -320,6 +322,10 @@ async function openReader(work) {
   $('#library').hidden = true
   $('#reader').hidden = false
   $('#reader-title').textContent = work.title || ''
+  const updBtn = $('#update-btn')
+  updBtn.hidden = !libMonitored.has(work.id)
+  updBtn.dataset.state = ''
+  updBtn.title = 'Проверить новые главы'
 
   // История: открытие книги — отдельная запись, чтобы браузерный «назад»
   // возвращал в библиотеку, а не уводил с сайта.
@@ -381,7 +387,7 @@ function onRelocate(e) {
   // Дочитан до конца — сбросить флаг обновления
   if (fraction >= 0.98 && currentWork && libUpdated.has(currentWork.id)) {
     libUpdated.delete(currentWork.id)
-    fetch(, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/library/${currentWork.id}/update-flag`, { method: 'DELETE' }).catch(() => {})
   }
 }
 
@@ -623,6 +629,27 @@ function closePanels() {
 }
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
+$('#update-btn').addEventListener('click', async () => {
+  const btn = $('#update-btn')
+  if (btn.dataset.state === 'checking' || !currentWork) return
+  btn.dataset.state = 'checking'; btn.textContent = '↻'; btn.title = 'Проверяем...'
+  try {
+    const res = await api.post(`/api/monitored/check/${currentWork.id}`)
+    if (res.error) {
+      btn.dataset.state = 'err'; btn.title = res.error === 'not_monitored' ? 'Книга не отслеживается' : res.error
+    } else if (res.downloaded) {
+      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.)`
+      await loadLibrary()
+    } else if (res.has_update) {
+      btn.dataset.state = 'ok'; btn.title = `Обновление есть (${res.chapters_found} гл.), но загрузить не удалось`
+    } else {
+      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет'
+    }
+  } catch {
+    btn.dataset.state = 'err'; btn.title = 'Ошибка проверки'
+  }
+  setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
+})
 $('#search-btn').addEventListener('click', () => { openPanel('#search-panel'); $('#search-input').focus() })
 $('#panel-overlay').addEventListener('click', closePanels)
 

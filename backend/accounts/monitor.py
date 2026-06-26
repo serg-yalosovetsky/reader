@@ -124,45 +124,84 @@ def _at_task(task: dict) -> tuple[str, int] | None:
 
 
 
-def _refresh_at_cover(work: Work, session: Session) -> None:
-    """После скачивания обновить обложку с author.today (ficbook/readli/searchfloor дают логотип)."""
+
+_AT_COVER_ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
+
+
+def _fetch_at_cover_bytes(source_url: str, title: str, author: str) -> bytes | None:
+    """Скачать обложку с author.today — чистая сеть, без сессии и транзакций."""
     from urllib.parse import urlparse
     from ..app import covers as _cov
     from ..downloaders import authortoday as _at
 
-    _ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
-    # Ищем source_url по monitored
-    # Коммитим любые pending-изменения прежде чем делать SELECT (triggering autoflush)
-    # и сетевые запросы — иначе write-транзакция остаётся открытой на время AT-запросов
-    # и другие запросы получают "database is locked".
-    session.commit()
-    mon = session.exec(
-        __import__('sqlmodel', fromlist=['select']).select(
-            __import__('backend.app.db.models', fromlist=['Monitored']).Monitored
-        ).where(
-            __import__('backend.app.db.models', fromlist=['Monitored']).Monitored.work_id == work.id
-        )
-    ).first()
-    src_url = mon.source_url if mon else ""
-    host = (urlparse(src_url).hostname or "").lower()
-    if not any(host.endswith(e) for e in _ELIGIBLE):
-        return
-    if not work.title:
-        return
+    host = (urlparse(source_url).hostname or "").lower()
+    if not any(host.endswith(e) for e in _AT_COVER_ELIGIBLE):
+        return None
+    if not title:
+        return None
     try:
-        at_url = _at.search_work(work.title, work.author or "")
+        at_url = _at.search_work(title, author or "")
         if not at_url:
-            return
+            return None
         img = _cov.fetch_cover_bytes(at_url)
-        if not img or len(img) < 10000:
-            return
-        p = _cov.save_cover_bytes(img, work.sha1)
-        if p:
-            work.cover_path = str(p)
-            session.add(work)
-            session.commit()
+        return img if img and len(img) >= 10_000 else None
     except Exception:  # noqa: BLE001
-        pass
+        return None
+
+
+def _apply_at_cover(session: Session, work: Work, cover_bytes: bytes | None) -> None:
+    """Сохранить обложку и пометить work грязным (без commit — вызывающий коммитит)."""
+    if not cover_bytes:
+        return
+    from ..app import covers as _cov
+    p = _cov.save_cover_bytes(cover_bytes, work.sha1)
+    if p:
+        work.cover_path = str(p)
+        session.add(work)
+
+
+def _download_and_write(
+    session: Session,
+    mon: "Monitored",
+    work_obj: "Work | None",
+    best_url: str,
+    best_cur: int,
+) -> dict:
+    """Скачать книгу + обложку, записать результат.
+
+    Структура гарантирует короткие транзакции:
+      1. Читаем creds (быстро) -> commit -> никакой открытой txn.
+      2. Вся сеть (download + cover) вне любой транзакции.
+      3. Быстрая запись: register_download (внутренний commit) +
+         cover_path + mon — один финальный commit.
+    """
+    # snapshot plain data от ORM-объектов до expires
+    src_url = mon.source_url
+    mon_id  = mon.id
+    title   = work_obj.title  if work_obj else ""
+    author  = (work_obj.author if work_obj else "") or ""
+    creds   = store.creds_for_host(session, _host(best_url))
+
+    # Закрываем ВСЕ pending-изменения — после этого нет открытой транзакции
+    session.commit()
+
+    # Сеть — транзакций нет вообще
+    cover_bytes = _fetch_at_cover_bytes(src_url, title, author)
+    res = chain.fetch(best_url, creds=creds)
+
+    # Быстрая запись (< секунды)
+    work = register_download(res, session)       # внутренний commit
+    _apply_at_cover(session, work, cover_bytes)  # session.add(work) если есть обложка
+
+    mon = session.get(Monitored, mon_id)         # re-fetch после commit
+    mon.work_id = work.id
+    mon.has_update = False
+    mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
+    mon.last_checked = utcnow()
+    session.add(mon)
+    session.commit()   # один быстрый commit: cover_path + mon
+
+    return {"downloaded": True, "source_used": best_url}
 
 
 def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True,
@@ -177,7 +216,7 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
     from ..app import blacklist as _bl
 
     # --- ФАЗА 0: чёрный список (последовательно, мутирует БД) ---
-    survivors: list[tuple] = []  # (mon, work_or_None)
+    survivors: list[tuple] = []
     for mon in session.exec(select(Monitored).order_by(Monitored.id)).all():
         if not mon.source_url:
             continue
@@ -189,7 +228,6 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         survivors.append((mon, _w))
 
     # --- ФАЗА 1: read-only сбор (число глав + альтернатива на AT) ---
-    # Всё нужное для сети вытаскиваем заранее в plain-dict — потоки в БД не лезут.
     creds_cache: dict[str, tuple[str, str] | None] = {}
     tasks = []
     for mon, _w in survivors:
@@ -203,9 +241,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
             "has_update": mon.has_update,
         })
     # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
-    #     с пулом httpx — см. коммент у _count_chapters_task).
-    #     Пропускаем если обновление уже известно от ficbook notifications (has_update=True) —
-    #     это экономит N FanFicFare-запросов и укладывается в nginx-таймаут.
+    #     с пулом httpx — душат друг друга на маленьком VPS).
+    #     Пропускаем если обновление уже известно (has_update=True).
     cur_by: dict[int, int | None] = {}
     total_tasks = len(tasks)
     for i, t in enumerate(tasks):
@@ -225,43 +262,40 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         t["mon_id"]: (cur_by.get(t["mon_id"]), at_by.get(t["mon_id"])) for t in tasks
     }
 
-    # --- ФАЗА 2: решения, докачки, запись — последовательно в главной сессии ---
+    # --- ФАЗА 2: решения, загрузки, запись ---
+    # Каждая итерация: snapshot -> commit -> сеть -> быстрая запись.
+    # Транзакция открыта только во время DB-операций (миллисекунды).
     checked = updated = downloaded = 0
     details = []
     for mon, _w in survivors:
         cur, at_info = counts.get(mon.id, (None, None))
-        mon.last_checked = utcnow()
         checked += 1
         if cur is None:
             if not (mon.has_update and auto_download):
+                mon.last_checked = utcnow()
                 session.add(mon); session.commit()
                 continue
             # Known update от notifications — докачиваем без счёта глав
             best_url = mon.source_url
-            best_cur = mon.last_seen_chapters  # реальный счётчик неизвестен — не трогаем
-            at_info = counts.get(mon.id, (None, None))[1]
+            best_cur = mon.last_seen_chapters
             if at_info:
                 at_url, at_cnt = at_info
                 best_url = at_url
                 best_cur = max(best_cur, at_cnt)
             updated += 1
-            detail = {"url": best_url, "from": mon.last_seen_chapters, "source": "notifications"}
+            detail: dict = {"url": best_url, "from": mon.last_seen_chapters, "source": "notifications"}
             if at_info and best_url != mon.source_url:
                 detail["alt_source"] = best_url
             try:
-                creds = store.creds_for_host(session, _host(best_url))
-                res = chain.fetch(best_url, creds=creds)
-                work = register_download(res, session)
-                mon.work_id = work.id
-                mon.has_update = False
+                dl = _download_and_write(session, mon, _w, best_url, best_cur)
+                detail.update(dl)
                 downloaded += 1
-                detail["downloaded"] = True
-                _refresh_at_cover(work, session)
             except Exception as e:  # noqa: BLE001
                 detail["error"] = str(e)[:200]
+                mon = session.get(Monitored, mon.id)
+                mon.last_checked = utcnow()
+                session.add(mon); session.commit()
             details.append(detail)
-            session.add(mon)
-            session.commit()
             continue
         # Используем источник с большим числом глав
         best_url = mon.source_url
@@ -282,27 +316,86 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 detail["alt_source"] = best_url
             if auto_download:
                 try:
-                    creds = store.creds_for_host(session, _host(best_url))
-                    res = chain.fetch(best_url, creds=creds)
-                    work = register_download(res, session)
-                    mon.work_id = work.id
-                    mon.has_update = False  # докачали — обновление применено
+                    dl = _download_and_write(session, mon, _w, best_url, best_cur)
+                    detail.update(dl)
                     downloaded += 1
-                    detail["downloaded"] = True
-                    detail["source_used"] = best_url
-                    # Обновляем обложку с AT если книга из ficbook/readli/searchfloor
-                    _refresh_at_cover(work, session)
-                except Exception as e:  # noqa: BLE001 — фон, не валим весь прогон
+                    details.append(detail)
+                    continue  # mon уже записан внутри _download_and_write
+                except Exception as e:  # noqa: BLE001
                     detail["error"] = str(e)[:200]
             details.append(detail)
-        # last_seen двигаем только если докачка удалась (has_update сброшен) либо
-        # обновлений нет — иначе фик не «застрянет» при ошибке докачки (будет ретрай).
+        # last_seen двигаем только если докачка удалась или обновлений нет
+        mon = session.get(Monitored, mon.id)  # re-fetch после возможного commit
         if not mon.has_update:
-            mon.last_seen_chapters = max(mon.last_seen_chapters, cur)
+            mon.last_seen_chapters = max(mon.last_seen_chapters, cur or 0)
+        mon.last_checked = utcnow()
         session.add(mon)
         session.commit()
     return {"checked": checked, "with_updates": updated,
             "downloaded": downloaded, "feeds": feeds_result, "details": details}
+
+
+def check_one(session: Session, work_id: int, auto_download: bool = True) -> dict:
+    """Проверить обновления для одной книги (по work_id). Синхронно."""
+    from ..app import blacklist as _bl
+
+    mon = session.exec(select(Monitored).where(Monitored.work_id == work_id)).first()
+    if not mon:
+        return {"error": "not_monitored"}
+
+    _w = session.get(Work, work_id)
+    host = _host(mon.source_url).lower()
+
+    if _bl.is_blacklisted(session, source_url=mon.source_url,
+                          title=(_w.title if _w else ""),
+                          author=(_w.author if _w else "")):
+        return {"error": "blacklisted"}
+
+    # Читаем creds (быстро) — потом commit, уходим в сеть
+    creds = store.creds_for_host(session, host)
+    session.commit()  # закрыли любую pending-txn
+
+    # Сеть — без транзакций
+    cur = _chapter_count(mon.source_url, host, creds)
+
+    at_info = None
+    if _at_eligible(host, work_id, _w.title if _w else ""):
+        try:
+            at_info = _check_at_source(_w.title if _w else "", (_w.author if _w else "") or "")
+        except Exception:
+            pass
+
+    best_url = mon.source_url
+    best_cur = cur or 0
+    if at_info:
+        at_url, at_cnt = at_info
+        if at_cnt > best_cur:
+            best_url = at_url
+            best_cur = at_cnt
+
+    mon = session.get(Monitored, mon.id)  # re-fetch после commit
+    has_new = (best_cur > mon.last_seen_chapters) or (not mon.work_id and best_cur > 0) or mon.has_update
+    detail: dict = {"has_update": has_new, "chapters_seen": mon.last_seen_chapters, "chapters_found": best_cur}
+
+    if has_new and auto_download:
+        try:
+            dl = _download_and_write(session, mon, _w, best_url, best_cur)
+            detail.update(dl)
+            return detail
+        except Exception as e:  # noqa: BLE001
+            detail["error"] = str(e)[:200]
+
+    # Нет загрузки или ошибка — быстрая запись только mon
+    mon = session.get(Monitored, mon.id)
+    if has_new:
+        mon.has_update = True
+    else:
+        mon.last_seen_chapters = max(mon.last_seen_chapters, cur or 0)
+    mon.last_checked = utcnow()
+    session.add(mon)
+    session.commit()
+    return detail
+
 
 
 def list_monitored(session: Session) -> list[dict]:

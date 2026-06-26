@@ -11,6 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session
 
 from .config import (
+    FICBOOK_FEED_INTERVAL_MIN,
     MONITOR_INTERVAL_MIN,
     READERA_BACKUP_REMOTE,
     READERA_SYNC_INTERVAL_MIN,
@@ -48,6 +49,15 @@ def _monitor_job() -> None:
         log.warning("Monitor check failed: %s", e)
 
 
+def _ficbook_feed_job() -> None:
+    from ..accounts import feeds
+    try:
+        with Session(engine) as session:
+            feeds.pull_all(session, sites=["ficbook"])
+    except Exception as e:  # noqa: BLE001
+        log.warning("Ficbook feed check failed: %s", e)
+
+
 def start() -> None:
     global _scheduler
     if _scheduler:
@@ -55,6 +65,8 @@ def start() -> None:
     jobs = []
     if READERA_SYNC_INTERVAL_MIN > 0 and READERA_BACKUP_REMOTE:
         jobs.append((_readera_import_job, READERA_SYNC_INTERVAL_MIN, "readera_import"))
+    if FICBOOK_FEED_INTERVAL_MIN > 0:
+        jobs.append((_ficbook_feed_job, FICBOOK_FEED_INTERVAL_MIN, "ficbook_feed"))
     if MONITOR_INTERVAL_MIN > 0:
         jobs.append((_monitor_job, MONITOR_INTERVAL_MIN, "monitor_check"))
     if not jobs:

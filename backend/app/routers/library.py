@@ -224,6 +224,18 @@ async def upload_book(
     return work
 
 
+@router.delete("/{work_id}/update-flag")
+def clear_update_flag(work_id: int, session: Session = Depends(get_session)) -> dict:
+    """Сбросить has_update для книги (пользователь дочитал до конца)."""
+    mons = session.exec(select(Monitored).where(Monitored.work_id == work_id)).all()
+    for m in mons:
+        if m.has_update:
+            m.has_update = False
+            session.add(m)
+    session.commit()
+    return {"ok": True}
+
+
 @router.delete("/{work_id}")
 def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     """Удалить книгу из библиотеки (файл + БД)."""

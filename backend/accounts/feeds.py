@@ -131,13 +131,13 @@ def fetch_site_updates(site: str, user: str, pw: str, cookies: dict | None = Non
     return fn(user, pw, cookies) if fn else []
 
 
-def pull_all(session: Session) -> dict:
+def pull_all(session: Session, sites: list | None = None) -> dict:
     """Для каждого аккаунта забрать фид и поставить работы на отслеживание."""
     from sqlmodel import select
     from ..app.db.models import Monitored
 
     result = {}
-    for site in _ADAPTERS:
+    for site in (sites or list(_ADAPTERS.keys())):
         creds = store.creds_for_site(session, site)
         if not creds:
             continue

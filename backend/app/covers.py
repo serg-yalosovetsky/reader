@@ -146,3 +146,56 @@ def _fb2_cover(path) -> bytes | None:
         return base64.b64decode(re.sub(r"\s+", "", mb.group(1)))
     except Exception:  # noqa: BLE001
         return None
+
+
+def _epub_description(path) -> str:
+    """Извлечь DC:description из EPUB OPF."""
+    import html as _html
+    try:
+        with zipfile.ZipFile(path) as z:
+            try:
+                container = z.read("META-INF/container.xml").decode("utf-8", "ignore")
+            except KeyError:
+                return ""
+            m = re.search(r'full-path="([^"]+)"', container)
+            if not m:
+                return ""
+            opf = z.read(m.group(1)).decode("utf-8", "ignore")
+            desc_m = re.search(r"<dc:description[^>]*>(.*?)</dc:description>", opf, re.S | re.I)
+            if not desc_m:
+                return ""
+            return _html.unescape(re.sub(r"<[^>]+>", " ", desc_m.group(1))).strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+_COVER_URL_RE = re.compile(
+    r"[Оо]бложк[аиаи]"
+    r"\s*[-–—:]\s*(https?://[^\s<>\"')]+)",
+    re.IGNORECASE,
+)
+
+
+def cover_from_description(description: str, sha1: str) -> "Path | None":
+    """Ищет в описании книги URL обложки ('Обложка - https://...') и качает его."""
+    if not description:
+        return None
+    m = _COVER_URL_RE.search(description)
+    if not m:
+        return None
+    url = m.group(1).rstrip(".,;)")
+    # Попытка 1: прямое скачивание (если URL ведёт на изображение напрямую)
+    try:
+        data = _fetch(url, _UA, binary=True)
+        if data and len(data) > 500:
+            magic = data[:4]
+            if (magic[:2] == b"\xff\xd8" or magic == b"\x89PNG"
+                    or magic[:3] == b"GIF" or magic == b"RIFF"):
+                return save_cover_bytes(data, sha1)
+    except Exception:  # noqa: BLE001
+        pass
+    # Попытка 2: og:image со страницы (работает для Google Photos, Vk, etc.)
+    data = fetch_cover_bytes(url)
+    if data and len(data) > 500:
+        return save_cover_bytes(data, sha1)
+    return None

@@ -7,6 +7,7 @@ const api = {
   async get(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json() },
   async put(url, body) { const r = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json() },
   async post(url, body) { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json() },
+  async delete(url) { const r = await fetch(url, { method: 'DELETE' }); if (!r.ok) throw new Error(await r.text()); return r.json() },
 }
 
 // ===================== Настройки вида (localStorage) =====================
@@ -315,6 +316,7 @@ let saveTimer = null
 async function openReader(work) {
   ttsStop()
   currentWork = work
+  document.body.classList.add('reader-open')
   $('#library').hidden = true
   $('#reader').hidden = false
   $('#reader-title').textContent = work.title || ''
@@ -376,6 +378,11 @@ function onRelocate(e) {
     api.put(`/api/progress/${currentWork.id}`, { ratio: fraction || 0, locator: cfi || '' }).catch(() => {})
   }, 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
+  // Дочитан до конца — сбросить флаг обновления
+  if (fraction >= 0.98 && currentWork && libUpdated.has(currentWork.id)) {
+    libUpdated.delete(currentWork.id)
+    fetch(, { method: 'DELETE' }).catch(() => {})
+  }
 }
 
 // Применение темы/шрифта/полей к содержимому книги.
@@ -466,6 +473,7 @@ function buildTOC() {
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
 function closeReader() {
   ttsStop()
+  document.body.classList.remove('reader-open')
   $('#reader').hidden = true
   $('#library').hidden = false
   $('#search-results').innerHTML = ''; $('#search-meta').textContent = ''; $('#search-input').value = ''
@@ -1322,4 +1330,20 @@ loadLibrary()
 
 $('#lib-filter').addEventListener('input', (e) => {
   applyLibFilter(e.target.value.trim())
+})
+
+// ===================== Тема в библиотеке =====================
+const LIB_THEMES = ['day', 'sepia', 'grey', 'dusk', 'night', 'terminal', 'black']
+function updateLibThemeBtn() {
+  const isDark = ['dusk', 'night', 'terminal', 'black'].includes(prefs.theme)
+  const btn = document.querySelector('#lib-theme-btn')
+  if (btn) btn.title = isDark ? 'Тема: тёмная' : 'Тема: светлая'
+}
+updateLibThemeBtn()
+document.querySelector('#lib-theme-btn')?.addEventListener('click', () => {
+  const i = LIB_THEMES.indexOf(prefs.theme)
+  prefs.theme = LIB_THEMES[(i + 1) % LIB_THEMES.length]
+  document.documentElement.dataset.theme = prefs.theme
+  savePrefs()
+  updateLibThemeBtn()
 })

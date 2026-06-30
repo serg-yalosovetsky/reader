@@ -536,8 +536,18 @@ $('#tap-next').addEventListener('click', () => view?.next())
 function handleKey(e) {
   if ($('#reader').hidden || !view) return
   const k = e.key
-  if (k === 'ArrowLeft' || k === 'PageUp') { view.prev(); e.preventDefault() }
-  else if (k === 'ArrowRight' || k === 'PageDown') { view.next(); e.preventDefault() }
+  if (k === 'ArrowLeft') { view.prev(); e.preventDefault() }
+  else if (k === 'ArrowRight') { view.next(); e.preventDefault() }
+  else if (k === 'PageUp') {
+    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(0, -(view.renderer?.size || 600))
+    else view.prev()
+    e.preventDefault()
+  }
+  else if (k === 'PageDown') {
+    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(0, view.renderer?.size || 600)
+    else view.next()
+    e.preventDefault()
+  }
   else if (k === ' ' || k === 'Spacebar') { e.shiftKey ? view.prev() : view.next(); e.preventDefault() }
   else if (k === 'Home') { view.goToFraction(0); e.preventDefault() }
   else if (k === 'End') { view.goToFraction(1); e.preventDefault() }
@@ -565,7 +575,7 @@ function attachKeysToDoc(e) {
     e.detail.doc.addEventListener('keydown', handleKey)
     e.detail.doc.addEventListener('wheel', (ev) => {
       if (prefs.flow === 'scrolled') {
-        if (ev.deltaY < 0 && (view?.renderer?.start || 0) <= 0) {
+        if (ev.deltaY < 0 && (view?.renderer?.start || 0) <= 2) {
           ev.preventDefault(); view.prev(); return
         }
         if (ev.deltaY > 0) {

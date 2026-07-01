@@ -80,7 +80,17 @@ def start() -> None:
         return
     _scheduler = BackgroundScheduler(daemon=True)
     for fn, minutes, jid in jobs:
-        _scheduler.add_job(fn, "interval", minutes=minutes, id=jid)
+        # coalesce: пропущенные тики схлопываются в один (не копим очередь).
+        # misfire_grace_time: тик, задержавшийся из-за долгого предыдущего прогона,
+        #   всё равно отрабатывает, а не тихо теряется.
+        # max_instances=1: не плодим параллельные прогоны одного джоба.
+        # ВАЖНО: это НЕ лечит зависший прогон — APScheduler не умеет прерывать
+        #   уже запущенный поток. Единственная реальная защита от вечного клина
+        #   счётчика инстансов — таймауты на всех сетевых вызовах внутри джоба
+        #   (см. accounts/feeds.py _FICBOOK_TIMEOUT). Здесь — только гигиена.
+        _scheduler.add_job(fn, "interval", minutes=minutes, id=jid,
+                           max_instances=1, coalesce=True,
+                           misfire_grace_time=300, replace_existing=True)
     _scheduler.start()
     log.info("Scheduler started: %s", [j[2] for j in jobs])
 

@@ -34,16 +34,24 @@ def _ficbook_book_id(url: str) -> str | None:
 
 
 # ----------------- ficbook (cloudscraper) -----------------
+# (connect, read) — БЕЗ таймаута один транзиентный сталл ficbook/DDoS-Guard
+# блокировал прогон навсегда внутри ThreadPoolExecutor APScheduler: future не
+# завершался, счётчик max_instances заклинивало на 1 → все последующие тики
+# скипались («maximum number of running instances reached»). Read = 90с щедро,
+# т.к. под троттлингом ficbook легально отвечает десятки секунд.
+_FICBOOK_TIMEOUT = (15, 90)
+
+
 def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
     import cloudscraper
     c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
-    c.get("https://ficbook.net/")
+    c.get("https://ficbook.net/", timeout=_FICBOOK_TIMEOUT)
     r = c.post("https://ficbook.net/login_check_static",
-               data={"login": user, "password": pw})
+               data={"login": user, "password": pw}, timeout=_FICBOOK_TIMEOUT)
     if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
         raise RuntimeError("ficbook: не удалось войти")
     rn = c.post("https://ficbook.net/user_notifications/get_new",
-                headers={"X-Requested-With": "XMLHttpRequest"})
+                headers={"X-Requested-With": "XMLHttpRequest"}, timeout=_FICBOOK_TIMEOUT)
     try:
         data = rn.json()
     except ValueError:

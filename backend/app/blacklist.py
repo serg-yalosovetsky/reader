@@ -16,16 +16,22 @@ from .services import _norm
 def add_entry(session: Session, title: str = "", author: str = "",
               urls: list[str] | None = None) -> None:
     tn, an = _norm(title), _norm(author)
-    if tn:
-        ex = session.exec(select(Blacklist).where(
-            Blacklist.title_norm == tn, Blacklist.author_norm == an,
-            Blacklist.source_url == "")).first()
-        if not ex:
-            session.add(Blacklist(title_norm=tn, author_norm=an, source_url=""))
-    for u in {(x or "").strip() for x in (urls or []) if (x or "").strip()}:
-        if session.exec(select(Blacklist).where(Blacklist.source_url == u)).first():
-            continue
-        session.add(Blacklist(title_norm=tn, author_norm=an, source_url=u))
+    # no_autoflush: SELECT-проверки посреди цикла иначе преждевременно флашат уже
+    # накопленные add(), открывая write-txn в начале и удерживая его на весь цикл
+    # SELECT'ов → 'database is locked' при конкуренции с монитором/фидом (READER-5).
+    # Набор url уже уникален (множество), дублей внутри вызова нет; один commit()
+    # в конце пишет всё разом коротким писателем.
+    with session.no_autoflush:
+        if tn:
+            ex = session.exec(select(Blacklist).where(
+                Blacklist.title_norm == tn, Blacklist.author_norm == an,
+                Blacklist.source_url == "")).first()
+            if not ex:
+                session.add(Blacklist(title_norm=tn, author_norm=an, source_url=""))
+        for u in {(x or "").strip() for x in (urls or []) if (x or "").strip()}:
+            if session.exec(select(Blacklist).where(Blacklist.source_url == u)).first():
+                continue
+            session.add(Blacklist(title_norm=tn, author_norm=an, source_url=u))
     session.commit()
 
 

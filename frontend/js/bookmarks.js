@@ -1,6 +1,7 @@
 // Закладки (синк с сервером + Android).
 import { $ } from './core/dom.js'
 import { api } from './core/api.js'
+import { logErr } from './core/log.js'
 import { currentWork, view, lastCfi } from './core/state.js'
 import { openPanel, closePanels } from './navigation.js'
 
@@ -32,7 +33,7 @@ async function loadBookmarks() {
     del.className = 'icon-btn bm-del'; del.textContent = '✕'; del.title = 'Удалить'
     del.addEventListener('click', async (ev) => {
       ev.stopPropagation(); ev.preventDefault()
-      try { await fetch(`/api/bookmarks/id/${bm.id}`, { method: 'DELETE' }) } catch {}
+      try { await fetch(`/api/bookmarks/id/${bm.id}`, { method: 'DELETE' }) } catch (e) { logErr('delete bookmark', e) }
       loadBookmarks()
     })
     row.append(a, del); list.append(row)

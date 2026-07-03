@@ -1,6 +1,7 @@
 // Подсветки/цитаты (синк с сервером + Android) + попап выделения.
 import { $, escapeHtml } from './core/dom.js'
 import { api } from './core/api.js'
+import { logErr } from './core/log.js'
 import { currentWork, view, _selIndex } from './core/state.js'
 import { Overlayer } from '/vendor/foliate-js/overlayer.js'
 import { openPanel, closePanels } from './navigation.js'
@@ -101,7 +102,7 @@ function renderHighlights() {
     del.className = 'icon-btn bm-del'; del.textContent = '✕'; del.title = 'Удалить'
     del.addEventListener('click', async (ev) => {
       ev.stopPropagation(); ev.preventDefault()
-      try { await fetch(`/api/highlights/id/${hl.id}`, { method: 'DELETE' }) } catch {}
+      try { await fetch(`/api/highlights/id/${hl.id}`, { method: 'DELETE' }) } catch (e) { logErr('delete highlight', e) }
       if (hl.locator && hl.locator.startsWith('epubcfi(')) { try { await view.deleteAnnotation({ value: hl.locator }) } catch {} }
       loadHighlightsWeb()
     })

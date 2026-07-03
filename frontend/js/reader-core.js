@@ -1,6 +1,7 @@
 // Ядро читалки: открытие книги, релокейт/прогресс, стили книги, TOC.
 import { $ } from './core/dom.js'
 import { api } from './core/api.js'
+import { logErr } from './core/log.js'
 import { prefs, MARGIN_INLINE, FONT_STACKS, GFONTS } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastIdx } from './core/state.js'
@@ -85,13 +86,15 @@ function onRelocate(e) {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     if (!currentWork) return
-    api.put(`/api/progress/${currentWork.id}`, { ratio: fraction || 0, locator: cfi || '' }).catch(() => {})
+    api.put(`/api/progress/${currentWork.id}`, { ratio: fraction || 0, locator: cfi || '' })
+      .catch((e) => logErr('save progress', e))
   }, 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
   // Дочитан до конца — сбросить флаг обновления
   if (fraction >= 0.98 && currentWork && libUpdated.has(currentWork.id)) {
     libUpdated.delete(currentWork.id)
-    fetch(`/api/library/${currentWork.id}/update-flag`, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/library/${currentWork.id}/update-flag`, { method: 'DELETE' })
+      .catch((e) => logErr('clear update-flag', e))
   }
 }
 

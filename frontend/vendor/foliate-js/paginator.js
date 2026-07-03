@@ -1,4 +1,3 @@
-globalThis.__PB = '20260703l'
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 const debounce = (f, wait, immediate) => {
@@ -916,7 +915,6 @@ export class Paginator extends HTMLElement {
         let wdt = last.t - first.t
         if (wdt <= 0) wdt = Math.max(1, (s.length - 1 - i) * 16)
         let v = this.#vertical ? (first.x - last.x) / wdt : (first.y - last.y) / wdt
-        globalThis.__momDbg = Object.assign(globalThis.__momDbg || {}, { sm: ((globalThis.__momDbg || {}).sm || 0) + 1, v: Math.round(v * 100) / 100, n: s.length, wdt: Math.round(wdt) })
         if (!v || Math.abs(v) < 0.04) return
         v = Math.max(-4, Math.min(4, v))
         let lastTs = null
@@ -936,7 +934,6 @@ export class Paginator extends HTMLElement {
     #onTouchEnd() {
         this.#touchScrolled = false
         if (this.scrolled) {
-            globalThis.__momDbg = Object.assign(globalThis.__momDbg || {}, { te: ((globalThis.__momDbg || {}).te || 0) + 1 })
             this.#startMomentum(); return
         }
 

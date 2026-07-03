@@ -1,6 +1,6 @@
 // Точка входа читалки: подключение модулей (слушатели навешиваются на импорте)
 // и стартовая инициализация.
-import '/vendor/foliate-js/view.js?v=20260703l'
+import '/vendor/foliate-js/view.js'
 import { $ } from './core/dom.js'
 import { api } from './core/api.js'
 import './core/prefs.js'

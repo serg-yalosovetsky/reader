@@ -5,6 +5,19 @@ import { view, bookDoc } from './core/state.js'
 // ===================== TTS =====================
 export const ttsSt = { active: false, paused: false, chunks: [], idx: 0, rate: 1, voiceId: 'xenia', voiceLang: 'ru-RU', advance: false, currentEl: null, audio: null, rafId: null, wordIdx: 0, wordTimings: [], allVoices: [], _chunkBodyOffset: 0, prefetch: {} }
 
+// Автодетект языка: Кириллица → русский голос, Latin → английский.
+// Возвращает id голоса для этого текста (текущий выбор, если не сработала эвристика).
+function pickVoiceForText(text) {
+  const _cyr = (text.match(/[\u0400-\u04FF]/g) || []).length
+  const _lat = (text.match(/[a-zA-Z]/g) || []).length
+  let voiceId = ttsSt.voiceId
+  if (_cyr > _lat * 0.5 + 2 && !ttsSt.voiceLang.startsWith('ru'))
+    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('ru')) || {}).id || voiceId
+  else if (_lat > _cyr * 0.5 + 5 && !ttsSt.voiceLang.startsWith('en'))
+    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('en')) || {}).id || voiceId
+  return voiceId
+}
+
 // Паттерн «визуального шума» — строки, которые TTS не должен произносить
 const TTS_SKIP = /^[\s*\-~=_|•·×✦◦∗#—]{2,}$|^(\*\s+){2,}\*?$|^(-\s+){2,}-?$/
 
@@ -261,14 +274,7 @@ async function ttsSpeakChunk() {
   const total = ttsSt.chunks.length
   if (total) $('#tts-info').textContent = `${ttsSt.idx + 1} / ${total} (${Math.round((ttsSt.idx + 1) / total * 100)}%)`
 
-  // Автодетект языка: Кириллица → русский голос, Latin → английский
-  const _cyr = (text.match(/[\u0400-\u04FF]/g) || []).length
-  const _lat = (text.match(/[a-zA-Z]/g) || []).length
-  let voiceId = ttsSt.voiceId
-  if (_cyr > _lat * 0.5 + 2 && !ttsSt.voiceLang.startsWith('ru'))
-    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('ru')) || {}).id || voiceId
-  else if (_lat > _cyr * 0.5 + 5 && !ttsSt.voiceLang.startsWith('en'))
-    voiceId = (ttsSt.allVoices.find(v => v.lang.startsWith('en')) || {}).id || voiceId
+  const voiceId = pickVoiceForText(text)
 
   const rateNum = Math.round((ttsSt.rate - 1) * 100)
   const rateStr = (rateNum >= 0 ? '+' : '') + rateNum + '%'
@@ -305,13 +311,7 @@ async function ttsSpeakChunk() {
   const _nextIdx = ttsSt.idx + 1
   if (ttsSt.active && _nextIdx < ttsSt.chunks.length && !ttsSt.prefetch[_nextIdx]) {
     const _nText = ttsSt.chunks[_nextIdx]
-    const _nCyr = (_nText.match(/[\u0400-\u04FF]/g) || []).length
-    const _nLat = (_nText.match(/[a-zA-Z]/g) || []).length
-    let _nVoice = ttsSt.voiceId
-    if (_nCyr > _nLat * 0.5 + 2 && !ttsSt.voiceLang.startsWith('ru'))
-      _nVoice = (ttsSt.allVoices.find(v => v.lang.startsWith('ru')) || {}).id || _nVoice
-    else if (_nLat > _nCyr * 0.5 + 5 && !ttsSt.voiceLang.startsWith('en'))
-      _nVoice = (ttsSt.allVoices.find(v => v.lang.startsWith('en')) || {}).id || _nVoice
+    const _nVoice = pickVoiceForText(_nText)
     ttsSt.prefetch[_nextIdx] = fetch('/api/tts/synth', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: _nText, voice: _nVoice, rate: rateStr })

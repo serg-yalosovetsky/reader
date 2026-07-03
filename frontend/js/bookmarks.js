@@ -2,6 +2,7 @@
 import { $ } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
+import { goToLocator } from './core/locator.js'
 import { currentWork, view, lastCfi } from './core/state.js'
 import { openPanel, closePanels } from './navigation.js'
 
@@ -25,8 +26,7 @@ async function loadBookmarks() {
     a.textContent = `${bm.label || 'Закладка'} · ${pct}%`
     a.addEventListener('click', async (ev) => {
       ev.preventDefault()
-      try { if (bm.locator) await view.goTo(bm.locator); else await view.goToFraction(bm.ratio || 0) }
-      catch { try { await view.goToFraction(bm.ratio || 0) } catch {} }
+      await goToLocator(view, bm.locator, bm.ratio)
       closePanels()
     })
     const del = document.createElement('button')

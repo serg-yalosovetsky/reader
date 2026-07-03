@@ -2,6 +2,7 @@
 import { $, escapeHtml } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
+import { isWebCfi, goToLocator } from './core/locator.js'
 import { currentWork, view, _selIndex } from './core/state.js'
 import { Overlayer } from '/vendor/foliate-js/overlayer.js'
 import { openPanel, closePanels } from './navigation.js'
@@ -73,7 +74,7 @@ export async function loadHighlightsWeb() {
   _highlights = items
   // Нарисовать свои (foliate-CFI) подсветки; чужие (Android Readium-JSON) пропустить.
   for (const hl of items) {
-    if (hl.locator && hl.locator.startsWith('epubcfi(')) {
+    if (isWebCfi(hl.locator)) {
       try { await view.addAnnotation({ value: hl.locator, color: hl.color || 'yellow' }) } catch {}
     }
   }
@@ -94,8 +95,7 @@ function renderHighlights() {
     a.textContent = `${(hl.text || 'Выделение').slice(0, 80)} · ${pct}%`
     a.addEventListener('click', async (ev) => {
       ev.preventDefault()
-      try { if (hl.locator) await view.goTo(hl.locator); else await view.goToFraction(hl.ratio || 0) }
-      catch { try { await view.goToFraction(hl.ratio || 0) } catch {} }
+      await goToLocator(view, hl.locator, hl.ratio)
       closePanels()
     })
     const del = document.createElement('button')
@@ -103,7 +103,7 @@ function renderHighlights() {
     del.addEventListener('click', async (ev) => {
       ev.stopPropagation(); ev.preventDefault()
       try { await fetch(`/api/highlights/id/${hl.id}`, { method: 'DELETE' }) } catch (e) { logErr('delete highlight', e) }
-      if (hl.locator && hl.locator.startsWith('epubcfi(')) { try { await view.deleteAnnotation({ value: hl.locator }) } catch {} }
+      if (isWebCfi(hl.locator)) { try { await view.deleteAnnotation({ value: hl.locator }) } catch {} }
       loadHighlightsWeb()
     })
     row.append(a, del); list.append(row)

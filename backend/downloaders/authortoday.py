@@ -143,7 +143,6 @@ def search_work(title: str, author: str = "") -> str | None:
 
 def count_chapters(url: str) -> int | None:
     """Быстро получить число глав без скачивания текста."""
-    import json as _json
     work_id = _work_id(url)
     with httpx.Client(
         timeout=20, follow_redirects=True,
@@ -154,19 +153,18 @@ def count_chapters(url: str) -> int | None:
             m = _CHAPTERS_RE.search(rr.text)
             if not m:
                 return None
-            arr = _json.loads(m.group(1))
+            arr = json.loads(m.group(1))
             return len([ch for ch in arr if ch.get("id")])
         except Exception:
             return None
 
 def _login(c: httpx.Client, email: str, password: str) -> bool:
     """Войти в author.today через JSON API. Возвращает True если успешно."""
-    import re as _re
     try:
         r = _get(c, f"{_BASE}/account/login")
         form_start = r.text.find('id="loginForm"')
         block = r.text[form_start:form_start + 1000] if form_start >= 0 else r.text
-        token_m = _re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', block)
+        token_m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', block)
         if not token_m:
             return False
         token = token_m.group(1)

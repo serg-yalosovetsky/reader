@@ -11,6 +11,22 @@ import { attachKeysToDoc, closePanels } from './navigation.js'
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
 
+// Восстановление позиции чтения при открытии книги:
+//  • есть точный локатор (CFI) → инициализируем прямо на нём;
+//  • иначе стартуем с начала текста и, если известна доля прочитанного
+//    (ratio, напр. импорт из ReadEra), доезжаем до неё;
+//  • иначе — просто начало книги.
+async function restoreReadingPosition(view, prog) {
+  if (prog && prog.locator) {
+    await view.init({ lastLocation: prog.locator })
+    return
+  }
+  await view.init({ showTextStart: true })
+  if (prog && prog.ratio > 0) {
+    try { await view.goToFraction(prog.ratio) } catch {}
+  }
+}
+
 export async function openReader(work) {
   ttsStop()
   setCurrentWork(work)
@@ -51,27 +67,7 @@ export async function openReader(work) {
 
   // Восстановить позицию: точный CFI, иначе ratio (напр. импорт из ReadEra), иначе начало.
   const prog = await api.get(`/api/progress/${work.id}`).catch(() => null)
-  const wantRatio = prog && prog.ratio > 0 ? prog.ratio : 0
-  if (prog && prog.locator) {
-    await view.init({ lastLocation: prog.locator })
-  } else {
-    await view.init({ showTextStart: true })
-    if (wantRatio > 0) { try { await view.goToFraction(wantRatio) } catch {} }
-  }
-  // На мобилке раскладка (шрифты/картинки/reflow) нередко доезжает уже ПОСЛЕ того,
-  // как отработал goTo, и позиция сбрасывается в начало. Если после раскладки мы
-  // стоим заметно раньше сохранённого прогресса — до-восстанавливаемся ещё раз.
-  if (wantRatio > 0.02) {
-    for (let i = 0; i < 6; i++) {
-      const cur = view.lastLocation?.fraction ?? 0
-      if (cur >= wantRatio * 0.6) break
-      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 120)))
-      try {
-        if (prog.locator) await view.goTo(prog.locator)
-        else await view.goToFraction(wantRatio)
-      } catch {}
-    }
-  }
+  await restoreReadingPosition(view, prog)
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
   loadHighlightsWeb()

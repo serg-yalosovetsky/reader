@@ -6,7 +6,7 @@
   <title>Читалка</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
-  <link rel="stylesheet" href="/css/theme.css?v=20260626c" />
+  <link rel="stylesheet" href="/css/theme.css?v=20260703l" />
   <style>
     #bm-panel .panel-head { display: flex; justify-content: space-between; align-items: center; }
     .bm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -87,7 +87,7 @@
   <!-- ======================= ЧИТАЛКА ======================= -->
   <section id="reader" class="screen" hidden>
     <div id="reader-top" class="reader-bar reader-top">
-      <button id="back-btn" class="icon-btn" title="К библиотеке">‹ Библиотека</button>
+      <button id="back-btn" class="icon-btn" title="К библиотеке">‹<span class="btn-label"> Библиотека</span></button>
       <span id="reader-title" class="reader-title"></span>
       <div class="reader-top-actions">
         <button id="tts-btn" class="icon-btn" title="Читать вслух">🔊</button>
@@ -97,6 +97,7 @@
         <button id="hl-btn" class="icon-btn" title="Подсветки и цитаты">🖍️</button>
         <button id="update-btn" class="icon-btn" title="Проверить новые главы" hidden>↻</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
+        <button id="fs-btn" class="icon-btn" title="Полный экран">⛶</button>
       </div>
     </div>
 
@@ -230,6 +231,6 @@
     <div id="panel-overlay" class="panel-overlay" hidden></div>
   </section>
 
-  <script type="module" src="/js/app.js?v=20260626e"></script>
+  <script type="module" src="/js/app.js?v=20260703l"></script>
 </body>
 </html>

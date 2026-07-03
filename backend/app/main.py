@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import scheduler
 from .config import FRONTEND_DIR
 from .db.session import init_db
-from .routers import accounts, bookmarks, calibre, highlights, ingest, library, progress, reader, readera, tts
+from .routers import article, accounts, bookmarks, calibre, highlights, ingest, library, progress, reader, readera, tts
 
 
 @asynccontextmanager
@@ -26,6 +26,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Reader — фанфики и Calibre", lifespan=lifespan)
 
+
+# UI-ассеты (html/js/css) — always-revalidate. StaticFiles не слал Cache-Control,
+# и мобильные браузеры кешировали старые css/js эвристически (правки не доезжали).
+# no-cache = браузер обязан ревалидировать по ETag (быстрый 304, но всегда свежий).
+@app.middleware("http")
+async def _no_cache_ui(request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.endswith((".html", ".js", ".css")):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
 app.include_router(library.router)
 app.include_router(reader.router)
 app.include_router(progress.router)
@@ -36,6 +48,7 @@ app.include_router(calibre.router)
 app.include_router(readera.router)
 app.include_router(accounts.router)
 app.include_router(tts.router)
+app.include_router(article.router)
 
 
 @app.get("/api/health")

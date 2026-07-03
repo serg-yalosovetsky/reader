@@ -1,3 +1,4 @@
+globalThis.__PB = '20260703l'
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 const debounce = (f, wait, immediate) => {
@@ -231,7 +232,7 @@ class View {
             width: '100%', height: '100%',
             display: 'flex',
             justifyContent: 'center',
-            alignItems: 'center',
+            alignItems: 'flex-start',
         })
         Object.assign(this.#iframe.style, {
             overflow: 'hidden',
@@ -452,6 +453,7 @@ export class Paginator extends HTMLElement {
     #mediaQuery = matchMedia('(prefers-color-scheme: dark)')
     #mediaQueryListener
     #scrollBounds
+    #momentumRAF
     #touchState
     #touchScrolled
     #lastVisibleRange
@@ -487,10 +489,12 @@ export class Paginator extends HTMLElement {
                 minmax(0, calc(var(--_max-width) - var(--_gap)))
                 var(--_half-gap)
                 minmax(var(--_half-gap), 1fr);
+            /* поля фиксированные, текстовая строка заполняет всю высоту —
+               иначе на высоком экране контент центрируется с пустыми полями */
             grid-template-rows:
-                minmax(var(--_margin), 1fr)
-                minmax(0, var(--_max-height))
-                minmax(var(--_margin), 1fr);
+                var(--_margin)
+                minmax(0, 1fr)
+                var(--_margin);
             &.vertical {
                 --_max-column-count-spread: var(--_max-column-count-portrait);
                 --_max-width: var(--_max-block-size);
@@ -525,6 +529,12 @@ export class Paginator extends HTMLElement {
         :host([flow="scrolled"]) #top {
             grid-template-columns: 1fr !important;
             grid-template-rows: 1fr !important;
+        }
+        /* Страницы: средняя (текстовая) строка занимает ВСЮ высоту. По умолчанию
+           foliate капит её --_max-block-size (1440px) и центрирует по вертикали —
+           на высоких экранах телефона это давало огромные пустые поля сверху/снизу. */
+        :host(:not([flow="scrolled"])) #top {
+            grid-template-rows: var(--_margin) minmax(0, 1fr) var(--_margin) !important;
         }
         #header {
             grid-column: 3 / 4;
@@ -575,7 +585,7 @@ export class Paginator extends HTMLElement {
                 if (this.#justAnchored) this.#justAnchored = false
                 else this.#afterScroll('scroll')
             }
-        }, 250))
+        }, 80))
 
         const opts = { passive: false }
         this.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
@@ -731,6 +741,7 @@ export class Paginator extends HTMLElement {
             // FIXME: vertical-rl only, not -lr
             this.setAttribute('dir', vertical ? 'rtl' : 'ltr')
             this.#top.style.padding = '0'
+            this.#top.style.removeProperty('grid-template-rows')
             const columnWidth = maxInlineSize
 
             this.heads = null
@@ -741,6 +752,10 @@ export class Paginator extends HTMLElement {
             return { flow, margin, gap, columnWidth }
         }
 
+        // Инлайном (shadow-CSS почему-то не применяется): текстовая строка грида
+        // занимает всю высоту, поля фиксированные — иначе на высоком экране 1fr-поля
+        // центрируют короткую страницу с пустым верхом/низом.
+        this.#top.style.setProperty('grid-template-rows', `${margin}px minmax(0, 1fr) ${margin}px`, 'important')
         const divisor = Math.min(maxColumnCount, Math.ceil(size / maxInlineSize))
         const columnWidth = (size / divisor) - gap
         this.setAttribute('dir', rtl ? 'rtl' : 'ltr')
@@ -838,8 +853,10 @@ export class Paginator extends HTMLElement {
         this.#touchState = {
             x: touch?.screenX, y: touch?.screenY,
             t: e.timeStamp,
-            vx: 0, xy: 0,
+            vx: 0, vy: 0,
+            samples: [{ t: e.timeStamp, x: touch?.screenX, y: touch?.screenY }],
         }
+        if (this.#momentumRAF) { cancelAnimationFrame(this.#momentumRAF); this.#momentumRAF = null }
     }
     #onTouchMove(e) {
         const state = this.#touchState
@@ -851,12 +868,19 @@ export class Paginator extends HTMLElement {
                 const touch = e.changedTouches[0]
                 const dx = state.x - touch.screenX
                 const dy = state.y - touch.screenY
+                const dt = e.timeStamp - state.t
                 state.x = touch.screenX
                 state.y = touch.screenY
                 state.t = e.timeStamp
+                if (dt > 0) { state.vx = dx / dt; state.vy = dy / dt }
+                if (state.samples) {
+                    state.samples.push({ t: e.timeStamp, x: touch.screenX, y: touch.screenY })
+                    while (state.samples.length > 8) state.samples.shift()
+                }
                 this.#touchScrolled = true
                 // touch events don't cross iframe boundaries; scroll #container manually
-                this.#container.scrollBy(this.#vertical ? -dx : 0, this.#vertical ? 0 : dy)
+                const M = 1.2
+                this.#container.scrollBy(this.#vertical ? -dx * M : 0, this.#vertical ? 0 : dy * M)
             }
             return
         }
@@ -877,9 +901,44 @@ export class Paginator extends HTMLElement {
         this.#touchScrolled = true
         this.scrollBy(dx, dy)
     }
+    #startMomentum() {
+        const state = this.#touchState
+        if (!state || !state.samples || state.samples.length < 2) return
+        // Инерция для «Ленты». Скорость «броска» берём по временно́му окну (~90мс),
+        // а НЕ по последнему touchmove: в конце свайпа палец часто чуть дёргается
+        // назад, и один последний сэмпл давал инерцию в обратную сторону
+        // (скролл «вверх вместо вниз»).
+        const s = state.samples
+        const last = s[s.length - 1]
+        let i = s.length - 1
+        while (i > 0 && last.t - s[i - 1].t < 90) i--
+        const first = s[i]
+        let wdt = last.t - first.t
+        if (wdt <= 0) wdt = Math.max(1, (s.length - 1 - i) * 16)
+        let v = this.#vertical ? (first.x - last.x) / wdt : (first.y - last.y) / wdt
+        globalThis.__momDbg = Object.assign(globalThis.__momDbg || {}, { sm: ((globalThis.__momDbg || {}).sm || 0) + 1, v: Math.round(v * 100) / 100, n: s.length, wdt: Math.round(wdt) })
+        if (!v || Math.abs(v) < 0.04) return
+        v = Math.max(-4, Math.min(4, v))
+        let lastTs = null
+        const step = ts => {
+            const dt = lastTs == null ? 16 : Math.min(64, ts - lastTs)
+            lastTs = ts
+            const before = this.#container[this.scrollProp]
+            const move = v * dt
+            this.#container.scrollBy(this.#vertical ? -move : 0, this.#vertical ? 0 : move)
+            const after = this.#container[this.scrollProp]
+            v *= Math.pow(0.945, dt / 16)
+            if (Math.abs(v) < 0.015 || after === before) { this.#momentumRAF = null; return }
+            this.#momentumRAF = requestAnimationFrame(step)
+        }
+        this.#momentumRAF = requestAnimationFrame(step)
+    }
     #onTouchEnd() {
         this.#touchScrolled = false
-        if (this.scrolled) return
+        if (this.scrolled) {
+            globalThis.__momDbg = Object.assign(globalThis.__momDbg || {}, { te: ((globalThis.__momDbg || {}).te || 0) + 1 })
+            this.#startMomentum(); return
+        }
 
         // XXX: Firefox seems to report scale as 1... sometimes...?
         // at this point I'm basically throwing `requestAnimationFrame` at

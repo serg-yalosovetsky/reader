@@ -82,6 +82,7 @@ body.reader-open { height: 100%; overflow: hidden; }
 }
 .ingest-status.error { color: #c0392b; }
 
+#library { overflow-x: hidden; }
 .book-grid {
   display: grid; gap: 18px;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -115,7 +116,7 @@ body.reader-open { height: 100%; overflow: hidden; }
   color: var(--accent);
 }
 .book-meta { font-size: 13px; }
-.book-meta .b-title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book-meta .b-title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; min-height: 2.6em; }
 .book-meta .b-author { color: var(--fg-dim); }
 .book-progress { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .book-progress > i { display: block; height: 100%; background: var(--accent); }
@@ -131,7 +132,7 @@ body.reader-open { height: 100%; overflow: hidden; }
 }
 
 /* ===================== ЧИТАЛКА ===================== */
-#reader { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overscroll-behavior: contain; }
+#reader { display: flex; flex-direction: column; height: 100vh; height: 100svh; overscroll-behavior: contain; }
 .view-host { overscroll-behavior: contain; }
 .reader-bar {
   display: flex; align-items: center; gap: 10px;
@@ -372,4 +373,30 @@ foliate-view { width: 100%; height: 100%; display: block; }
 
 @media (max-width: 600px) {
   #hl-btn { display: none; }
+}
+
+
+/* ===== Мобильная адаптация читалки и сетки библиотеки (2026-07-03) ===== */
+@media (max-width: 600px) {
+  /* Кнопка «назад»: только стрелка, без слова «Библиотека» — освобождаем место
+     под действия (в т.ч. «Aa» — выбор шрифта, — которая раньше уезжала за экран). */
+  #back-btn .btn-label { display: none; }
+  #back-btn { font-size: 20px; padding: 6px 8px; }
+  /* Заголовок книги на узком экране не нужен — отдаём место кнопкам. */
+  .reader-title { display: none; }
+  /* Компактные иконки, чтобы поместились все действия. */
+  .reader-top-actions { gap: 2px; }
+  .reader-top-actions .icon-btn { padding: 6px 7px; font-size: 17px; }
+  .reader-top { padding: 8px 8px; gap: 4px; }
+}
+
+@media (max-width: 560px) {
+  /* Сетка книг: строго 2 колонки, которые не могут «распереть» контейнер
+     (minmax(0,1fr) вместо 1fr) — иначе длинное слово в названии/обложке давало
+     горизонтальное переполнение и свайп влево-вправо. */
+  .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .book-card, .book-meta { min-width: 0; }
+  .book-meta .b-title { overflow-wrap: anywhere; }
+  /* Страхуемся от любого горизонтального переполнения библиотеки. */
+  #library { overflow-x: hidden; }
 }

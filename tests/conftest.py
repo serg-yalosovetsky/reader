@@ -20,6 +20,7 @@ import pytest  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 from backend.app.db import models  # noqa: E402,F401  (registers tables on metadata)
+import backend.app.main  # noqa: E402,F401  (imports all routers -> registers every model)
 
 
 @pytest.fixture
@@ -29,3 +30,21 @@ def session():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         yield s
+
+
+@pytest.fixture
+def client(monkeypatch):
+    """FastAPI TestClient. The scheduler is stubbed so lifespan starts no background
+    jobs; lifespan's init_db() creates all tables in the throwaway tmp DB (READER_DB_PATH
+    from the env set at the top of this file), so routers hit a real-but-empty database."""
+    from fastapi.testclient import TestClient
+
+    from backend.app import scheduler
+
+    monkeypatch.setattr(scheduler, "start", lambda: None)
+    monkeypatch.setattr(scheduler, "shutdown", lambda: None)
+
+    from backend.app.main import app
+
+    with TestClient(app) as c:
+        yield c

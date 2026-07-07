@@ -25,6 +25,9 @@ from ..downloaders import chain
 from ..downloaders import fanficfare_engine as fff
 from . import store
 
+import logging
+_log = logging.getLogger("reader.monitor")
+
 
 def add_monitor(session: Session, source_url: str, work_id: int | None = None,
                 chapters: int = 0) -> Monitored:
@@ -302,7 +305,7 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 detail.update(dl)
                 downloaded += 1
             except Exception as e:  # noqa: BLE001
-                detail["error"] = str(e)[:200]
+                detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
                 mon = session.get(Monitored, mon.id)
                 mon.last_checked = utcnow()
                 session.add(mon); session.commit()
@@ -333,7 +336,7 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                     details.append(detail)
                     continue  # mon уже записан внутри _download_and_write
                 except Exception as e:  # noqa: BLE001
-                    detail["error"] = str(e)[:200]
+                    detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
             details.append(detail)
         # last_seen двигаем только если докачка удалась или обновлений нет
         mon = session.get(Monitored, mon.id)  # re-fetch после возможного commit
@@ -394,7 +397,7 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
             detail.update(dl)
             return detail
         except Exception as e:  # noqa: BLE001
-            detail["error"] = str(e)[:200]
+            detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
 
     # Нет загрузки или ошибка — быстрая запись только mon
     mon = session.get(Monitored, mon.id)

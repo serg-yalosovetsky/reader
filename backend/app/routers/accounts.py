@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from ...accounts import check_job, monitor, store
+from ...accounts import at_login, check_job, monitor, store
 from ..db.session import get_session
 
 router = APIRouter(prefix="/api", tags=["accounts"])
@@ -79,3 +79,27 @@ def check_status() -> dict:
 def check_one_now(work_id: int, session: Session = Depends(get_session)) -> dict:
     """Проверить обновления для одной книги и немедленно вернуть результат."""
     return monitor.check_one(session, work_id)
+
+
+# ---- интерактивный вход author.today (2FA email-код) ----
+class AtLoginStart(BaseModel):
+    username: str
+    password: str
+
+
+class AtLoginCode(BaseModel):
+    code: str
+
+
+@router.post("/accounts/at-login/start")
+def at_login_start(body: AtLoginStart, session: Session = Depends(get_session)) -> dict:
+    res = at_login.start(body.username, body.password)
+    if res.get("status") == "logged_in":
+        store.upsert_account(session, "authortoday", res["_user"], res["_pw"])
+        store.set_cookies(session, "authortoday", res["_cookies"])
+    return {k: v for k, v in res.items() if not k.startswith("_")}
+
+
+@router.post("/accounts/at-login/code")
+def at_login_code(body: AtLoginCode, session: Session = Depends(get_session)) -> dict:
+    return at_login.submit_code(session, body.code)

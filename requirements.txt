@@ -30,3 +30,6 @@ EbookLib>=0.18
 
 # Озвучивание (TTS) с пословными таймингами — edge-tts (Microsoft Edge TTS)
 edge-tts>=7.0
+
+# Извлечение статьи для reader-view (article.py)
+readability-lxml>=0.8

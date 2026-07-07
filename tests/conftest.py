@@ -20,7 +20,6 @@ import pytest  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 from backend.app.db import models  # noqa: E402,F401  (registers tables on metadata)
-import backend.app.main  # noqa: E402,F401  (imports all routers -> registers every model)
 
 
 @pytest.fixture

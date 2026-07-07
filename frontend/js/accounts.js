@@ -53,6 +53,31 @@ $('#account-form').addEventListener('submit', async (e) => {
     accStatus('Аккаунт сохранён'); loadAccounts()
   } catch (err) { accStatus('Ошибка: ' + err.message.slice(0, 120), true) }
 })
+// Показ ошибок последней проверки прямо в модалке: ошибки логина по сайтам
+// (result.feeds[site].error, напр. author.today email-код) и по-фиковые ошибки
+// докачки (result.details[].error). Контейнер создаём один раз под статусом.
+function renderUpdateErrors(r) {
+  let box = $('#update-errors')
+  if (!box) {
+    box = document.createElement('div')
+    box.id = 'update-errors'
+    box.style.cssText = 'margin-top:8px;font-size:13px;color:#d9534f;max-height:200px;overflow:auto'
+    const anchor = $('#accounts-status')
+    anchor.parentNode.insertBefore(box, anchor.nextSibling)
+  }
+  const feedErrs = Object.entries((r && r.feeds) || {})
+    .filter(([, v]) => v && v.error)
+    .map(([site, v]) => `<div>⚠ <b>${escapeHtml(site)}</b>: ${escapeHtml(String(v.error))}</div>`)
+  const dlErrs = ((r && r.details) || [])
+    .filter(d => d && d.error)
+    .slice(0, 40)
+    .map(d => `<div>⚠ ${escapeHtml(String(d.url || '').replace(/^https?:\/\//, ''))}: ${escapeHtml(String(d.error))}</div>`)
+  const all = feedErrs.concat(dlErrs)
+  if (!all.length) { box.hidden = true; box.innerHTML = ''; return }
+  box.hidden = false
+  box.innerHTML = `<div style="font-weight:600;margin-bottom:4px">Ошибки (${all.length}):</div>` + all.join('')
+}
+
 async function checkUpdates(statusFn) {
   // Проверка идёт в фоне на бэкенде (скрейп 38 фиклов > nginx-таймаута → раньше
   // ловили 504). Стартуем и поллим статус вместо одного долгого запроса.
@@ -100,6 +125,7 @@ async function checkUpdates(statusFn) {
     if (st.status === 'done') {
       const r = st.result || {}
       statusFn(`Проверено: ${r.checked ?? 0}, с обновлениями: ${r.with_updates ?? 0}, докачано: ${r.downloaded ?? 0}`)
+      renderUpdateErrors(r)
       loadMonitored(); loadLibrary()
       return
     }

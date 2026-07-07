@@ -1,0 +1,65 @@
+# reader.ibotz.fun — веб-читалка (фанфики / EPUB / TTS).
+# Управление зависимостями через uv (astral), lock-файл uv.lock коммитится.
+#
+# Приложение запускается как `python -m uvicorn backend.app.main:app` из рабочего
+# каталога (см. systemd unit reader), само как пакет НЕ ставится → tool.uv.package=false.
+#
+# Установка:
+#   uv sync                          # рантайм приложения
+#   uv sync --group observability    # + OpenTelemetry/Sentry (как в проде)
+#   uv sync --group dev              # + инструменты тестов/линта
+# После observability на деплое: `opentelemetry-bootstrap -a install`
+# доставляет авто-инструментации под фактически установленные библиотеки
+# (окружение-зависимый шаг, не фиксируется в lock).
+
+[project]
+name = "reader"
+version = "0.1.0"
+description = "reader.ibotz.fun — веб-читалка (фанфики/EPUB/TTS) на FastAPI"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    # DB
+    "sqlmodel>=0.0.22",
+    # Планировщик (мониторинг + ReadEra sync по расписанию)
+    "APScheduler>=3.10",
+    # Crypto для шифрования кредов аккаунтов
+    "cryptography>=43",
+    # HTTP-клиент (FicHub, мониторинг, скачивание)
+    "httpx>=0.27",
+    # Парсинг страниц (author.today адаптер, мониторинг)
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    # Обход анти-бота ficbook (DDoS-Guard)
+    "cloudscraper>=1.2.71",
+    # Движок скачивания фанфиков (ficbook/fanfics.me/AO3/ffn)
+    "FanFicFare>=4.30",
+    # Сборка EPUB из глав (адаптер author.today)
+    "EbookLib>=0.18",
+    # Озвучивание (TTS) с пословными таймингами — edge-tts
+    "edge-tts>=7.0",
+    # Извлечение статьи для reader-view (article.py)
+    "readability-lxml>=0.8",
+    # Async file I/O в роутерах (уже тянется FastAPI, фиксируем явно)
+    "anyio>=4.0",
+]
+
+[dependency-groups]
+# Observability-слой прода: OTLP-трейсинг + Sentry. Отделено от app-зависимостей,
+# чтобы `uv sync` без группы не сносил их из живого venv.
+observability = [
+    "opentelemetry-distro>=0.64b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.43",
+    "sentry-sdk>=2.60",
+]
+# Инструменты разработки/CI.
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.uv]
+package = false

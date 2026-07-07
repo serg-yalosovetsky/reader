@@ -1,6 +1,7 @@
 """Роутер библиотеки: список произведений, карточка, загрузка файла вручную."""
 from __future__ import annotations
 
+import anyio
 import tempfile
 from pathlib import Path
 
@@ -194,10 +195,12 @@ async def upload_book(
 
     # Сохраняем во временный файл, считаем SHA-1, импортируем в хранилище.
     suffix = Path(file.filename or "").suffix.lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp_path = Path(tmp.name)
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    async with await anyio.open_file(tmp_path, "wb") as tmp:
         while chunk := await file.read(1 << 20):
-            tmp.write(chunk)
+            await tmp.write(chunk)
     try:
         sha1 = sha1_of_file(tmp_path)
         # Дедуп: если книга с таким SHA-1 уже есть — вернуть её.

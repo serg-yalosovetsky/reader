@@ -1,6 +1,7 @@
 """Роутер синхронизации с ReadEra: статус, sync, импорт/экспорт, ручная загрузка .bak."""
 from __future__ import annotations
 
+import anyio
 import tempfile
 from pathlib import Path
 
@@ -40,7 +41,7 @@ async def upload_backup(
 ) -> dict:
     """Фоллбэк без rclone: загрузить .bak вручную и импортировать прогресс."""
     tmp = Path(tempfile.mkdtemp(prefix="readera_up_")) / (file.filename or "backup.bak")
-    with open(tmp, "wb") as f:
+    async with await anyio.open_file(tmp, "wb") as f:
         while chunk := await file.read(1 << 20):
-            f.write(chunk)
+            await f.write(chunk)
     return sync.import_progress(session, bak_path=tmp)

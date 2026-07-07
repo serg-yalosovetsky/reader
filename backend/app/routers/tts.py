@@ -1,6 +1,7 @@
 """TTS: Silero (ru) + edge-tts (en/uk). Кеш по sha1(voice|rate|text)."""
 from __future__ import annotations
 
+import anyio
 import hashlib
 import json
 import re
@@ -103,10 +104,10 @@ async def _synth_edge(text: str, edge_id: str, rate: str, audio_path, words_path
     comm = edge_tts.Communicate(text, edge_id, rate=rate, boundary="WordBoundary")
     words: list[dict] = []
     search_pos = 0
-    with open(audio_path, "wb") as f:
+    async with await anyio.open_file(audio_path, "wb") as f:
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
-                f.write(chunk["data"])
+                await f.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
                 word_text = chunk.get("text", "")
                 idx = text.find(word_text, search_pos)

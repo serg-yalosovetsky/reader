@@ -42,29 +42,38 @@ def _ficbook_book_id(url: str) -> str | None:
 _FICBOOK_TIMEOUT = (15, 90)
 
 
-def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
+def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict]:
     import cloudscraper
     c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
-    c.get("https://ficbook.net/", timeout=_FICBOOK_TIMEOUT)
-    r = c.post("https://ficbook.net/login_check_static",
-               data={"login": user, "password": pw}, timeout=_FICBOOK_TIMEOUT)
-    if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
-        raise RuntimeError("ficbook: не удалось войти")
-    rn = c.post("https://ficbook.net/user_notifications/get_new",
-                headers={"X-Requested-With": "XMLHttpRequest"}, timeout=_FICBOOK_TIMEOUT)
-    try:
-        data = rn.json()
-    except ValueError:
-        return []
+    if cookies:
+        c.cookies.update(cookies)
+
+    def _notifications():
+        rn = c.post("https://ficbook.net/user_notifications/get_new",
+                    headers={"X-Requested-With": "XMLHttpRequest"}, timeout=_FICBOOK_TIMEOUT)
+        try:
+            return rn.json()
+        except ValueError:
+            return None
+
+    # Переиспользуем сохранённую сессию; логинимся только если куки протухли.
+    data = _notifications() if cookies else None
+    if not data or "data" not in data:
+        c.get("https://ficbook.net/", timeout=_FICBOOK_TIMEOUT)
+        r = c.post("https://ficbook.net/login_check_static",
+                   data={"login": user, "password": pw}, timeout=_FICBOOK_TIMEOUT)
+        if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
+            raise RuntimeError("ficbook: не удалось войти")
+        data = _notifications()
+
     urls = []
-    for n in (data.get("data", {}) or {}).get("notifications", []):
+    for n in ((data or {}).get("data", {}) or {}).get("notifications", []):
         url = n.get("url", "")
         if "/readfic/" in url:
             book_id = _ficbook_book_id(url)
             if book_id:
-                # нормализируем до URL книги (без chapter_id)
                 urls.append(f"https://ficbook.net/readfic/{book_id}")
-    return list(dict.fromkeys(urls))
+    return list(dict.fromkeys(urls)), dict(c.cookies)
 
 
 # ----------------- author.today -----------------
@@ -82,7 +91,7 @@ def _at_updates_from_feed(c) -> list[str]:
     return list(dict.fromkeys(urls))
 
 
-def _at_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
+def _at_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict]:
     # Если есть сохранённая cookie-сессия — используем её (без повторного входа,
     # который на новом устройстве требует email-код подтверждения).
     if cookies:
@@ -90,7 +99,7 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
                           headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
             feed = c.get("https://author.today/feed")
             if "account/logoff" in feed.text or "logOff" in feed.text:
-                return _at_updates_from_feed(c)
+                return _at_updates_from_feed(c), dict(c.cookies)
         # cookie протухла — пробуем обычный вход ниже.
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
@@ -112,11 +121,11 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
         if not res.get("isSuccessful", False):
             msg = "; ".join(res.get("messages") or []) or "не удалось войти"
             raise RuntimeError(f"author.today: {msg}")
-        return _at_updates_from_feed(c)
+        return _at_updates_from_feed(c), dict(c.cookies)
 
 
 # ----------------- fanfics.me -----------------
-def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
+def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict]:
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA}) as c:
         c.get("https://fanfics.me/autent.php")
@@ -124,7 +133,7 @@ def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> list[str]:
         if '<form name="autent"' in r.text:
             raise RuntimeError("fanfics.me: не удалось войти")
         # TODO: разведать страницу обновлений подписок fanfics.me на живой сессии.
-        return []
+        return [], dict(c.cookies)
 
 
 _ADAPTERS = {
@@ -134,9 +143,9 @@ _ADAPTERS = {
 }
 
 
-def fetch_site_updates(site: str, user: str, pw: str, cookies: dict | None = None) -> list[str]:
+def fetch_site_updates(site: str, user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict | None]:
     fn = _ADAPTERS.get(site)
-    return fn(user, pw, cookies) if fn else []
+    return fn(user, pw, cookies) if fn else ([], None)
 
 
 def pull_all(session: Session, sites: list | None = None) -> dict:
@@ -151,7 +160,7 @@ def pull_all(session: Session, sites: list | None = None) -> dict:
             continue
         cookies = store.get_cookies(session, site)
         try:
-            urls = fetch_site_updates(site, creds[0], creds[1], cookies)
+            urls, new_cookies = fetch_site_updates(site, creds[0], creds[1], cookies)
             # Для ficbook: пометить уже отслеживаемые книги как has_update=True
             # вместо поштучной проверки через FanFicFare (N запросов → 1 запрос).
             if site == "ficbook" and urls:
@@ -170,6 +179,8 @@ def pull_all(session: Session, sites: list | None = None) -> dict:
             for url in urls:
                 monitor.add_monitor(session, url)
             store.touch_check(session, site)
+            if new_cookies:
+                store.set_cookies(session, site, new_cookies)
             result[site] = {"found": len(urls)}
         except Exception as e:  # noqa: BLE001
             result[site] = {"error": str(e)[:200]}

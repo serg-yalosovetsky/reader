@@ -140,10 +140,8 @@ $('#check-updates').addEventListener('click', () => checkUpdates(accStatus))
 $('#check-updates-main').addEventListener('click', () => checkUpdates((msg, err) => {
   const el = $('#ingest-status'); el.hidden = false; el.classList.toggle('error', !!err); el.textContent = msg
 }))
-
-
-// author.today: интерактивный вход с 2FA-кодом (форма только сохраняет креды,
-// а реальный вход требует кода с почты — здесь двухстадийный флоу).
+// author.today: интерактивный вход с 2FA-кодом. Статус пишем ПРЯМО ПОД кнопкой
+// (не только в общий #accounts-status, который выше формы и легко пропустить).
 ;(function initAtLogin() {
   const form = $('#account-form'); if (!form) return
   const wrap = document.createElement('div')
@@ -153,29 +151,35 @@ $('#check-updates-main').addEventListener('click', () => checkUpdates((msg, err)
     '<div id="at-code-row" hidden style="margin-top:6px;display:flex;gap:6px">' +
       '<input id="at-code" placeholder="Код из письма author.today" style="flex:1" />' +
       '<button type="button" id="at-code-btn" class="btn-ghost">Подтвердить</button>' +
-    '</div>'
+    '</div>' +
+    '<div id="at-status" style="margin-top:6px;font-size:13px;min-height:16px"></div>'
   form.parentNode.insertBefore(wrap, form.nextSibling)
+
+  const atStatus = (msg, err) => {
+    const e = $('#at-status'); if (e) { e.textContent = msg; e.style.color = err ? '#d9534f' : '' }
+    accStatus(msg, err)
+  }
 
   $('#at-login-btn').addEventListener('click', async () => {
     const username = $('#acc-user').value.trim(), password = $('#acc-pass').value
-    if (!username || !password) { accStatus('Введите логин и пароль author.today', true); return }
-    accStatus('author.today: вход, запрашиваю код…')
+    if (!username || !password) { atStatus('Введите логин и пароль author.today выше', true); return }
+    atStatus('author.today: вход, запрашиваю код…')
     try {
       const r = await api.post('/api/accounts/at-login/start', { username, password })
-      if (r.status === 'logged_in') { $('#at-code-row').hidden = true; accStatus('author.today: вход выполнен ✓'); loadAccounts() }
-      else if (r.status === 'code_sent') { $('#at-code-row').hidden = false; $('#at-code').focus(); accStatus('author.today: ' + (r.message || 'код отправлен на почту')) }
-      else { accStatus('author.today: ' + (r.message || 'ошибка входа'), true) }
-    } catch (err) { accStatus('author.today: ' + err.message.slice(0, 140), true) }
+      if (r.status === 'logged_in') { $('#at-code-row').hidden = true; atStatus('author.today: вход выполнен ✓'); loadAccounts() }
+      else if (r.status === 'code_sent') { $('#at-code-row').hidden = false; $('#at-code').focus(); atStatus('Код отправлен: ' + (r.message || 'проверьте почту')) }
+      else { atStatus('Ошибка: ' + (r.message || 'не удалось войти'), true) }
+    } catch (err) { atStatus('Ошибка запроса: ' + err.message.slice(0, 140), true) }
   })
 
   $('#at-code-btn').addEventListener('click', async () => {
     const code = $('#at-code').value.trim()
-    if (!code) { accStatus('Введите код из письма', true); return }
-    accStatus('author.today: проверяю код…')
+    if (!code) { atStatus('Введите код из письма', true); return }
+    atStatus('author.today: проверяю код…')
     try {
       const r = await api.post('/api/accounts/at-login/code', { code })
-      if (r.status === 'logged_in') { $('#at-code-row').hidden = true; $('#at-code').value = ''; accStatus('author.today: вход выполнен ✓, сессия сохранена'); loadAccounts() }
-      else { accStatus('author.today: ' + (r.message || 'неверный код'), true) }
-    } catch (err) { accStatus('author.today: ' + err.message.slice(0, 140), true) }
+      if (r.status === 'logged_in') { $('#at-code-row').hidden = true; $('#at-code').value = ''; atStatus('author.today: вход выполнен ✓, сессия сохранена'); loadAccounts() }
+      else { atStatus('Ошибка: ' + (r.message || 'неверный код'), true) }
+    } catch (err) { atStatus('Ошибка запроса: ' + err.message.slice(0, 140), true) }
   })
 })()

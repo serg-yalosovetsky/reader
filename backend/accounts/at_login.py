@@ -59,9 +59,16 @@ def start(user: str, pw: str) -> dict:
     if res.get("isSuccessful"):
         _pending.pop("authortoday", None)
         return {"status": "logged_in", "_cookies": cookies, "_user": user, "_pw": pw}
+    msg = "; ".join(res.get("messages") or [])
+    low = msg.lower()
+    # Отличаем «нужен код с почты» от «неверный логин/пароль»: только в первом
+    # случае имеет смысл показывать поле ввода кода.
+    code_needed = any(w in low for w in ("код", "code", "почт", "email", "e-mail", "подтвер"))
+    if not code_needed:
+        _pending.pop("authortoday", None)
+        return {"status": "error", "message": (msg or "Не удалось войти")[:200]}
     _pending["authortoday"] = {"cookies": cookies, "token": token, "user": user, "pw": pw}
-    msg = "; ".join(res.get("messages") or []) or "Код отправлен на почту author.today"
-    return {"status": "code_sent", "message": msg[:200]}
+    return {"status": "code_sent", "message": (msg or "Код отправлен на почту author.today")[:200]}
 
 
 def submit_code(session: Session, code: str) -> dict:

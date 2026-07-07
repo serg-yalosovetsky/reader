@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -49,6 +51,25 @@ def _ff_executable() -> list[str]:
     return [sys.executable, "-c", "from fanficfare.cli import main; main()"]
 
 
+@contextlib.contextmanager
+def _creds_config(creds: tuple[str, str] | None):
+    """Yield `-c <inifile>` args carrying username/password in a 0600 temp INI, so the
+    password never appears in argv / ps. `-o username=/password=` map to the [overrides]
+    section, so this is behaviour-equivalent. Yields [] when there are no creds."""
+    if not creds:
+        yield []
+        return
+    fd, path = tempfile.mkstemp(prefix="fff-creds-", suffix=".ini")
+    try:
+        os.write(fd, f"[overrides]\nusername:{creds[0]}\npassword:{creds[1]}\n".encode())
+        os.close(fd)
+        os.chmod(path, 0o600)
+        yield ["-c", path]
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(path)
+
+
 def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 120) -> dict:
     """Метаданные без скачивания глав (FanFicFare --meta-only --json). Для детекта
     обновлений: возвращает dict с numChapters и пр. Пусто при ошибке."""
@@ -58,11 +79,10 @@ def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 1
     ]
     if _needs_cloudscraper(url):
         cmd += ["-o", "use_cloudscraper=true"]
-    if creds:
-        cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]
-    cmd.append(url)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        with _creds_config(creds) as cred_args:
+            proc = subprocess.run(cmd + cred_args + [url],
+                                  capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {}
     out = (proc.stdout or "").strip()
@@ -99,16 +119,15 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     if _needs_cloudscraper(url):
         cmd += ["-o", "use_cloudscraper=true"]
     creds = (extra_options or {}).pop("_creds", None) if extra_options else None
-    if creds:
-        cmd += ["-o", f"username={creds[0]}", "-o", f"password={creds[1]}"]
     for k, v in (extra_options or {}).items():
         cmd += ["-o", f"{k}={v}"]
-    cmd.append(url)
 
     try:
-        proc = subprocess.run(
-            cmd, cwd=workdir, capture_output=True, text=True, timeout=600,
-        )
+        with _creds_config(creds) as cred_args:
+            proc = subprocess.run(
+                cmd + cred_args + [url], cwd=workdir,
+                capture_output=True, text=True, timeout=600,
+            )
     except subprocess.TimeoutExpired as e:
         raise DownloaderError(f"FanFicFare превысил тайм-аут на {url}") from e
 

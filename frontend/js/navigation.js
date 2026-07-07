@@ -56,12 +56,12 @@ function handleKey(e) {
   if (k === 'ArrowLeft') { view.prev(); e.preventDefault() }
   else if (k === 'ArrowRight') { view.next(); e.preventDefault() }
   else if (k === 'PageUp') {
-    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(0, -(view.renderer?.size || 600))
+    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(-(view.renderer?.size || 600), 0)
     else view.prev()
     e.preventDefault()
   }
   else if (k === 'PageDown') {
-    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(0, view.renderer?.size || 600)
+    if (prefs.flow === 'scrolled') view.renderer?.scrollBy(view.renderer?.size || 600, 0)
     else view.next()
     e.preventDefault()
   }

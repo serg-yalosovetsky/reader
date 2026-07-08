@@ -5,6 +5,7 @@ import { prefs, savePrefs } from './core/prefs.js'
 import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
          setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
+import { openBookPage, bookPageMeta } from './book-page.js'
 
 // ===================== БИБЛИОТЕКА =====================
 export async function loadLibrary() {
@@ -50,6 +51,75 @@ export function applyLibFilter(q) {
   $('#lib-empty').hidden = grid.children.length > 0
 }
 
+// ===================== Hover-панель (только десктоп/мышь) =====================
+const CAN_HOVER = window.matchMedia('(hover: hover) and (pointer: fine)').matches
+let hoverEl = null
+let hoverHideT = null
+
+function ensureHoverEl() {
+  if (hoverEl) return hoverEl
+  hoverEl = document.createElement('div')
+  hoverEl.id = 'lib-hover'
+  hoverEl.className = 'lib-hover'
+  hoverEl.hidden = true
+  hoverEl.addEventListener('mouseenter', () => clearTimeout(hoverHideT))
+  hoverEl.addEventListener('mouseleave', hideHover)
+  document.body.append(hoverEl)
+  return hoverEl
+}
+
+function hideHover() {
+  clearTimeout(hoverHideT)
+  hoverHideT = setTimeout(() => { if (hoverEl) hoverEl.hidden = true }, 120)
+}
+
+function hideHoverNow() {
+  clearTimeout(hoverHideT)
+  if (hoverEl) hoverEl.hidden = true
+}
+
+function showHover(card, w) {
+  // Библиотека не на экране (открыта книга/читалка) — панель не показываем.
+  if ($('#library').hidden || !card.isConnected) return
+  clearTimeout(hoverHideT)
+  const el = ensureHoverEl()
+  const { chipsHtml, badgesHtml, factsText } = bookPageMeta(w)
+  el.innerHTML = `
+    <div class="lh-title">${escapeHtml(w.title || 'Без названия')}</div>
+    <div class="lh-author">${escapeHtml(w.author || '')}</div>
+    ${badgesHtml ? `<div class="lh-badges">${badgesHtml}</div>` : ''}
+    ${factsText ? `<div class="lh-facts">${escapeHtml(factsText)}</div>` : ''}
+    ${chipsHtml ? `<div class="lh-chips">${chipsHtml}</div>` : ''}
+    <div class="lh-actions">
+      <button class="btn-primary lh-read">📖 Читать</button>
+      <button class="btn-ghost lh-open">Подробнее</button>
+    </div>`
+  el.querySelector('.lh-read').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openReader(w) })
+  el.querySelector('.lh-open').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openBookPage(w) })
+  // Позиционируем справа от карточки, если влезает, иначе слева.
+  el.hidden = false
+  const r = card.getBoundingClientRect()
+  const pw = el.offsetWidth, ph = el.offsetHeight
+  const gap = 10
+  let left = r.right + gap
+  if (left + pw > window.innerWidth - 8) left = r.left - gap - pw
+  if (left < 8) left = Math.max(8, (window.innerWidth - pw) / 2)
+  let top = r.top
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - ph)
+  el.style.left = `${Math.round(left)}px`
+  el.style.top = `${Math.round(top)}px`
+}
+
+function attachHover(card, w) {
+  if (!CAN_HOVER) return
+  let enterT = null
+  card.addEventListener('mouseenter', () => {
+    hideHoverNow()                       // мгновенно убрать панель прошлой карточки
+    enterT = setTimeout(() => showHover(card, w), 350)
+  })
+  card.addEventListener('mouseleave', () => { clearTimeout(enterT); hideHover() })
+}
+
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
   const readState = ratio >= 0.98 ? 'read' : ratio > 0 ? 'partial' : 'unread'
@@ -67,7 +137,8 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
     <div class="book-progress"><i style="width:${ratio >= 1 ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
-  card.addEventListener('click', () => openReader(w))
+  card.addEventListener('click', () => { hideHoverNow(); openBookPage(w) })
+  attachHover(card, w)
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
     e.stopPropagation()
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return

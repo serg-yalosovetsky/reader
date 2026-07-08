@@ -3,6 +3,7 @@
 Схема покрывает все этапы плана, но на этапе 1 реально используются Work и Progress.
 Account / Monitored задействуются на этапе 4, SyncState — на этапе 3.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -33,6 +34,16 @@ class Work(SQLModel, table=True):
     calibre_id: Optional[int] = Field(default=None, index=True)
     chapters_count: int = 0
     cover_path: str = ""
+    # --- Метаданные для карточки/страницы книги (тянутся 1 раз из epub-opf при
+    #     добавлении; бэкфилл существующих — из локального epub, без сети). ---
+    description: str = ""  # аннотация (dc:description)
+    genres: str = ""  # JSON-массив жанров/меток (dc:subject, очищенные)
+    characters: str = ""  # JSON-массив персонажей (если удалось выделить)
+    fandom: str = ""  # фандом/вселенная (для кроссоверов)
+    rating: str = ""  # NC-17 | R | PG-13 | 18+ …
+    status: str = ""  # в процессе | завершён
+    words: int = 0  # объём в словах (если известно)
+    meta_synced: bool = False  # метаданные уже разобраны (чтобы не тянуть снова)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -68,7 +79,9 @@ class Monitored(SQLModel, table=True):
     """Отслеживаемое произведение/подписка (этап 4)."""
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    account_id: Optional[int] = Field(default=None, foreign_key="account.id", index=True)
+    account_id: Optional[int] = Field(
+        default=None, foreign_key="account.id", index=True
+    )
     work_id: Optional[int] = Field(default=None, foreign_key="work.id", index=True)
     source_url: str = ""
     last_seen_chapters: int = 0

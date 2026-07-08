@@ -1,4 +1,5 @@
 """Инициализация БД и выдача сессий."""
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -30,6 +31,42 @@ def init_db() -> None:
     from . import models  # noqa: F401  (регистрирует таблицы в метаданных)
 
     SQLModel.metadata.create_all(engine)
+    _migrate_add_columns()
+
+
+def _migrate_add_columns() -> None:
+    """Лёгкая авто-миграция: create_all не добавляет колонки в уже существующие
+    таблицы, поэтому для новых полей моделей досоздаём их через ALTER TABLE."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue  # только что создана create_all — колонки полные
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl = col.type.compile(engine.dialect)
+                default = ""
+                if (
+                    col.default is not None
+                    and getattr(col.default, "arg", None) is not None
+                    and not callable(col.default.arg)
+                ):
+                    val = col.default.arg
+                    default = (
+                        f" DEFAULT {val!r}"
+                        if isinstance(val, str)
+                        else f" DEFAULT {val}"
+                    )
+                conn.execute(
+                    text(
+                        f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}{default}'
+                    )
+                )
 
 
 def get_session() -> Iterator[Session]:

@@ -8,6 +8,7 @@ import { loadLibrary } from './library.js'
 import { openReader } from './reader-core.js'
 import { syncSettingsUI } from './settings.js'
 // side-effect модули: навешивают DOM-слушатели своих секций
+import './book-page.js'
 import './accounts.js'
 import './navigation.js'
 import './bookmarks.js'

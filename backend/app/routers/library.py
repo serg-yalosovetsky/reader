@@ -1,4 +1,5 @@
 """Роутер библиотеки: список произведений, карточка, загрузка файла вручную."""
+
 from __future__ import annotations
 
 import anyio
@@ -39,13 +40,19 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
     for ws in groups.values():
         if len(ws) <= 1:
             continue
-        ws.sort(key=lambda w: _fsize(w.file_path), reverse=True)  # самый полный — первым
+        ws.sort(
+            key=lambda w: _fsize(w.file_path), reverse=True
+        )  # самый полный — первым
         keep = ws[0]
         for dup in ws[1:]:
-            for m in session.exec(select(Monitored).where(Monitored.work_id == dup.id)).all():
+            for m in session.exec(
+                select(Monitored).where(Monitored.work_id == dup.id)
+            ).all():
                 m.work_id = keep.id
                 session.add(m)
-            for p in session.exec(select(Progress).where(Progress.work_id == dup.id)).all():
+            for p in session.exec(
+                select(Progress).where(Progress.work_id == dup.id)
+            ).all():
                 session.delete(p)
             if dup.file_path and dup.file_path != keep.file_path:
                 try:
@@ -83,8 +90,11 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
             session.add(w)
             added_covers += 1
     session.commit()
-    return {"removed_duplicates": removed_works, "removed_monitored": removed_mon,
-            "covers_added": added_covers}
+    return {
+        "removed_duplicates": removed_works,
+        "removed_monitored": removed_mon,
+        "covers_added": added_covers,
+    }
 
 
 @router.get("")
@@ -93,6 +103,9 @@ def list_works(session: Session = Depends(get_session)) -> list[dict]:
     result = []
     for w in session.exec(select(Work).order_by(Work.updated_at.desc())).all():
         d = w.model_dump()
+        # description в списке не нужен (может быть длинным ×308) — страница книги
+        # дотягивает его через GET /api/library/{id}.
+        d.pop("description", None)
         if w.cover_path:
             p = Path(w.cover_path)
             d["cover_v"] = int(p.stat().st_mtime) if p.exists() else 0
@@ -101,6 +114,32 @@ def list_works(session: Session = Depends(get_session)) -> list[dict]:
         result.append(d)
     return result
 
+
+@router.post("/backfill-meta")
+def backfill_meta(
+    session: Session = Depends(get_session), limit: int = 0, force: bool = False
+) -> dict:
+    """Разобрать метаданные (описание/жанры/статус/рейтинг) из локальных файлов
+    (epub-opf и fb2) для книг, где они ещё не заполнены. Без сети."""
+    from .. import bookmeta
+
+    updated = 0
+    scanned = 0
+    q = select(Work) if force else select(Work).where(Work.meta_synced == False)  # noqa: E712
+    for w in session.exec(q).all():
+        if limit and updated >= limit:
+            break
+        if not w.file_path or not os.path.exists(w.file_path):
+            continue
+        scanned += 1
+        meta = bookmeta.extract_meta(w.file_path, w.file_format)
+        if not meta:
+            continue
+        if bookmeta.apply_meta(w, meta, overwrite=True):
+            session.add(w)
+            updated += 1
+    session.commit()
+    return {"scanned": scanned, "updated": updated}
 
 
 def _do_refresh_covers() -> None:
@@ -121,17 +160,23 @@ def _do_refresh_covers() -> None:
         if not our or not at_author:
             return False
         our_words = {w.lower().strip(".,") for w in our.split() if len(w) > 2}
-        at_words  = {w.lower().strip(".,") for w in at_author.split() if len(w) > 2}
+        at_words = {w.lower().strip(".,") for w in at_author.split() if len(w) > 2}
         return bool(our_words & at_words)
 
     def _at_author(at_url: str) -> str:
         try:
-            r = _httpx.get(at_url, timeout=10, follow_redirects=True,
-                           headers={"User-Agent": "Mozilla/5.0"})
+            r = _httpx.get(
+                at_url,
+                timeout=10,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
             _pat = "itemprop=['\"{0,1}author['\"{0,1}[^>]*>([^<]{2,60})<"
             m = _re.search(_pat, r.text)
             if not m:
-                m = _re.search(r"book-authors[^>]*>.*?href=[^>]+>([^<]{2,60})<", r.text, _re.S)
+                m = _re.search(
+                    r"book-authors[^>]*>.*?href=[^>]+>([^<]{2,60})<", r.text, _re.S
+                )
             return m.group(1).strip() if m else ""
         except Exception:
             return ""
@@ -166,12 +211,18 @@ def refresh_covers(background_tasks: BackgroundTasks) -> dict:
     background_tasks.add_task(_do_refresh_covers)
     return {"status": "started"}
 
+
 @router.post("/scan-drive-books")
-def scan_drive_books(days: int = 7, limit: int = 30, commit: bool = False,
-                     session: Session = Depends(get_session)) -> dict:
+def scan_drive_books(
+    days: int = 7,
+    limit: int = 30,
+    commit: bool = False,
+    session: Session = Depends(get_session),
+) -> dict:
     """Сканировать gdrive:ReadEra/Books и импортировать недавно добавленные книги.
     dry-run по умолчанию (commit=false) — вернёт список кандидатов, ничего не меняя."""
     from ..drive_books import scan
+
     return scan(session, days=days, limit=limit, commit=commit)
 
 
@@ -247,19 +298,28 @@ def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     # Чёрный список: запоминаем книгу (название/автор + все source_url), чтобы
     # фиды и монитор её больше не докачивали и не показывали в библиотеке.
     from ..blacklist import add_entry as _bl_add
-    _urls = [work.source_url] + [m.source_url for m in session.exec(
-        select(Monitored).where(Monitored.work_id == work_id)).all()]
+
+    _urls = [work.source_url] + [
+        m.source_url
+        for m in session.exec(
+            select(Monitored).where(Monitored.work_id == work_id)
+        ).all()
+    ]
     _bl_add(session, title=work.title, author=work.author, urls=_urls)
     for p in session.exec(select(Progress).where(Progress.work_id == work_id)).all():
         session.delete(p)
     for m in session.exec(select(Monitored).where(Monitored.work_id == work_id)).all():
         session.delete(m)
     if work.file_path:
-        try: os.remove(work.file_path)
-        except OSError: pass
+        try:
+            os.remove(work.file_path)
+        except OSError:
+            pass
     if work.cover_path:
-        try: os.remove(work.cover_path)
-        except OSError: pass
+        try:
+            os.remove(work.cover_path)
+        except OSError:
+            pass
     session.delete(work)
     session.commit()
     return {"ok": True}

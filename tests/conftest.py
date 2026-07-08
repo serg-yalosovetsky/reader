@@ -15,6 +15,9 @@ os.environ["READER_TMP_DIR"] = os.path.join(_tmp, "tmp")
 os.environ["READER_TTS_DIR"] = os.path.join(_tmp, "tts")
 os.environ["READER_SECRET_KEY_PATH"] = os.path.join(_tmp, "secret.key")
 os.environ["READER_DB_PATH"] = os.path.join(_tmp, "reader.db")
+# Тесты — только на временном SQLite: снимаем боевой READER_DB_URL (Postgres),
+# иначе тесты писали бы в прод-БД mesh-postgres.
+os.environ.pop("READER_DB_URL", None)
 
 import pytest  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402

@@ -9,20 +9,29 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from ..config import DB_URL, ensure_dirs
 
-# check_same_thread=False — FastAPI/uvicorn могут дёргать из разных потоков;
-# для SQLite это безопасно при коротких сессиях.
-engine = create_engine(DB_URL, echo=False, connect_args={"check_same_thread": False})
+_IS_SQLITE = DB_URL.startswith("sqlite")
 
+if _IS_SQLITE:
+    # check_same_thread=False — FastAPI/uvicorn могут дёргать из разных потоков;
+    # для SQLite это безопасно при коротких сессиях.
+    engine = create_engine(
+        DB_URL, echo=False, connect_args={"check_same_thread": False}
+    )
 
-@event.listens_for(engine, "connect")
-def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
-    """WAL + busy_timeout: параллельные чтения/записи не дают 'database is locked'
-    (мониторинг с докачкой работает долго, а фронт параллельно опрашивает API)."""
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA journal_mode=WAL")
-    cur.execute("PRAGMA busy_timeout=15000")
-    cur.execute("PRAGMA synchronous=NORMAL")
-    cur.close()
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        """WAL + busy_timeout: параллельные чтения/записи не дают 'database is
+        locked' (мониторинг с докачкой работает долго, а фронт параллельно
+        опрашивает API)."""
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=15000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
+else:
+    # Postgres (mesh-postgres): pool_pre_ping отбраковывает мёртвые соединения
+    # (докачки держат сессию долго; сервер мог закрыть idle-коннект).
+    engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
 
 
 def init_db() -> None:

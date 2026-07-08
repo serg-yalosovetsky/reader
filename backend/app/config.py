@@ -1,5 +1,6 @@
 """Конфигурация приложения. Значения читаются из переменных окружения (.env),
 с разумными дефолтами для локальной разработки на Windows."""
+
 from __future__ import annotations
 
 import os
@@ -16,9 +17,11 @@ TMP_DIR = Path(os.getenv("READER_TMP_DIR", DATA_DIR / "tmp"))
 # Кэш синтезированной речи (TTS): <key>.mp3 + <key>.json (пословные тайминги).
 TTS_DIR = Path(os.getenv("READER_TTS_DIR", DATA_DIR / "tts"))
 
-# SQLite-файл
+# БД: боевой — mesh-postgres через READER_DB_URL
+# (postgresql+psycopg://reader:…@127.0.0.1:5433/reader); по умолчанию — локальный
+# SQLite-файл (dev/тесты). SQLite-путь остаётся для бэкапа/офлайн-режима.
 DB_PATH = Path(os.getenv("READER_DB_PATH", DATA_DIR / "reader.db"))
-DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
+DB_URL = os.getenv("READER_DB_URL") or f"sqlite:///{DB_PATH.as_posix()}"
 
 # Ключ Fernet для шифрования кредов аккаунтов (этап 4). Файл вне репо.
 SECRET_KEY_PATH = Path(os.getenv("READER_SECRET_KEY_PATH", DATA_DIR / "secret.key"))

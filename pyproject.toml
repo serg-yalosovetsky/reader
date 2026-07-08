@@ -45,6 +45,7 @@ dependencies = [
     "readability-lxml>=0.8",
     # Async file I/O в роутерах (уже тянется FastAPI, фиксируем явно)
     "anyio>=4.0",
+    "psycopg[binary]>=3.3.4",
 ]
 
 [dependency-groups]

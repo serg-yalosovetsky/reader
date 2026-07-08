@@ -5,6 +5,7 @@
 2. известные FanFicFare-домены -> FanFicFare;
 3. иначе -> FanFicFare (вдруг знает), при UnsupportedURL -> FicHub.
 """
+
 from __future__ import annotations
 
 from urllib.parse import urlparse
@@ -42,16 +43,30 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     # 1) сайты со своими адаптерами.
     if host.endswith("author.today"):
         from . import authortoday
+
         try:
-            return authortoday.download(url, creds=creds)
+            res = authortoday.download(url, creds=creds)
         except PaidContentError as e:
-            # Платная на AT — ищем полную книгу в бесплатных источниках.
+            # Целиком платная на AT — ищем полную книгу в бесплатных источниках.
             return _fallback_free(e.title, e.author)
+        # Частично-платная (пролог бесплатно, хвост за деньги): AT отдал только
+        # доступные главы. Ищем более полную бесплатную версию на зеркалах и
+        # берём вариант с бо́льшим объёмом текста.
+        if res.extra.get("partial_paid"):
+            try:
+                free = _search_free(res.title, res.author)
+            except DownloaderError:
+                free = None
+            if free and _richness(free) > _richness(res):
+                return free
+        return res
     if host.endswith("readli.net"):
         from . import readli
+
         return readli.download(url)
     if host.endswith("searchfloor.org"):
         from . import searchfloor
+
         return searchfloor.download(url)
 
     # 2) известные FanFicFare-домены.
@@ -82,6 +97,7 @@ def _richness(result: "DownloadResult") -> int:
     import os
     import re
     import zipfile
+
     try:
         p = str(result.file_path)
         fmt = (result.file_format or "").lower()
@@ -90,7 +106,9 @@ def _richness(result: "DownloadResult") -> int:
             parts = []
             for n in z.namelist():
                 if n.lower().endswith((".xhtml", ".html", ".htm")):
-                    parts.append(re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
+                    parts.append(
+                        re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore"))
+                    )
             return len(" ".join(parts))
         with open(p, encoding="utf-8", errors="ignore") as fh:
             return len(re.sub(r"<[^>]+>", " ", fh.read()))
@@ -108,13 +126,17 @@ def _search_free(title: str, author: str = "") -> DownloadResult | None:
         return None
     cands: list[DownloadResult] = []
     from . import searchfloor
+
     try:
         bid = searchfloor.search_book(title, author)
         if bid:
-            cands.append(searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}"))
+            cands.append(
+                searchfloor._download_book(bid, f"https://searchfloor.org/b/{bid}")
+            )
     except DownloaderError:
         pass
     from . import readli
+
     try:
         r = readli.search_and_download(title, author)
         if r:

@@ -10,6 +10,7 @@
 Работает для книг со свободным доступом. Платное/18+ потребует cookies сессии
 (этап 4 — аккаунты).
 """
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,12 @@ from bs4 import BeautifulSoup
 from ebooklib import epub
 
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
+
+
+class _PaidChapter(DownloaderError):
+    """Внутренний сигнал: конкретная глава платная/недоступна анонимно.
+    Ловится в download() для сборки бесплатной части + фоллбэка на зеркала."""
+
 
 _BASE = "https://author.today"
 _UA = (
@@ -57,10 +64,7 @@ def _decrypt(text: str, secret: str, user_id: str = "") -> str:
     """XOR-расшифровка текста главы (порт decryptText из юзерскрипта)."""
     key = secret[::-1] + "@_@" + (user_id or "")
     klen = len(key)
-    return "".join(
-        chr(ord(text[i]) ^ ord(key[i % klen])) for i in range(len(text))
-    )
-
+    return "".join(chr(ord(text[i]) ^ ord(key[i % klen])) for i in range(len(text)))
 
 
 def search_work(title: str, author: str = "") -> str | None:
@@ -76,7 +80,8 @@ def search_work(title: str, author: str = "") -> str | None:
 
     q = f"{title} {author}".strip() if author else title
     with httpx.Client(
-        timeout=20, follow_redirects=True,
+        timeout=20,
+        follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
         try:
@@ -91,7 +96,8 @@ def search_work(title: str, author: str = "") -> str | None:
             title_by_id: dict[str, str] = {}
             for m in re.finditer(
                 r'class="bookcard-title".*?href="/work/(\d+)"[^>]*>(.*?)</a>',
-                r.text, re.S,
+                r.text,
+                re.S,
             ):
                 wid = m.group(1)
                 raw = re.sub(r"<[^>]+>", "", m.group(2)).strip()
@@ -103,7 +109,8 @@ def search_work(title: str, author: str = "") -> str | None:
             author_by_id: dict[str, str] = {}
             at_authors = re.findall(
                 r'class="bookcard-author[^"]*"[^>]*>.*?<a[^>]*>([^<]+)</a>',
-                r.text, re.S,
+                r.text,
+                re.S,
             )
             for i, wid in enumerate(work_ids):
                 if i < len(at_authors):
@@ -141,11 +148,13 @@ def search_work(title: str, author: str = "") -> str | None:
         except Exception:
             return None
 
+
 def count_chapters(url: str) -> int | None:
     """Быстро получить число глав без скачивания текста."""
     work_id = _work_id(url)
     with httpx.Client(
-        timeout=20, follow_redirects=True,
+        timeout=20,
+        follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
         try:
@@ -158,13 +167,16 @@ def count_chapters(url: str) -> int | None:
         except Exception:
             return None
 
+
 def _login(c: httpx.Client, email: str, password: str) -> bool:
     """Войти в author.today через JSON API. Возвращает True если успешно."""
     try:
         r = _get(c, f"{_BASE}/account/login")
         form_start = r.text.find('id="loginForm"')
-        block = r.text[form_start:form_start + 1000] if form_start >= 0 else r.text
-        token_m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', block)
+        block = r.text[form_start : form_start + 1000] if form_start >= 0 else r.text
+        token_m = re.search(
+            r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', block
+        )
         if not token_m:
             return False
         token = token_m.group(1)
@@ -178,7 +190,11 @@ def _login(c: httpx.Client, email: str, password: str) -> bool:
             },
             follow_redirects=True,
         )
-        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        data = (
+            resp.json()
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
         return bool(data.get("isSuccessful"))
     except Exception:
         return False
@@ -187,7 +203,8 @@ def _login(c: httpx.Client, email: str, password: str) -> bool:
 def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     work_id = _work_id(url)
     with httpx.Client(
-        timeout=60, follow_redirects=True,
+        timeout=60,
+        follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
         if creds:
@@ -195,8 +212,10 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         # 1) Страница книги — метаданные.
         wr = _get(c, f"{_BASE}/work/{work_id}")
         if wr.status_code != 200:
-            raise DownloaderError(f"author.today: страница книги вернула {wr.status_code}")
-        title, author, annotation = _parse_work_meta(wr.text)
+            raise DownloaderError(
+                f"author.today: страница книги вернула {wr.status_code}"
+            )
+        title, author, annotation, at_meta = _parse_work_meta(wr.text)
 
         # Без входа — платная/18+ недоступна; если залогинились, пробуем скачать.
         if not _is_free(wr.text) and not creds:
@@ -208,7 +227,9 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
             raise DownloaderError(f"author.today: ридер вернул {rr.status_code}")
         chapters = _parse_chapters(rr.text)
         if not chapters:
-            raise DownloaderError("author.today: не найден список глав (возможно, нужен вход в аккаунт)")
+            raise DownloaderError(
+                "author.today: не найден список глав (возможно, нужен вход в аккаунт)"
+            )
         uid_m = _USERID_RE.search(rr.text)
         user_id = ""  # аноним: в JS `app.userId || ""`, userId:0 тоже даёт ""
         if uid_m and uid_m.group(1) != "0":
@@ -216,9 +237,16 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
 
         # 3) Текст каждой главы (с паузой — author.today мягко троттлит).
         chapter_htmls: list[tuple[str, str]] = []
+        paid_tail = False  # встретилась платная глава (частично-платная книга)
         try:
             for idx, ch in enumerate(chapters):
-                html = _fetch_chapter(c, work_id, str(ch["id"]), user_id)
+                try:
+                    html = _fetch_chapter(c, work_id, str(ch["id"]), user_id)
+                except _PaidChapter:
+                    # Хвост книги платный (главы публикуются по порядку — дальше
+                    # тоже платные). Останавливаемся: собрали бесплатную часть.
+                    paid_tail = True
+                    break
                 chapter_htmls.append((ch.get("title") or "", html))
                 if idx + 1 < len(chapters):
                     time.sleep(0.25)
@@ -230,10 +258,16 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
                 raise PaidContentError(title=title, author=author) from e
             raise
 
+        # Ни одной бесплатной главы — книга целиком платная. Отдаём как
+        # PaidContent, чтобы chain искал полный текст в бесплатных зеркалах.
+        if not chapter_htmls:
+            raise PaidContentError(title=title, author=author)
+
     # 4) Сборка EPUB (со встроенной обложкой).
     cover = None
     try:
         from ..app import covers
+
         cover = covers.fetch_cover_bytes(f"{_BASE}/work/{work_id}")
     except Exception:  # noqa: BLE001
         cover = None
@@ -246,14 +280,22 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         site="authortoday",
         source_url=url,
         num_chapters=len(chapter_htmls),
-        extra={"workdir": str(out.parent)},
+        extra={
+            "workdir": str(out.parent),
+            # частично-платная: собрано меньше глав, чем есть на AT — chain
+            # попробует найти более полную бесплатную версию на зеркалах.
+            "partial_paid": paid_tail,
+            "total_chapters": len(chapters),
+            **at_meta,
+        },
     )
 
 
 def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str) -> str:
     url = f"{_BASE}/reader/{work_id}/chapter"
     r = _get(
-        c, url,
+        c,
+        url,
         params={"id": chapter_id, "_": int(time.time() * 1000)},
         headers={
             "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -264,12 +306,26 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
     try:
         data = r.json()
     except json.JSONDecodeError as e:
-        raise DownloaderError("author.today: неожиданный ответ при загрузке главы") from e
+        raise DownloaderError(
+            "author.today: неожиданный ответ при загрузке главы"
+        ) from e
     if not data.get("isSuccessful"):
         msgs = data.get("messages") or []
-        if msgs and str(msgs[0]).lower() == "unadulted":
-            raise DownloaderError("author.today: контент 18+, требуется подтверждение возраста/вход")
-        raise DownloaderError(f"author.today: сервер ответил Unsuccessful для главы {chapter_id}")
+        first = str(msgs[0]).lower() if msgs else ""
+        if first == "unadulted":
+            raise DownloaderError(
+                "author.today: контент 18+, требуется подтверждение возраста/вход"
+            )
+        if first == "unauthorized":
+            # Глава платная/недоступна анонимно (частично-платная книга: пролог
+            # бесплатно, хвост за деньги). Помечаем, чтобы download() собрал
+            # бесплатную часть и ушёл в фоллбэк на бесплатные зеркала.
+            raise _PaidChapter(
+                f"author.today: глава {chapter_id} недоступна (Unauthorized)"
+            )
+        raise DownloaderError(
+            f"author.today: сервер ответил Unsuccessful для главы {chapter_id}"
+        )
     secret = r.headers.get("reader-secret")
     if not secret:
         raise DownloaderError("author.today: не получен ключ reader-secret")
@@ -279,7 +335,8 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
         for _ in range(3):
             time.sleep(1.5)
             rr = _get(
-                c, url,
+                c,
+                url,
                 params={"id": chapter_id, "_": int(time.time() * 1000)},
                 headers={
                     "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -307,15 +364,60 @@ def _is_free(html: str) -> bool:
     return not any(m in html for m in paid_markers)
 
 
-def _parse_work_meta(html: str) -> tuple[str, str, str]:
+def _parse_work_meta(html: str) -> tuple[str, str, str, dict]:
+    """Разбор страницы книги author.today.
+
+    Возвращает (title, author, annotation, extra), где extra может содержать
+    genres (JSON-массив), rating, status, words — для сохранения в Work."""
     soup = BeautifulSoup(html, "lxml")
     title_el = soup.select_one("h1.book-title") or soup.select_one("[itemprop='name']")
     title = title_el.get_text(strip=True) if title_el else "Без названия"
-    authors = soup.select("div.book-authors [itemprop='author'] a") or soup.select("div.book-authors a")
+    authors = soup.select("div.book-authors [itemprop='author'] a") or soup.select(
+        "div.book-authors a"
+    )
     author = ", ".join(a.get_text(strip=True) for a in authors) if authors else ""
-    ann_el = soup.select_one("div.annotation div.rich-content") or soup.select_one("div.annotation")
+    ann_el = soup.select_one("div.annotation div.rich-content") or soup.select_one(
+        "div.annotation"
+    )
     annotation = ann_el.get_text("\n", strip=True) if ann_el else ""
-    return title, author, annotation
+
+    extra: dict = {}
+    # Жанры — ссылки на /work/genre/<slug> (кроме навигационных /work/genre/all/…).
+    genres: list[str] = []
+    for a in soup.select("a[href*='/work/genre/']"):
+        href = a.get("href", "")
+        if "/work/genre/all/" in href:
+            continue
+        txt = a.get_text(strip=True)
+        if txt and txt not in genres:
+            genres.append(txt)
+    if genres:
+        extra["genres"] = json.dumps(genres, ensure_ascii=False)
+    # Возрастной рейтинг (бейдж 18+/16+…).
+    age = soup.select_one(".book-age-limit, .badge-age, [class*='age']")
+    if age:
+        m = re.search(r"\d+\+", age.get_text(" ", strip=True))
+        if m:
+            extra["rating"] = m.group(0)
+    # Статус.
+    status_el = soup.select_one(".book-status, [class*='status']")
+    stxt = (
+        status_el.get_text(" ", strip=True).lower()
+        if status_el
+        else html.lower()[:6000]
+    )
+    if "завершён" in stxt or "завершен" in stxt or "полный текст" in stxt:
+        extra["status"] = "завершён"
+    elif "процессе" in stxt:
+        extra["status"] = "в процессе"
+    # Объём в словах/знаках (из "N зн." / "N а.л." панели статистики).
+    stat = soup.get_text(" ", strip=True)
+    mw = re.search(r"([\d\s]{4,})\s*зн", stat)
+    if mw:
+        chars = int(re.sub(r"\D", "", mw.group(1)) or 0)
+        if chars:
+            extra["words"] = chars // 6  # грубо: ~6 знаков на слово (рус.)
+    return title, author, annotation, extra
 
 
 def _parse_chapters(reader_html: str) -> list[dict]:
@@ -326,12 +428,18 @@ def _parse_chapters(reader_html: str) -> list[dict]:
         arr = json.loads(m.group(1))
     except json.JSONDecodeError:
         return []
-    return [{"id": ch.get("id"), "title": ch.get("title", "")} for ch in arr if ch.get("id")]
+    return [
+        {"id": ch.get("id"), "title": ch.get("title", "")} for ch in arr if ch.get("id")
+    ]
 
 
 def _build_epub(
-    work_id: str, title: str, author: str, annotation: str,
-    chapters: list[tuple[str, str]], cover: bytes | None = None,
+    work_id: str,
+    title: str,
+    author: str,
+    annotation: str,
+    chapters: list[tuple[str, str]],
+    cover: bytes | None = None,
 ) -> Path:
     book = epub.EpubBook()
     book.set_identifier(f"authortoday_{work_id}")
@@ -377,4 +485,4 @@ def _build_epub(
 
 
 def _esc(s: str) -> str:
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -12,6 +12,7 @@ ficbook (anti-bot) и пул httpx душат друг друга, а агрес
 cloudscraper ficbook быстро банит. Все записи в БД и докачки — потом,
 последовательно в главной сессии (никаких потоков с БД).
 """
+
 from __future__ import annotations
 
 import time
@@ -26,24 +27,30 @@ from ..downloaders import fanficfare_engine as fff
 from . import store
 
 import logging
+
 _log = logging.getLogger("reader.monitor")
 
 
-def add_monitor(session: Session, source_url: str, work_id: int | None = None,
-                chapters: int = 0) -> Monitored:
+def add_monitor(
+    session: Session, source_url: str, work_id: int | None = None, chapters: int = 0
+) -> Monitored:
     """Поставить фик на отслеживание (идемпотентно по source_url)."""
     from ..app import blacklist
+
     if blacklist.is_blacklisted(session, source_url=source_url):
         return None  # книга в чёрном списке — не возвращаем на отслеживание
-    mon = session.exec(select(Monitored).where(Monitored.source_url == source_url)).first()
+    mon = session.exec(
+        select(Monitored).where(Monitored.source_url == source_url)
+    ).first()
     if mon:
         if work_id and not mon.work_id:
             mon.work_id = work_id
         if chapters:
             mon.last_seen_chapters = max(mon.last_seen_chapters, chapters)
     else:
-        mon = Monitored(source_url=source_url, work_id=work_id,
-                        last_seen_chapters=chapters)
+        mon = Monitored(
+            source_url=source_url, work_id=work_id, last_seen_chapters=chapters
+        )
         session.add(mon)
     session.commit()
     session.refresh(mon)
@@ -59,6 +66,7 @@ def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | 
     # author.today: FanFicFare не поддерживает — используем наш адаптер
     if host.endswith("author.today"):
         from ..downloaders import authortoday as _at
+
         return _at.count_chapters(url)
     # ficbook: считаем через FanFicFare (свой cloudscraper в подпроцессе). Лёгкий
     # in-process cloudscraper-счётчик пробовали — DDoS-Guard жёстко блокирует
@@ -76,6 +84,7 @@ def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | 
 
 def _host(url: str) -> str:
     from urllib.parse import urlparse
+
     return urlparse(url).hostname or ""
 
 
@@ -90,6 +99,7 @@ def _check_at_source(title: str, author: str) -> tuple[str, int] | None:
     """Ищем работу на author.today по названию. (at_url, at_chapters) или None.
     Чистая сеть, без БД — вызывается из потоков. Запросы к AT анонимные."""
     from ..downloaders import authortoday as _at
+
     at_url = _at.search_work(title, author or "")
     if not at_url:
         return None
@@ -126,8 +136,6 @@ def _at_task(task: dict) -> tuple[str, int] | None:
         return None
 
 
-
-
 _AT_COVER_ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
 
 
@@ -157,6 +165,7 @@ def _apply_at_cover(session: Session, work: Work, cover_bytes: bytes | None) -> 
     if not cover_bytes:
         return
     from ..app import covers as _cov
+
     p = _cov.save_cover_bytes(cover_bytes, work.sha1)
     if p:
         work.cover_path = str(p)
@@ -180,10 +189,10 @@ def _download_and_write(
     """
     # snapshot plain data от ORM-объектов до expires
     src_url = mon.source_url
-    mon_id  = mon.id
-    title   = work_obj.title  if work_obj else ""
-    author  = (work_obj.author if work_obj else "") or ""
-    creds   = store.creds_for_host(session, _host(best_url))
+    mon_id = mon.id
+    title = work_obj.title if work_obj else ""
+    author = (work_obj.author if work_obj else "") or ""
+    creds = store.creds_for_host(session, _host(best_url))
 
     # Закрываем ВСЕ pending-изменения — после этого нет открытой транзакции
     session.commit()
@@ -193,34 +202,48 @@ def _download_and_write(
     res = chain.fetch(best_url, creds=creds)
 
     # Быстрая запись (< секунды)
-    work = register_download(res, session)       # внутренний commit
+    work = register_download(res, session)  # внутренний commit
     _apply_at_cover(session, work, cover_bytes)  # session.add(work) если есть обложка
+    # Полный fb2-зеркала (searchfloor) не разбит на главы → num_chapters=0, и
+    # register_download оставляет старый счётчик. Проставим известное из монитора
+    # число глав (best_cur), иначе UI показывает устаревший «N гл».
+    if best_cur and (work.chapters_count or 0) < best_cur:
+        work.chapters_count = best_cur
+        session.add(work)
 
-    mon = session.get(Monitored, mon_id)         # re-fetch после commit
+    mon = session.get(Monitored, mon_id)  # re-fetch после commit
     mon.work_id = work.id
     mon.has_update = False
     mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
     mon.last_checked = utcnow()
     session.add(mon)
     # Синхронизируем все дубликаты monitored для того же work_id
-    for dup in session.exec(select(Monitored).where(
-            Monitored.work_id == work.id, Monitored.id != mon_id)).all():
+    for dup in session.exec(
+        select(Monitored).where(Monitored.work_id == work.id, Monitored.id != mon_id)
+    ).all():
         dup.has_update = False
         dup.last_seen_chapters = max(dup.last_seen_chapters, best_cur)
         session.add(dup)
-    session.commit()   # один быстрый commit: cover_path + mon + дубликаты
+    session.commit()  # один быстрый commit: cover_path + mon + дубликаты
 
     return {"downloaded": True, "source_used": best_url}
 
 
-def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = True,
-              progress_cb=None, update_cb=None, only_pending: bool = False) -> dict:
+def check_all(
+    session: Session,
+    auto_download: bool = True,
+    pull_feeds: bool = True,
+    progress_cb=None,
+    update_cb=None,
+    only_pending: bool = False,
+) -> dict:
     """Проверить обновления: сперва фиды подписок (ставят новые работы на
     отслеживание), затем детект новых глав по каждому отслеживаемому фику.
     only_pending=True — только докачать книги с has_update=True (без счёта глав)."""
     feeds_result = {}
     if pull_feeds:
         from . import feeds  # ленивый импорт — избегаем цикла
+
         feeds_result = feeds.pull_all(session)
 
     from ..app import blacklist as _bl
@@ -231,10 +254,15 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         if not mon.source_url:
             continue
         _w = session.get(Work, mon.work_id) if mon.work_id else None
-        if _bl.is_blacklisted(session, source_url=mon.source_url,
-                              title=(_w.title if _w else ""),
-                              author=(_w.author if _w else "")):
-            session.delete(mon); session.commit(); continue
+        if _bl.is_blacklisted(
+            session,
+            source_url=mon.source_url,
+            title=(_w.title if _w else ""),
+            author=(_w.author if _w else ""),
+        ):
+            session.delete(mon)
+            session.commit()
+            continue
         survivors.append((mon, _w))
 
     # В режиме only_pending обрабатываем только уже помеченные книги
@@ -248,12 +276,18 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         host = _host(mon.source_url).lower()
         if host not in creds_cache:
             creds_cache[host] = store.creds_for_host(session, host)
-        tasks.append({
-            "mon_id": mon.id, "url": mon.source_url, "host": host,
-            "creds": creds_cache[host], "work_id": mon.work_id,
-            "title": _w.title if _w else "", "author": (_w.author if _w else "") or "",
-            "has_update": mon.has_update,
-        })
+        tasks.append(
+            {
+                "mon_id": mon.id,
+                "url": mon.source_url,
+                "host": host,
+                "creds": creds_cache[host],
+                "work_id": mon.work_id,
+                "title": _w.title if _w else "",
+                "author": (_w.author if _w else "") or "",
+                "has_update": mon.has_update,
+            }
+        )
     # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
     #     с пулом httpx — душат друг друга на маленьком VPS).
     #     Пропускаем если обновление уже известно (has_update=True).
@@ -287,7 +321,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         if cur is None:
             if not (mon.has_update and auto_download):
                 mon.last_checked = utcnow()
-                session.add(mon); session.commit()
+                session.add(mon)
+                session.commit()
                 continue
             # Known update от notifications — докачиваем без счёта глав
             best_url = mon.source_url
@@ -297,7 +332,11 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 best_url = at_url
                 best_cur = max(best_cur, at_cnt)
             updated += 1
-            detail: dict = {"url": best_url, "from": mon.last_seen_chapters, "source": "notifications"}
+            detail: dict = {
+                "url": best_url,
+                "from": mon.last_seen_chapters,
+                "source": "notifications",
+            }
             if at_info and best_url != mon.source_url:
                 detail["alt_source"] = best_url
             try:
@@ -305,10 +344,12 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 detail.update(dl)
                 downloaded += 1
             except Exception as e:  # noqa: BLE001
-                detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
+                detail["error"] = str(e)[:200]
+                _log.warning("reader download error: %s", e)
                 mon = session.get(Monitored, mon.id)
                 mon.last_checked = utcnow()
-                session.add(mon); session.commit()
+                session.add(mon)
+                session.commit()
             details.append(detail)
             continue
         # Используем источник с большим числом глав
@@ -320,7 +361,11 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                 best_url = at_url
                 best_cur = at_cnt
         needs_initial = not mon.work_id and best_cur > 0
-        if best_cur > mon.last_seen_chapters or needs_initial or (mon.has_update and auto_download):
+        if (
+            best_cur > mon.last_seen_chapters
+            or needs_initial
+            or (mon.has_update and auto_download)
+        ):
             mon.has_update = True
             updated += 1
             if update_cb:
@@ -336,7 +381,8 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
                     details.append(detail)
                     continue  # mon уже записан внутри _download_and_write
                 except Exception as e:  # noqa: BLE001
-                    detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
+                    detail["error"] = str(e)[:200]
+                    _log.warning("reader download error: %s", e)
             details.append(detail)
         # last_seen двигаем только если докачка удалась или обновлений нет
         mon = session.get(Monitored, mon.id)  # re-fetch после возможного commit
@@ -345,8 +391,13 @@ def check_all(session: Session, auto_download: bool = True, pull_feeds: bool = T
         mon.last_checked = utcnow()
         session.add(mon)
         session.commit()
-    return {"checked": checked, "with_updates": updated,
-            "downloaded": downloaded, "feeds": feeds_result, "details": details}
+    return {
+        "checked": checked,
+        "with_updates": updated,
+        "downloaded": downloaded,
+        "feeds": feeds_result,
+        "details": details,
+    }
 
 
 def check_one(session: Session, work_id: int, auto_download: bool = True) -> dict:
@@ -360,9 +411,12 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     _w = session.get(Work, work_id)
     host = _host(mon.source_url).lower()
 
-    if _bl.is_blacklisted(session, source_url=mon.source_url,
-                          title=(_w.title if _w else ""),
-                          author=(_w.author if _w else "")):
+    if _bl.is_blacklisted(
+        session,
+        source_url=mon.source_url,
+        title=(_w.title if _w else ""),
+        author=(_w.author if _w else ""),
+    ):
         return {"error": "blacklisted"}
 
     # Читаем creds (быстро) — потом commit, уходим в сеть
@@ -375,7 +429,9 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     at_info = None
     if _at_eligible(host, work_id, _w.title if _w else ""):
         try:
-            at_info = _check_at_source(_w.title if _w else "", (_w.author if _w else "") or "")
+            at_info = _check_at_source(
+                _w.title if _w else "", (_w.author if _w else "") or ""
+            )
         except Exception:
             pass
 
@@ -388,8 +444,16 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
             best_cur = at_cnt
 
     mon = session.get(Monitored, mon.id)  # re-fetch после commit
-    has_new = (best_cur > mon.last_seen_chapters) or (not mon.work_id and best_cur > 0) or mon.has_update
-    detail: dict = {"has_update": has_new, "chapters_seen": mon.last_seen_chapters, "chapters_found": best_cur}
+    has_new = (
+        (best_cur > mon.last_seen_chapters)
+        or (not mon.work_id and best_cur > 0)
+        or mon.has_update
+    )
+    detail: dict = {
+        "has_update": has_new,
+        "chapters_seen": mon.last_seen_chapters,
+        "chapters_found": best_cur,
+    }
 
     if has_new and auto_download:
         try:
@@ -397,7 +461,8 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
             detail.update(dl)
             return detail
         except Exception as e:  # noqa: BLE001
-            detail["error"] = str(e)[:200]; _log.warning("reader download error: %s", e)
+            detail["error"] = str(e)[:200]
+            _log.warning("reader download error: %s", e)
 
     # Нет загрузки или ошибка — быстрая запись только mon
     mon = session.get(Monitored, mon.id)
@@ -411,7 +476,6 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     return detail
 
 
-
 def list_monitored(session: Session) -> list[dict]:
     """Список отслеживаемого с заголовками работ (для UI), без дубликатов."""
     out = []
@@ -421,13 +485,19 @@ def list_monitored(session: Session) -> list[dict]:
         if mon.work_id:
             w = session.get(Work, mon.work_id)
             title = w.title if w else ""
-        key = (title.strip().lower() or mon.source_url)
+        key = title.strip().lower() or mon.source_url
         if key in seen:
             continue
         seen.add(key)
-        out.append({
-            "id": mon.id, "work_id": mon.work_id, "source_url": mon.source_url,
-            "title": title, "last_seen_chapters": mon.last_seen_chapters,
-            "has_update": mon.has_update, "last_checked": mon.last_checked,
-        })
+        out.append(
+            {
+                "id": mon.id,
+                "work_id": mon.work_id,
+                "source_url": mon.source_url,
+                "title": title,
+                "last_seen_chapters": mon.last_seen_chapters,
+                "has_update": mon.has_update,
+                "last_checked": mon.last_checked,
+            }
+        )
     return out

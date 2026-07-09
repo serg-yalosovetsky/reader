@@ -60,6 +60,20 @@ def _select(session, only: str):
     return out
 
 
+def _comfy_vram_free_gb() -> float | None:
+    """Свободная VRAM активного ComfyUI (ГБ) из /system_stats. None при ошибке."""
+    import httpx
+
+    try:
+        with httpx.Client(timeout=8) as c:
+            d = c.get(f"{config.COMFY_URL}/system_stats").json()
+        dev = (d.get("devices") or [{}])[0]
+        free = dev.get("vram_free")
+        return None if free is None else free / (1024**3)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -73,6 +87,14 @@ def main() -> int:
         "tailscale serve https://sergpc...ts.net:8188)",
     )
     ap.add_argument("--dry", action="store_true", help="только показать список")
+    ap.add_argument(
+        "--min-vram-gb",
+        type=float,
+        default=3.0,
+        help="не стартовать, если свободной VRAM меньше (модель не влезет → OOM). "
+        "Порог низкий: при уже прогретой модели free ~8ГБ и это ОК. 0 = не проверять.",
+    )
+    ap.add_argument("--force", action="store_true", help="игнорировать проверку VRAM")
     args = ap.parse_args()
 
     # Батч всегда рисует через ComfyUI/FLUX, независимо от READER_IMAGE_PROVIDER.
@@ -94,6 +116,22 @@ def main() -> int:
         )
         return 2
     print(f"[i] ComfyUI жив: {config.COMFY_URL} (ckpt={config.COMFY_CKPT})")
+
+    # Предохранитель по VRAM: НЕ поднимаем второй ComfyUI (используем активный),
+    # но если на активном мало свободной памяти — холодный релоад FLUX (~14ГБ)
+    # уронит его по OOM / уйдёт в спилл (~950с). Проверяем и не стартуем.
+    if not args.dry and args.min_vram_gb > 0 and not args.force:
+        free_gb = _comfy_vram_free_gb()
+        if free_gb is not None:
+            print(f"[i] свободно VRAM: {free_gb:.1f} ГБ")
+            if free_gb < args.min_vram_gb:
+                print(
+                    f"[!] GPU занят (свободно {free_gb:.1f} ГБ < {args.min_vram_gb} ГБ) "
+                    f"— FLUX не влезет (OOM/спилл). Освободи 3090 и повтори, либо "
+                    f"--force (если модель уже прогрета).",
+                    file=sys.stderr,
+                )
+                return 3
 
     for session in get_session():
         targets = _select(session, args.only)

@@ -18,15 +18,24 @@ let saveTimer = null
 //    (ratio, напр. импорт из ReadEra), доезжаем до неё;
 //  • иначе — просто начало книги.
 async function restoreReadingPosition(view, prog) {
+  // Точный локатор (CFI) может протухнуть: если книгу перекачали/пересобрали
+  // (FanFicFare добавил главы), структура документа изменилась и CFI.toRange
+  // кидает IndexSizeError (offset больше не влезает в узел). Тогда откатываемся
+  // на долю прочитанного (ratio) — устойчивый кросс-девайс якорь.
   if (prog && prog.locator) {
-    await view.init({ lastLocation: prog.locator })
-    // Поздний реflow (веб-шрифты @import, докачка картинок) растит контент над
-    // якорем и позиция «сползает» к началу главы. Дожидаемся загрузки текущей
-    // секции и повторно доезжаем до сохранённого локатора.
-    await settleAndReanchor(view, prog.locator)
-    return
+    try {
+      await view.init({ lastLocation: prog.locator })
+      // Поздний реflow (веб-шрифты @import, докачка картинок) растит контент над
+      // якорем и позиция «сползает». Дожидаемся загрузки и повторно доезжаем.
+      await settleAndReanchor(view, prog.locator)
+      return
+    } catch (e) {
+      logErr('restore by CFI failed, fallback to ratio', e)
+      // view уже отобразил нужную секцию (упал на этапе якоря) — можно доехать по доле.
+    }
+  } else {
+    await view.init({ showTextStart: true })
   }
-  await view.init({ showTextStart: true })
   if (prog && prog.ratio > 0) {
     try { await view.goToFraction(prog.ratio) } catch {}
   }

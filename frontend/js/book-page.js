@@ -102,6 +102,7 @@ function renderBookPage(w) {
           <button id="bp-read" class="btn-primary bp-btn bp-btn-read">📖 Читать книгу</button>
           <a class="btn-ghost bp-btn" href="/api/reader/${w.id}/file" download>⬇ Скачать</a>
           ${origBtn}
+          <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
           <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
         </div>
       </div>
@@ -114,6 +115,32 @@ function renderBookPage(w) {
     $('#book-page').hidden = true
     document.body.classList.remove('bookpage-open')
     openReader(w)
+  })
+  $('#bp-gencover')?.addEventListener('click', async () => {
+    const btn = $('#bp-gencover')
+    const orig = btn.textContent
+    btn.disabled = true
+    btn.textContent = '🎨 Генерирую…'
+    try {
+      const r = await fetch(`/api/reader/${w.id}/cover/generate?force=1`, { method: 'POST' })
+      if (r.ok) {
+        const d = await r.json()
+        w.cover_v = d.cover_v
+        const cov = $('.bp-cover')
+        if (cov) {
+          cov.innerHTML =
+            `<img src="/api/reader/${w.id}/cover?v=${d.cover_v}" alt="" onerror="this.remove()" />`
+            + `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
+        }
+      } else {
+        alert('Не удалось сгенерировать обложку')
+      }
+    } catch (e) {
+      alert('Ошибка генерации: ' + e.message)
+    } finally {
+      btn.disabled = false
+      btn.textContent = orig
+    }
   })
   $('#bp-del').addEventListener('click', async () => {
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return

@@ -20,12 +20,37 @@ let saveTimer = null
 async function restoreReadingPosition(view, prog) {
   if (prog && prog.locator) {
     await view.init({ lastLocation: prog.locator })
+    // Поздний реflow (веб-шрифты @import, докачка картинок) растит контент над
+    // якорем и позиция «сползает» к началу главы. Дожидаемся загрузки текущей
+    // секции и повторно доезжаем до сохранённого локатора.
+    await settleAndReanchor(view, prog.locator)
     return
   }
   await view.init({ showTextStart: true })
   if (prog && prog.ratio > 0) {
     try { await view.goToFraction(prog.ratio) } catch {}
   }
+}
+
+// Бэкстоп к внутреннему ре-анкору foliate: ждём готовности шрифтов и картинок
+// текущей секции, затем ещё раз переходим на локатор уже по устоявшейся раскладке.
+async function settleAndReanchor(view, locator) {
+  try {
+    const doc = view?.renderer?.getContents?.()?.[0]?.doc
+    if (!doc) return
+    const waits = []
+    if (doc.fonts?.ready) waits.push(doc.fonts.ready.catch(() => {}))
+    for (const im of [...doc.images]) {
+      if (im.complete) continue
+      waits.push(new Promise((res) => {
+        im.addEventListener('load', res, { once: true })
+        im.addEventListener('error', res, { once: true })
+      }))
+    }
+    // Не зависаем дольше 2.5с (битые/долгие картинки).
+    await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 2500))])
+    await view.goTo(locator)
+  } catch {}
 }
 
 export async function openReader(work) {

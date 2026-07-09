@@ -1016,7 +1016,10 @@ export class Paginator extends HTMLElement {
         }
         // if anchor is a fraction
         if (this.scrolled) {
-            await this.#scrollTo(anchor * this.viewSize, reason)
+            // ПАТЧ: симметрично отчёту доли start/(viewSize-size) — иначе
+            // слайдер и goToFraction расходятся с отображаемым процентом.
+            const _max = this.viewSize - this.size
+            await this.#scrollTo(anchor * (_max > 0 ? _max : this.viewSize), reason)
             return
         }
         const { pages } = this
@@ -1042,7 +1045,13 @@ export class Paginator extends HTMLElement {
 
         const index = this.#index
         const detail = { reason, range, index }
-        if (this.scrolled) detail.fraction = this.start / this.viewSize
+        if (this.scrolled) {
+            // ПАТЧ: доля должна доезжать до 1.0 в самом низу секции.
+            // Было start/viewSize -> максимум (viewSize-size)/viewSize < 1
+            // (прогресс застревал на ~99%, книга не помечалась дочитанной).
+            const _max = this.viewSize - this.size
+            detail.fraction = _max > 0 ? Math.min(1, this.start / _max) : 0
+        }
         else if (this.pages > 0) {
             const { page, pages } = this
             this.#header.style.visibility = page > 1 ? 'visible' : 'hidden'

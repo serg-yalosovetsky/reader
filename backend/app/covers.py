@@ -1,4 +1,5 @@
 """Извлечение обложки из EPUB (OPF) и FB2 (<coverpage>/<binary>). Кладёт в COVERS_DIR."""
+
 from __future__ import annotations
 
 import base64
@@ -24,8 +25,10 @@ def extract_cover(file_path: str | Path, fmt: str, sha1: str) -> Path | None:
     return out
 
 
-_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 
 def fetch_cover_bytes(source_url: str) -> bytes | None:
@@ -36,8 +39,12 @@ def fetch_cover_bytes(source_url: str) -> bytes | None:
         html = _fetch(source_url, _UA)
         if not html:
             return None
-        m = (re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html)
-             or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html))
+        m = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html
+        ) or re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            html,
+        )
         if not m:
             return None
         data = _fetch(m.group(1), _UA, binary=True, base=source_url)
@@ -62,18 +69,38 @@ def fetch_source_cover(source_url: str, sha1: str) -> Path | None:
     return save_cover_bytes(fetch_cover_bytes(source_url), sha1)
 
 
+def generate_cover(meta: dict, sha1: str, salt: str = "") -> Path | None:
+    """Сгенерировать обложку ИИ (ComfyUI/Pollinations/OpenAI) и сохранить файлом.
+
+    ``meta`` — поля книги (title/author/genres/description/fandom). None, если
+    генерация выключена или провайдер не отдал картинку."""
+    from . import imagegen
+
+    data = imagegen.generate({**meta, "sha1": sha1}, salt=salt)
+    if not data or len(data) < 500:
+        return None
+    return save_cover_bytes(data, sha1)
+
+
 def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
     from urllib.parse import urljoin, urlparse
+
     if base and not url.startswith("http"):
         url = urljoin(base, url)
     host = (urlparse(url).hostname or "").lower()
     if host.endswith("ficbook.net"):
         import cloudscraper
-        c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
+
+        c = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows"}
+        )
         r = c.get(url, timeout=40)
         return r.content if binary else r.text
     import httpx
-    with httpx.Client(timeout=40, follow_redirects=True, headers={"User-Agent": ua}) as c:
+
+    with httpx.Client(
+        timeout=40, follow_redirects=True, headers={"User-Agent": ua}
+    ) as c:
         r = c.get(url)
         return r.content if binary else r.text
 
@@ -104,20 +131,31 @@ def _epub_cover(path) -> bytes | None:
         opf_dir = posixpath.dirname(opf_path)
 
         href = None
-        m = (re.search(r'<meta[^>]+name=["\']cover["\'][^>]+content=["\']([^"\']+)', opf)
-             or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']cover["\']', opf))
+        m = re.search(
+            r'<meta[^>]+name=["\']cover["\'][^>]+content=["\']([^"\']+)', opf
+        ) or re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']cover["\']', opf
+        )
         if m:
             cid = re.escape(m.group(1))
-            mm = (re.search(r'<item[^>]+id=["\']%s["\'][^>]+href=["\']([^"\']+)' % cid, opf)
-                  or re.search(r'<item[^>]+href=["\']([^"\']+)["\'][^>]+id=["\']%s["\']' % cid, opf))
+            mm = re.search(
+                r'<item[^>]+id=["\']%s["\'][^>]+href=["\']([^"\']+)' % cid, opf
+            ) or re.search(
+                r'<item[^>]+href=["\']([^"\']+)["\'][^>]+id=["\']%s["\']' % cid, opf
+            )
             if mm:
                 href = mm.group(1)
         if not href:
-            mm = re.search(r'<item[^>]+properties=["\'][^"\']*cover-image[^"\']*["\'][^>]+href=["\']([^"\']+)', opf)
+            mm = re.search(
+                r'<item[^>]+properties=["\'][^"\']*cover-image[^"\']*["\'][^>]+href=["\']([^"\']+)',
+                opf,
+            )
             if mm:
                 href = mm.group(1)
         if not href:
-            for mm in re.finditer(r'<item[^>]+href=["\']([^"\']+\.(?:jpe?g|png|webp))["\']', opf):
+            for mm in re.finditer(
+                r'<item[^>]+href=["\']([^"\']+\.(?:jpe?g|png|webp))["\']', opf
+            ):
                 if "cover" in mm.group(1).lower():
                     href = mm.group(1)
                     break
@@ -151,6 +189,7 @@ def _fb2_cover(path) -> bytes | None:
 def _epub_description(path) -> str:
     """Извлечь DC:description из EPUB OPF."""
     import html as _html
+
     try:
         with zipfile.ZipFile(path) as z:
             try:
@@ -161,7 +200,9 @@ def _epub_description(path) -> str:
             if not m:
                 return ""
             opf = z.read(m.group(1)).decode("utf-8", "ignore")
-            desc_m = re.search(r"<dc:description[^>]*>(.*?)</dc:description>", opf, re.S | re.I)
+            desc_m = re.search(
+                r"<dc:description[^>]*>(.*?)</dc:description>", opf, re.S | re.I
+            )
             if not desc_m:
                 return ""
             return _html.unescape(re.sub(r"<[^>]+>", " ", desc_m.group(1))).strip()
@@ -189,8 +230,12 @@ def cover_from_description(description: str, sha1: str) -> "Path | None":
         data = _fetch(url, _UA, binary=True)
         if data and len(data) > 500:
             magic = data[:4]
-            if (magic[:2] == b"\xff\xd8" or magic == b"\x89PNG"
-                    or magic[:3] == b"GIF" or magic == b"RIFF"):
+            if (
+                magic[:2] == b"\xff\xd8"
+                or magic == b"\x89PNG"
+                or magic[:3] == b"GIF"
+                or magic == b"RIFF"
+            ):
                 return save_cover_bytes(data, sha1)
     except Exception:  # noqa: BLE001
         pass

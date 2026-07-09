@@ -72,9 +72,10 @@ function renderBookPage(w) {
   const ratio = libProgress[w.id] || 0
   const pct = Math.round(ratio * 100)
   const { chipsHtml, badgesHtml, factsText } = bookPageMeta(w)
-  const cover = w.cover_path
-    ? `<img src="/api/reader/${w.id}/cover?v=${w.cover_v || 0}" alt="" onerror="this.remove()" />`
-    : `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
+  // Всегда запрашиваем /cover — бэкенд лениво сгенерирует обложку ИИ, если её
+  // нет. Текст-фолбэк виден, пока грузится/если не удалось.
+  const cover = `<img src="/api/reader/${w.id}/cover?v=${w.cover_v || 0}" alt="" onerror="this.remove()" />`
+    + `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   const authorHtml = w.source_url
     ? `<a class="bp-author" href="${escapeHtml(w.source_url)}" target="_blank" rel="noopener">${escapeHtml(w.author || 'Автор')}</a>`
     : `<span class="bp-author">${escapeHtml(w.author || '')}</span>`

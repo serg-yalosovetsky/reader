@@ -41,14 +41,18 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
         work.chapters_count = result.num_chapters
     work.calibre_id = calibre.add_book(dest) or work.calibre_id
     cover = covers.extract_cover(dest, result.file_format, sha1)
+    cover_src = "embedded" if cover else ""
     if not cover and result.file_format == "epub":
         desc = covers._epub_description(dest)
         if desc:
             cover = covers.cover_from_description(desc, sha1)
+            cover_src = "description" if cover else ""
     if not cover and result.source_url:
         cover = covers.fetch_source_cover(result.source_url, sha1)
+        cover_src = "source" if cover else ""
     if cover:
         work.cover_path = str(cover)
+        work.cover_source = cover_src
     # Метаданные (описание, жанры/метки, статус, рейтинг) из свежего файла книги
     # (epub-opf или fb2 <title-info>).
     from . import bookmeta

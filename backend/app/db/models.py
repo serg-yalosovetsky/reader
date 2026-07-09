@@ -34,6 +34,10 @@ class Work(SQLModel, table=True):
     calibre_id: Optional[int] = Field(default=None, index=True)
     chapters_count: int = 0
     cover_path: str = ""
+    # Источник обложки: "" | embedded (из файла) | source (og:image) |
+    # description (URL в аннотации) | generated (ИИ) | gen_failed (генерация не
+    # удалась — не долбим повторно). generated/gen_failed заменяемы реальной.
+    cover_source: str = ""
     # --- Метаданные для карточки/страницы книги (тянутся 1 раз из epub-opf при
     #     добавлении; бэкфилл существующих — из локального epub, без сети). ---
     description: str = ""  # аннотация (dc:description)

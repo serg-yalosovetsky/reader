@@ -126,9 +126,9 @@ function bookCard(w, ratio, hasUpdate) {
   card.className = ['book-card', readState, hasUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
-  const cover = w.cover_path
-    ? `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`
-    : fallback
+  // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
+  // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
+  const cover = `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   card.innerHTML = `
     <div class="book-cover">${cover}${badge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>

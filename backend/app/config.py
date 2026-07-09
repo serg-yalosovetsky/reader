@@ -59,6 +59,25 @@ FICBOOK_FEED_INTERVAL_MIN = int(os.getenv("READER_FICBOOK_FEED_INTERVAL_MIN", "1
 FICHUB_API = os.getenv("READER_FICHUB_API", "https://fichub.net/api/v0")
 DOWNLOAD_CONCURRENCY = int(os.getenv("READER_DOWNLOAD_CONCURRENCY", "1"))
 
+# --- Генерация обложек ИИ (для книг без картинки) ---
+# Провайдер: auto | comfy | pollinations | openai. auto = локальный ComfyUI, если
+# доступен по COMFY_URL, иначе бесплатный Pollinations.
+IMAGE_PROVIDER = os.getenv("READER_IMAGE_PROVIDER", "auto").strip().lower()
+IMAGE_GEN_ENABLED = os.getenv("READER_IMAGE_GEN", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+    "",
+)
+# Секунд на одну генерацию (FLUX на 3090 ~15-40с; Pollinations ~10-30с).
+IMAGE_TIMEOUT = int(os.getenv("READER_IMAGE_TIMEOUT", "120"))
+# ComfyUI (SergPC по Tailscale), напр. http://100.104.122.99:8188. Пусто => выкл.
+COMFY_URL = os.getenv("READER_COMFY_URL", "").rstrip("/")
+COMFY_CKPT = os.getenv("READER_COMFY_CKPT", "flux1-dev-fp8.safetensors")
+# OpenAI gpt-image-1 (задел). Ключ берётся из окружения.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
 
 def ensure_dirs() -> None:
     """Создать рантайм-каталоги при старте."""

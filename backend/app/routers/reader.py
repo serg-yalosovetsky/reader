@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import threading
 from pathlib import Path
@@ -29,6 +30,17 @@ _MEDIA = {
 _gen_locks: dict[int, threading.Lock] = {}
 _gen_registry_lock = threading.Lock()
 
+# ВАЖНО: генерация НЕ должна блокировать отдачу обложек. Ленивую генерацию
+# уводим в фоновый пул (макс 2 разом), чтобы медленный Pollinations (1-120с) не
+# забивал потоки uvicorn — иначе даже книги с готовой обложкой висят. Запрос
+# /cover отдаёт готовое мгновенно либо 404 (фолбэк-текст), а обложка появляется
+# на следующем заходе.
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="covergen"
+)
+_inflight: set[int] = set()
+_inflight_lock = threading.Lock()
+
 
 def _lock_for(work_id: int) -> threading.Lock:
     with _gen_registry_lock:
@@ -36,6 +48,33 @@ def _lock_for(work_id: int) -> threading.Lock:
         if lk is None:
             lk = _gen_locks[work_id] = threading.Lock()
         return lk
+
+
+def _bg_generate(work_id: int) -> None:
+    """Фоновая ленивая генерация (в пуле): своя сессия, снимает in-flight флаг."""
+    try:
+        from ..db.session import engine
+
+        with Session(engine) as session:
+            _generate_and_persist(work_id, session, force=False)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Фоновая генерация обложки work=%s упала: %s", work_id, e)
+    finally:
+        with _inflight_lock:
+            _inflight.discard(work_id)
+
+
+def _schedule_generation(work: Work) -> None:
+    """Поставить ленивую генерацию в фоновую очередь (с дедупом)."""
+    if not (
+        config.IMAGE_GEN_ENABLED and work.title and work.cover_source != "gen_failed"
+    ):
+        return
+    with _inflight_lock:
+        if work.id in _inflight:
+            return
+        _inflight.add(work.id)
+    _EXECUTOR.submit(_bg_generate, work.id)
 
 
 def _usable_cover(work: Work) -> Path | None:
@@ -127,13 +166,10 @@ def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResp
     if path:
         return _serve(path, work.sha1)
 
-    # Ленивая генерация: только для книг с названием, один раз (gen_failed
-    # блокирует авто-повтор — ручная ре-генерация через POST .../generate?force=1).
-    if config.IMAGE_GEN_ENABLED and work.title and work.cover_source != "gen_failed":
-        path = _generate_and_persist(work_id, session, force=False)
-        if path:
-            return _serve(path, work.sha1)
-
+    # Обложки нет — НЕ блокируем запрос генерацией: ставим её в фон (дедуп,
+    # gen_failed не повторяем) и сразу отдаём 404 → фронт рисует текст-заглушку.
+    # Обложка появится при следующем открытии библиотеки.
+    _schedule_generation(work)
     raise HTTPException(404, "обложки нет")
 
 

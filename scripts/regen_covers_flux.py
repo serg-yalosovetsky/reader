@@ -3,16 +3,17 @@
 
 Ленивая генерация в читалке идёт на Pollinations (быстро, всегда доступно).
 Этот скрипт запускается вручную, когда 3090 свободна, и заменяет
-Pollinations-обложки на качественные FLUX. ComfyUI пробрасывается на VPS
-обратным SSH-туннелем — на SergPC:
-
-    ssh -N -R 127.0.0.1:8188:127.0.0.1:8188 root@peaceful-albattani
-
-затем на VPS:
+Pollinations-обложки на качественные FLUX. ComfyUI на SergPC виден с VPS через
+tailscale serve (https://sergpc.tail939af1.ts.net:8188 → localhost:8188), URL
+лежит в READER_COMFY_URL. Нужно лишь, чтобы ComfyUI был запущен. На VPS:
 
     cd /root/reader && set -a && . ./.env && set +a
     .venv/bin/python scripts/regen_covers_flux.py            # generated+gen_failed
     .venv/bin/python scripts/regen_covers_flux.py --only all # вообще все без реальной
+
+Фолбэк без tailscale serve — обратный SSH-туннель с SergPC + --comfy-url:
+    ssh -N -R 127.0.0.1:8188:127.0.0.1:8188 root@peaceful-albattani
+    .venv/bin/python scripts/regen_covers_flux.py --comfy-url http://127.0.0.1:8188
 
 Параметры: --only {generated,failed,missing,all}  --limit N  --comfy-url URL  --dry
 """
@@ -67,14 +68,18 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument(
         "--comfy-url",
-        default="http://127.0.0.1:8188",
-        help="URL ComfyUI (по умолчанию обратный туннель на localhost)",
+        default="",
+        help="URL ComfyUI (по умолчанию READER_COMFY_URL из .env — "
+        "tailscale serve https://sergpc...ts.net:8188)",
     )
     ap.add_argument("--dry", action="store_true", help="только показать список")
     args = ap.parse_args()
 
     # Батч всегда рисует через ComfyUI/FLUX, независимо от READER_IMAGE_PROVIDER.
-    config.COMFY_URL = args.comfy_url.rstrip("/")
+    # По умолчанию берём READER_COMFY_URL из .env (tailscale serve); --comfy-url
+    # перекрывает (напр. http://127.0.0.1:8188 при обратном туннеле).
+    if args.comfy_url:
+        config.COMFY_URL = args.comfy_url.rstrip("/")
     # Батч может ждать долго: холодный релоад модели после вытеснения VRAM.
     config.IMAGE_TIMEOUT = max(config.IMAGE_TIMEOUT, 900)
 

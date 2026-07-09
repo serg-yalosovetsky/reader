@@ -3,6 +3,7 @@
 import '/vendor/foliate-js/view.js'
 import { $ } from './core/dom.js'
 import { api } from './core/api.js'
+import { reconcileOffline } from './core/offline.js'
 import './core/prefs.js'
 import { loadLibrary } from './library.js'
 import { openReader } from './reader-core.js'
@@ -28,3 +29,13 @@ loadLibrary()
     }
   })
   .catch((e) => { $('#ingest-status').hidden = false; $('#ingest-status').textContent = 'Сервер недоступен: ' + e.message })
+
+// Офлайн-режим: сверяем индекс кэшированных книг и регистрируем service
+// worker (оболочка network-first: онлайн — свежий JS, офлайн — из кэша).
+reconcileOffline()
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .catch((e) => console.warn('SW register failed', e))
+  })
+}

@@ -5,6 +5,7 @@ import { $, escapeHtml } from './core/dom.js'
 import { api } from './core/api.js'
 import { openReader } from './reader-core.js'
 import { libProgress, libMonitored } from './core/state.js'
+import { offlineSupported, isOffline, downloadBook, removeBook } from './core/offline.js'
 
 let curWork = null
 
@@ -101,6 +102,7 @@ function renderBookPage(w) {
         <div class="bp-actions">
           <button id="bp-read" class="btn-primary bp-btn bp-btn-read">📖 Читать книгу</button>
           <a class="btn-ghost bp-btn" href="/api/reader/${w.id}/file" download>⬇ Скачать</a>
+          ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '✅ В офлайне' : '📥 Сохранить офлайн'}</button>` : ''}
           ${origBtn}
           <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
           <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
@@ -115,6 +117,30 @@ function renderBookPage(w) {
     $('#book-page').hidden = true
     document.body.classList.remove('bookpage-open')
     openReader(w)
+  })
+  // Сохранить/убрать книгу из офлайн-кэша (Cache API). С прогрессом закачки.
+  const offBtn = $('#bp-offline')
+  if (offBtn) offBtn.addEventListener('click', async () => {
+    if (isOffline(w.id)) {
+      await removeBook(w.id)
+      offBtn.textContent = '📥 Сохранить офлайн'
+      return
+    }
+    const orig = offBtn.textContent
+    offBtn.disabled = true
+    try {
+      await downloadBook(w.id, (rec, total) => {
+        offBtn.textContent = total
+          ? `⬇ ${Math.round((rec / total) * 100)}%`
+          : `⬇ ${Math.round(rec / 1048576)} МБ`
+      })
+      offBtn.textContent = '✅ В офлайне'
+    } catch (e) {
+      offBtn.textContent = orig
+      alert('Не удалось сохранить офлайн: ' + e.message)
+    } finally {
+      offBtn.disabled = false
+    }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {
     const btn = $('#bp-gencover')

@@ -8,6 +8,7 @@ import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
+import { cachedBook } from './core/offline.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
@@ -86,7 +87,10 @@ export async function openReader(work) {
   $('#view-host').append(view)
 
   // Загружаем файл как Blob → File с корректным именем (для детекта FB2).
-  const resp = await fetch(`/api/reader/${work.id}/file`)
+  // Cache-first: если книга сохранена офлайн — читаем из кэша (без сети),
+  // иначе тянем с сервера. Помогает на телефоне при плохом коннекте.
+  let resp = await cachedBook(work.id)
+  if (!resp) resp = await fetch(`/api/reader/${work.id}/file`)
   const blob = await resp.blob()
   const name = `book.${work.file_format || 'epub'}`
   const file = new File([blob], name, { type: blob.type })

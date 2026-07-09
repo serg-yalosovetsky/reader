@@ -6,6 +6,7 @@ import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
          setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
 import { openBookPage, bookPageMeta } from './book-page.js'
+import { isOffline } from './core/offline.js'
 
 // ===================== БИБЛИОТЕКА =====================
 export async function loadLibrary() {
@@ -130,8 +131,9 @@ function bookCard(w, ratio, hasUpdate) {
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
   const cover = `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
+  const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}${badge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
+    <div class="book-cover">${cover}${badge}${offBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>

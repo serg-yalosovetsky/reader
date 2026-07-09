@@ -38,6 +38,8 @@ class Work(SQLModel, table=True):
     # description (URL в аннотации) | generated (ИИ) | gen_failed (генерация не
     # удалась — не долбим повторно). generated/gen_failed заменяемы реальной.
     cover_source: str = ""
+    # Англ. визуальный арт-бриф (Ollama сводит книгу), кеш для промпта обложки.
+    cover_brief: str = ""
     # --- Метаданные для карточки/страницы книги (тянутся 1 раз из epub-opf при
     #     добавлении; бэкфилл существующих — из локального epub, без сети). ---
     description: str = ""  # аннотация (dc:description)

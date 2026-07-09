@@ -106,6 +106,8 @@ def main() -> int:
                 print(f"    #{w.id}  src={w.cover_source or '-'}  {w.title[:60]}")
             return 0
 
+        from backend.app import imagegen
+
         ok = fail = 0
         t0 = time.monotonic()
         for i, w in enumerate(targets, 1):
@@ -116,7 +118,16 @@ def main() -> int:
                 "description": w.description,
                 "fandom": w.fandom,
                 "rating": w.rating,
+                "cover_brief": w.cover_brief,
             }
+            # Арт-бриф (Ollama) — раз на книгу, кешируем; идёт в промпт FLUX.
+            if config.BRIEF_ENABLED and not (w.cover_brief or "").strip():
+                brief = imagegen.summarize(meta)
+                if brief:
+                    w.cover_brief = brief
+                    meta["cover_brief"] = brief
+                    session.add(w)
+                    session.commit()
             ts = time.monotonic()
             try:
                 path = covers.generate_cover(meta, w.sha1, provider="comfy")

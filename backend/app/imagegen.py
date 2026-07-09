@@ -38,6 +38,21 @@ def build_prompt(meta: dict) -> str:
     title = (meta.get("title") or "").strip()
     fandom = (meta.get("fandom") or "").strip()
     desc = (meta.get("description") or "").strip()
+    brief = (meta.get("cover_brief") or "").strip()
+
+    # Хвост качества + жёсткий анти-текст. ВАЖНО: слова "book cover"/"poster"/
+    # "title" и название в кавычках заставляют модель (особенно flux у
+    # Pollinations, где нет негатив-промпта) РИСОВАТЬ кривой заголовок текстом.
+    tail = (
+        "Dramatic lighting, rich detail, sharp focus, evocative mood, painterly. "
+        "Clean wordless artwork with absolutely no text, no letters, no title, "
+        "no typography, no captions, no watermark, no signature, no border."
+    )
+
+    # Если есть арт-бриф (Ollama свела книгу в англ. визуальную сцену) — он и есть
+    # лучший промпт: конкретная сцена, а не сырая русская аннотация.
+    if brief:
+        return f"Cinematic concept art, atmospheric matte painting. {brief} {tail}"
 
     genres = ""
     raw = meta.get("genres") or ""
@@ -48,11 +63,8 @@ def build_prompt(meta: dict) -> str:
         except Exception:  # noqa: BLE001
             genres = str(raw)[:120]
 
-    # ВАЖНО: слова "book cover"/"poster"/"title" и название в кавычках заставляют
-    # модель (особенно flux у Pollinations, где нет негатив-промпта) РИСОВАТЬ
-    # кривой заголовок текстом. Поэтому: НИКАКИХ "cover/poster/title", название —
-    # как тема сцены, стиль "concept art / matte painting" (даёт меньше текста).
-    # Вертикаль книги держим размером картинки (_W×_H), а не словами.
+    # Фолбэк без брифа: название как тема сцены (без "cover/title"), стиль concept
+    # art. Вертикаль книги держим размером картинки (_W×_H), а не словами.
     parts = ["Cinematic concept art, atmospheric matte painting."]
     if title:
         parts.append(f"A scene evoking the mood and imagery of {title}.")
@@ -62,12 +74,70 @@ def build_prompt(meta: dict) -> str:
         parts.append(f"Genre and mood: {genres}.")
     if desc:
         parts.append(f"Scene: {desc[:240]}")
-    parts.append(
-        "Dramatic lighting, rich detail, sharp focus, evocative mood, painterly. "
-        "Clean wordless artwork with absolutely no text, no letters, no title, "
-        "no typography, no captions, no watermark, no signature, no border."
-    )
+    parts.append(tail)
     return " ".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+#  Арт-бриф (Ollama сводит книгу в англ. визуальную сцену)
+# --------------------------------------------------------------------------- #
+_BRIEF_SYS = (
+    "You write a single vivid English visual scene description for a book cover "
+    "illustration. Given the title, genres and synopsis (which may be in Russian "
+    "or Ukrainian), output ONE striking sentence (max 45 words): concrete imagery, "
+    "the main subject, mood, lighting and colour palette. The scene must contain "
+    "NO text or letters. Output ONLY the sentence — no preamble, no quotes."
+)
+
+
+def summarize(meta: dict) -> str | None:
+    """Свести книгу в короткий англ. визуальный арт-бриф через Ollama (SergPC).
+    None, если брифы выключены/Ollama недоступна/пустой ответ."""
+    if not config.BRIEF_ENABLED or not config.OLLAMA_URL:
+        return None
+    title = (meta.get("title") or "").strip()
+    if not title:
+        return None
+
+    genres = ""
+    raw = meta.get("genres") or ""
+    if raw:
+        try:
+            g = json.loads(raw) if raw.strip().startswith("[") else [raw]
+            genres = ", ".join(str(x) for x in g if x)[:200]
+        except Exception:  # noqa: BLE001
+            genres = str(raw)[:200]
+    desc = (meta.get("description") or "").strip()[:600]
+    usr = f"Title: {title}\nGenres: {genres}\nSynopsis: {desc}"
+
+    import httpx
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(90.0, connect=6.0)) as c:
+            r = c.post(
+                f"{config.OLLAMA_URL}/api/chat",
+                json={
+                    "model": config.OLLAMA_MODEL,
+                    "stream": False,
+                    "think": False,
+                    "messages": [
+                        {"role": "system", "content": _BRIEF_SYS},
+                        {"role": "user", "content": usr},
+                    ],
+                    "options": {"temperature": 0.7, "num_predict": 160},
+                },
+            )
+        if r.status_code != 200:
+            log.warning("Ollama brief %s: %s", r.status_code, r.text[:150])
+            return None
+        text = (r.json().get("message", {}).get("content") or "").strip()
+        # Иногда модель добавляет кавычки/префикс — чистим до одной строки.
+        text = text.strip().strip('"').strip()
+        text = " ".join(text.split())
+        return text[:600] or None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Ollama brief недоступен: %s", e)
+        return None
 
 
 def _seed(meta: dict, salt: str = "") -> int:
@@ -192,25 +262,48 @@ def _gen_comfy(prompt: str, seed: int) -> bytes | None:
 
     base = config.COMFY_URL
     graph = _comfy_workflow(prompt, seed)
+    deadline = time.monotonic() + config.IMAGE_TIMEOUT
     try:
-        with httpx.Client(timeout=config.IMAGE_TIMEOUT) as c:
-            r = c.post(
-                f"{base}/prompt", json={"prompt": graph, "client_id": _COMFY_CLIENT_ID}
-            )
-            r.raise_for_status()
-            pid = r.json().get("prompt_id")
+        # Таймаут на ОТДЕЛЬНЫЙ HTTP-запрос держим коротким: сама генерация
+        # ожидается опросом /history, а не долгим висящим запросом. Иначе через
+        # tailscale serve длинный idle-коннект рвётся 502-й.
+        with httpx.Client(timeout=30.0) as c:
+            # POST /prompt с ретраями: во время холодного релоада модели ComfyUI
+            # (или его прокси) может разово отдать 502/не-JSON.
+            pid = None
+            for _ in range(6):
+                try:
+                    r = c.post(
+                        f"{base}/prompt",
+                        json={"prompt": graph, "client_id": _COMFY_CLIENT_ID},
+                    )
+                    if r.status_code == 200:
+                        pid = r.json().get("prompt_id")
+                        if pid:
+                            break
+                    else:
+                        log.debug("ComfyUI /prompt %s: %s", r.status_code, r.text[:120])
+                except Exception as e:  # noqa: BLE001 — транзиентный сбой прокси
+                    log.debug("ComfyUI /prompt retry: %s", e)
+                time.sleep(3.0)
             if not pid:
-                log.warning("ComfyUI не вернул prompt_id: %s", r.text[:200])
+                log.warning("ComfyUI: не удалось поставить задачу (нет prompt_id)")
                 return None
 
-            deadline = time.monotonic() + config.IMAGE_TIMEOUT
+            # Опрос /history устойчив к разовым 502/reset/не-JSON (холодный
+            # релоад делает ComfyUI на секунды неотзывчивым) — ретраим до дедлайна.
             hist = None
             while time.monotonic() < deadline:
-                h = c.get(f"{base}/history/{pid}").json()
-                if pid in h:
-                    hist = h[pid]
-                    break
-                time.sleep(1.0)
+                try:
+                    resp = c.get(f"{base}/history/{pid}")
+                    if resp.status_code == 200:
+                        h = resp.json()
+                        if pid in h and h[pid].get("outputs"):
+                            hist = h[pid]
+                            break
+                except Exception as e:  # noqa: BLE001 — транзиент, продолжаем опрос
+                    log.debug("ComfyUI /history retry: %s", e)
+                time.sleep(1.5)
             if not hist:
                 log.warning(
                     "ComfyUI: таймаут ожидания генерации (%ss)", config.IMAGE_TIMEOUT
@@ -226,16 +319,23 @@ def _gen_comfy(prompt: str, seed: int) -> bytes | None:
                 log.warning("ComfyUI: в истории нет картинки")
                 return None
 
-            v = c.get(
-                f"{base}/view",
-                params={
-                    "filename": img["filename"],
-                    "subfolder": img.get("subfolder", ""),
-                    "type": img.get("type", "output"),
-                },
-            )
-            v.raise_for_status()
-            return v.content or None
+            for _ in range(4):  # /view тоже может разово 502 через прокси
+                try:
+                    v = c.get(
+                        f"{base}/view",
+                        params={
+                            "filename": img["filename"],
+                            "subfolder": img.get("subfolder", ""),
+                            "type": img.get("type", "output"),
+                        },
+                    )
+                    if v.status_code == 200 and v.content:
+                        return v.content
+                except Exception as e:  # noqa: BLE001
+                    log.debug("ComfyUI /view retry: %s", e)
+                time.sleep(2.0)
+            log.warning("ComfyUI: не удалось скачать готовую картинку")
+            return None
     except Exception as e:  # noqa: BLE001
         log.warning("ComfyUI ошибка генерации: %s", e)
         return None

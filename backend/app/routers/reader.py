@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
-from .. import config, covers
+from .. import config, covers, imagegen
 from ..db.models import Work
 from ..db.session import get_session
 
@@ -93,7 +93,16 @@ def _meta_of(work: Work) -> dict:
         "description": work.description,
         "fandom": work.fandom,
         "rating": work.rating,
+        "cover_brief": work.cover_brief,
     }
+
+
+def _ensure_brief(work: Work) -> None:
+    """Заполнить work.cover_brief через Ollama, если ещё пусто (кеш)."""
+    if config.BRIEF_ENABLED and not (work.cover_brief or "").strip():
+        brief = imagegen.summarize(_meta_of(work))
+        if brief:
+            work.cover_brief = brief
 
 
 def _generate_and_persist(
@@ -108,6 +117,7 @@ def _generate_and_persist(
         existing = _usable_cover(work)  # другой поток мог успеть, пока ждали лок
         if existing and not force:
             return existing
+        _ensure_brief(work)  # арт-бриф (Ollama) → в промпт; кешируется в work
         salt = (
             f"-{int(threading.current_thread().ident or 0) & 0xFFFF}" if force else ""
         )

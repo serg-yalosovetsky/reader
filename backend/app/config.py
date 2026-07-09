@@ -78,6 +78,22 @@ COMFY_CKPT = os.getenv("READER_COMFY_CKPT", "flux1-dev-fp8.safetensors")
 # OpenAI gpt-image-1 (задел). Ключ берётся из окружения.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
+# --- Арт-бриф книги (Ollama на SergPC через tailscale serve) ---
+# Ollama сводит title/жанры/аннотацию в короткий англ. визуальный бриф, который
+# идёт в промпт обложки вместо сырой (часто русской) аннотации. Кешируется в
+# Work.cover_brief. Пусто => брифы не генерим (промпт по сырой аннотации).
+OLLAMA_URL = os.getenv(
+    "READER_OLLAMA_URL", "https://sergpc.tail939af1.ts.net:11434"
+).rstrip("/")
+OLLAMA_MODEL = os.getenv("READER_OLLAMA_MODEL", "qwen3.5:4b")
+BRIEF_ENABLED = os.getenv("READER_BRIEF", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+    "",
+)
+
 
 def ensure_dirs() -> None:
     """Создать рантайм-каталоги при старте."""

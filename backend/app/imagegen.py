@@ -48,19 +48,24 @@ def build_prompt(meta: dict) -> str:
         except Exception:  # noqa: BLE001
             genres = str(raw)[:120]
 
-    parts = ["Book cover illustration."]
+    # ВАЖНО: слова "book cover"/"poster"/"title" и название в кавычках заставляют
+    # модель (особенно flux у Pollinations, где нет негатив-промпта) РИСОВАТЬ
+    # кривой заголовок текстом. Поэтому: НИКАКИХ "cover/poster/title", название —
+    # как тема сцены, стиль "concept art / matte painting" (даёт меньше текста).
+    # Вертикаль книги держим размером картинки (_W×_H), а не словами.
+    parts = ["Cinematic concept art, atmospheric matte painting."]
     if title:
-        parts.append(f"Title: «{title}».")
+        parts.append(f"A scene evoking the mood and imagery of {title}.")
     if fandom:
-        parts.append(f"Universe / fandom: {fandom}.")
+        parts.append(f"Setting: {fandom}.")
     if genres:
         parts.append(f"Genre and mood: {genres}.")
     if desc:
-        parts.append(f"Scene inspiration: {desc[:240]}")
+        parts.append(f"Scene: {desc[:240]}")
     parts.append(
-        "Atmospheric digital painting, cinematic dramatic lighting, rich detail, "
-        "evocative mood, vertical book cover composition. "
-        "No text, no letters, no title, no watermark, no signature."
+        "Dramatic lighting, rich detail, sharp focus, evocative mood, painterly. "
+        "Clean wordless artwork with absolutely no text, no letters, no title, "
+        "no typography, no captions, no watermark, no signature, no border."
     )
     return " ".join(parts)
 
@@ -75,13 +80,14 @@ def _seed(meta: dict, salt: str = "") -> int:
 # --------------------------------------------------------------------------- #
 #  Диспетчер
 # --------------------------------------------------------------------------- #
-def generate(meta: dict, salt: str = "") -> bytes | None:
-    """Сгенерировать байты обложки согласно выбранному провайдеру."""
+def generate(meta: dict, salt: str = "", provider: str | None = None) -> bytes | None:
+    """Сгенерировать байты обложки. ``provider`` перекрывает глобальный дефолт
+    (нужно батчу: ленивый путь = pollinations, батч = comfy)."""
     if not config.IMAGE_GEN_ENABLED:
         return None
     prompt = build_prompt(meta)
     seed = _seed(meta, salt)
-    provider = config.IMAGE_PROVIDER
+    provider = (provider or config.IMAGE_PROVIDER).strip().lower()
 
     if provider == "comfy":
         return _gen_comfy(prompt, seed)

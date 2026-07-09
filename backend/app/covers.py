@@ -69,14 +69,17 @@ def fetch_source_cover(source_url: str, sha1: str) -> Path | None:
     return save_cover_bytes(fetch_cover_bytes(source_url), sha1)
 
 
-def generate_cover(meta: dict, sha1: str, salt: str = "") -> Path | None:
+def generate_cover(
+    meta: dict, sha1: str, salt: str = "", provider: str | None = None
+) -> Path | None:
     """Сгенерировать обложку ИИ (ComfyUI/Pollinations/OpenAI) и сохранить файлом.
 
-    ``meta`` — поля книги (title/author/genres/description/fandom). None, если
+    ``meta`` — поля книги (title/author/genres/description/fandom). ``provider``
+    перекрывает глобальный дефолт (батч зовёт с provider='comfy'). None, если
     генерация выключена или провайдер не отдал картинку."""
     from . import imagegen
 
-    data = imagegen.generate({**meta, "sha1": sha1}, salt=salt)
+    data = imagegen.generate({**meta, "sha1": sha1}, salt=salt, provider=provider)
     if not data or len(data) < 500:
         return None
     return save_cover_bytes(data, sha1)

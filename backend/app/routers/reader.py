@@ -58,7 +58,7 @@ def _meta_of(work: Work) -> dict:
 
 
 def _generate_and_persist(
-    work_id: int, session: Session, *, force: bool
+    work_id: int, session: Session, *, force: bool, provider: str | None = None
 ) -> Path | None:
     """Сгенерировать обложку ИИ под локом и записать результат в БД."""
     lk = _lock_for(work_id)
@@ -73,7 +73,9 @@ def _generate_and_persist(
             f"-{int(threading.current_thread().ident or 0) & 0xFFFF}" if force else ""
         )
         try:
-            path = covers.generate_cover(_meta_of(work), work.sha1, salt=salt)
+            path = covers.generate_cover(
+                _meta_of(work), work.sha1, salt=salt, provider=provider
+            )
         except Exception as e:  # noqa: BLE001
             log.warning("Генерация обложки work=%s упала: %s", work_id, e)
             path = None
@@ -137,14 +139,18 @@ def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResp
 
 @router.post("/{work_id}/cover/generate")
 def regenerate_cover(
-    work_id: int, force: bool = True, session: Session = Depends(get_session)
+    work_id: int,
+    force: bool = True,
+    provider: str | None = None,
+    session: Session = Depends(get_session),
 ) -> dict:
     """Принудительно сгенерировать/переснять обложку ИИ (кнопка на странице
-    книги). force=1 игнорит существующую/gen_failed и рисует заново."""
+    книги). force=1 игнорит существующую/gen_failed и рисует заново. provider=comfy
+    — явно попросить FLUX (если ComfyUI доступен)."""
     work = session.get(Work, work_id)
     if not work:
         raise HTTPException(404, "книги нет")
-    path = _generate_and_persist(work_id, session, force=force)
+    path = _generate_and_persist(work_id, session, force=force, provider=provider)
     if not path:
         raise HTTPException(502, "не удалось сгенерировать обложку")
     return {

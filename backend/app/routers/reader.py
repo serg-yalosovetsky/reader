@@ -152,11 +152,20 @@ def get_book_file(
 ) -> FileResponse:
     """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте."""
     work = session.get(Work, work_id)
-    if not work or not work.file_path:
-        raise HTTPException(404, "файл книги не найден")
-    path = Path(work.file_path)
-    if not path.exists():
-        raise HTTPException(410, "файл книги отсутствует на диске")
+    if not work:
+        raise HTTPException(404, "книги нет")
+    if work.site == "calibre" and not work.file_path:
+        # Книга-ссылка: тянем файл из Calibre по требованию в вытесняемый кэш.
+        from ...calibre import sync as csync
+        path = csync.ensure_cached(session, work)
+        if not path:
+            raise HTTPException(502, "не удалось получить файл из Calibre")
+    else:
+        if not work.file_path:
+            raise HTTPException(404, "файл книги не найден")
+        path = Path(work.file_path)
+        if not path.exists():
+            raise HTTPException(410, "файл книги отсутствует на диске")
     media = _MEDIA.get(work.file_format, "application/octet-stream")
     resp = FileResponse(path, media_type=media, filename=path.name)
     resp.headers["Cache-Control"] = "no-store"
@@ -175,6 +184,13 @@ def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResp
     path = _usable_cover(work)
     if path:
         return _serve(path, work.sha1)
+
+    # Книга Calibre: берём настоящую обложку из Calibre по требованию (кешируем).
+    if work.site == "calibre" and work.calibre_id:
+        from ...calibre import sync as csync
+        cpath = csync.ensure_cover(session, work)
+        if cpath:
+            return _serve(cpath, work.sha1 or f"cal{work.calibre_id}")
 
     # Обложки нет — НЕ блокируем запрос генерацией: ставим её в фон (дедуп,
     # gen_failed не повторяем) и сразу отдаём 404 → фронт рисует текст-заглушку.

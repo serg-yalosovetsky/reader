@@ -37,6 +37,12 @@ CALIBRE_LIBRARY = os.getenv("READER_CALIBRE_LIBRARY", "")
 CALIBRE_SERVER_URL = os.getenv("READER_CALIBRE_SERVER_URL", "")
 CALIBRE_USERNAME = os.getenv("READER_CALIBRE_USERNAME", "")
 CALIBRE_PASSWORD = os.getenv("READER_CALIBRE_PASSWORD", "")
+# Кэш файлов книг Calibre (fetch-on-open): книга тянется по требованию сюда,
+# кэш вытесняемый (LRU по mtime, лимит MB). Сама книга живёт в Calibre.
+CALIBRE_CACHE_DIR = Path(os.getenv("READER_CALIBRE_CACHE_DIR", DATA_DIR / "calibre_cache"))
+CALIBRE_CACHE_MAX_MB = int(os.getenv("READER_CALIBRE_CACHE_MAX_MB", "2048"))
+# Период catalog-sync каталога Calibre в Work-ссылки (минуты; 0 — выключить).
+CALIBRE_SYNC_INTERVAL_MIN = int(os.getenv("READER_CALIBRE_SYNC_INTERVAL_MIN", "0"))
 
 # --- ReadEra sync (этап 3) ---
 # rclone-remote и путь к каталогу с бэкапами ReadEra в Google Drive.

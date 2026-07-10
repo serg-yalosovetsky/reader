@@ -11,6 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session
 
 from .config import (
+    CALIBRE_SYNC_INTERVAL_MIN,
     FICBOOK_FEED_INTERVAL_MIN,
     MONITOR_INTERVAL_MIN,
     READERA_BACKUP_REMOTE,
@@ -49,6 +50,18 @@ def _monitor_job() -> None:
         log.warning("Monitor check failed: %s", e)
 
 
+def _calibre_sync_job() -> None:
+    # Пере-синк каталога Calibre в Work-ссылки: новые книги появляются в
+    # библиотеке ридера, метаданные обновляются. Файлы не копируются.
+    from ..calibre import sync as csync
+    try:
+        with Session(engine) as session:
+            res = csync.sync_catalog(session)
+        log.info("Calibre catalog sync: %s", res)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Calibre catalog sync failed: %s", e)
+
+
 def _ficbook_feed_job() -> None:
     from ..accounts import feeds
     from ..accounts import check_job
@@ -76,6 +89,8 @@ def start() -> None:
         jobs.append((_ficbook_feed_job, FICBOOK_FEED_INTERVAL_MIN, "ficbook_feed"))
     if MONITOR_INTERVAL_MIN > 0:
         jobs.append((_monitor_job, MONITOR_INTERVAL_MIN, "monitor_check"))
+    if CALIBRE_SYNC_INTERVAL_MIN > 0:
+        jobs.append((_calibre_sync_job, CALIBRE_SYNC_INTERVAL_MIN, "calibre_sync"))
     if not jobs:
         return
     _scheduler = BackgroundScheduler(daemon=True)

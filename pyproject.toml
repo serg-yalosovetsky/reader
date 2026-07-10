@@ -46,6 +46,7 @@ dependencies = [
     # Async file I/O в роутерах (уже тянется FastAPI, фиксируем явно)
     "anyio>=4.0",
     "psycopg[binary]>=3.3.4",
+    "defusedxml>=0.7.1",
 ]
 
 [dependency-groups]

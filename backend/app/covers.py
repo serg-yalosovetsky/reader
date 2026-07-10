@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import posixpath
 import re
 import zipfile
 from pathlib import Path
 
 from .config import COVERS_DIR
+
+# ---------------- чёрный список дженерик-«обложек» ----------------
+# Некоторые источники на страницу фика БЕЗ своей обложки отдают одну и ту же
+# заглушку-баннер сайта (og:image). Такую картинку НЕ считаем обложкой — иначе
+# все безобложечные фики выглядят одинаково («Мир фанфикшена…») и не получают
+# ИИ-генерацию. Матчим по md5 точного файла (заглушки байт-в-байт идентичны).
+# Пополняемо: добавляй md5 новой заглушки, если всплывёт другой источник.
+_GENERIC_COVER_MD5 = {
+    "fe79f62359104fd5d03da79e4b8c9774",  # ficbook.net дженерик-баннер, 69618 б
+}
+
+
+def is_generic_cover(data: bytes | None) -> bool:
+    """True, если байты — известная заглушка-баннер источника (не настоящая обложка)."""
+    if not data:
+        return False
+    return hashlib.md5(data).hexdigest() in _GENERIC_COVER_MD5
 
 
 def extract_cover(file_path: str | Path, fmt: str, sha1: str) -> Path | None:
@@ -17,7 +35,7 @@ def extract_cover(file_path: str | Path, fmt: str, sha1: str) -> Path | None:
         data = _epub_cover(file_path) if fmt == "epub" else _fb2_cover(file_path)
     except Exception:  # noqa: BLE001 — обложка не критична
         data = None
-    if not data:
+    if not data or is_generic_cover(data):
         return None
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     out = COVERS_DIR / f"{sha1}{_img_ext(data)}"
@@ -54,7 +72,7 @@ def fetch_cover_bytes(source_url: str) -> bytes | None:
 
 
 def save_cover_bytes(data: bytes, sha1: str) -> Path | None:
-    if not data:
+    if not data or is_generic_cover(data):
         return None
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     out = COVERS_DIR / f"{sha1}{_img_ext(data)}"

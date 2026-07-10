@@ -350,6 +350,10 @@ def ensure_cover(work_id: int) -> Path | None:
     data = client.cover_bytes(calibre_id)
     if not data:
         return None
+    from ..app import covers
+
+    if covers.is_generic_cover(data):
+        return None  # Calibre отдал дженерик-заглушку — не обложка
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     p = COVERS_DIR / f"calibre_{calibre_id}.jpg"
     p.write_bytes(data)

@@ -78,20 +78,19 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
     # 3) Бэкафилл обложек.
     added_covers = 0
     for w in session.exec(select(Work)).all():
-        # Сгенерированную ИИ обложку считаем заменяемой: если появилась реальная
-        # (из файла/источника) — берём её.
-        if (
-            w.cover_path
-            and os.path.exists(w.cover_path)
-            and w.cover_source != "generated"
-        ):
+        is_generated = w.cover_source == "generated"
+        # Уже есть валидная НЕ-ИИ обложка — не трогаем.
+        if w.cover_path and os.path.exists(w.cover_path) and not is_generated:
             continue
+        # ИИ-обложку заменяем ТОЛЬКО настоящей встроенной (из файла книги). Веб-
+        # источник (og:image) НЕ трогаем: у безобложечных фиков он отдаёт дженерик-
+        # баннер сайта, который затирал хорошую ИИ-картинку (потеря ~13 обложек).
         c = None
         src = ""
         if w.file_path and os.path.exists(w.file_path):
             c = covers.extract_cover(w.file_path, w.file_format, w.sha1)
             src = "embedded" if c else ""
-        if not c and w.source_url:
+        if not c and not is_generated and w.source_url:
             c = covers.fetch_source_cover(w.source_url, w.sha1)
             src = "source" if c else ""
         if c:

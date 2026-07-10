@@ -8,6 +8,35 @@ import { openReader } from './reader-core.js'
 import { openBookPage, bookPageMeta } from './book-page.js'
 import { isOffline } from './core/offline.js'
 
+// ---- Ленивая подгрузка обложек ----
+// Раньше карточки рендерились с готовым <img src>, и браузер разом запрашивал
+// /cover для ВСЕХ ~1400 книг. Это забивало бэкенд и пул коннектов Postgres, из-за
+// чего открытие книги «висло». Теперь src проставляется только когда карточка
+// подходит к вьюпорту → в полёте лишь обложки видимых книг.
+let _coverIO = null
+
+function resetCoverObserver() {
+  if (_coverIO) _coverIO.disconnect()
+  if (!('IntersectionObserver' in window)) { _coverIO = null; return }
+  _coverIO = new IntersectionObserver((entries, obs) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue
+      const img = e.target
+      obs.unobserve(img)
+      if (img.dataset.src) { img.src = img.dataset.src; delete img.dataset.src }
+    }
+  }, { rootMargin: '400px 0px' })  // подгружаем чуть раньше появления
+}
+
+function observeCovers(grid) {
+  const imgs = grid.querySelectorAll('img[data-src]')
+  if (!_coverIO) {  // нет IntersectionObserver — грузим сразу (деградация)
+    for (const img of imgs) { img.src = img.dataset.src; delete img.dataset.src }
+    return
+  }
+  for (const img of imgs) _coverIO.observe(img)
+}
+
 // ===================== БИБЛИОТЕКА =====================
 export async function loadLibrary() {
   setLibWorks(await api.get('/api/library'))
@@ -34,6 +63,7 @@ export function applyLibFilter(q) {
   const match = (s) => norm(s).includes(norm(q))
   const grid = $('#book-grid')
   grid.innerHTML = ''
+  resetCoverObserver()  // сбрасываем наблюдатель под новый набор карточек
   // Свои книги: показываем всегда (с фильтром если есть)
   const filtered = q
     ? libWorks.filter(w => match(w.title) || match(w.author))
@@ -50,6 +80,7 @@ export function applyLibFilter(q) {
     for (const b of calFiltered) grid.append(calibreCard(b))
   }
   $('#lib-empty').hidden = grid.children.length > 0
+  observeCovers(grid)  // подгрузим обложки только для видимых карточек
 }
 
 // ===================== Hover-панель (только десктоп/мышь) =====================
@@ -129,7 +160,7 @@ function bookCard(w, ratio, hasUpdate) {
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
-  const cover = `<img src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
+  const cover = `<img data-src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
   const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
   card.innerHTML = `
@@ -159,7 +190,7 @@ function calibreCard(b) {
   card.className = 'book-card'
   const fallback = `<span class="cover-fallback">${escapeHtml(b.title || 'Без названия')}</span>`
   const cover = b.has_cover
-    ? `<img src="/api/calibre/${b.calibre_id}/cover" alt="" onerror="this.remove()" />${fallback}`
+    ? `<img data-src="/api/calibre/${b.calibre_id}/cover" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
     : fallback
   card.innerHTML = `
     <div class="book-cover" style="position:relative">${cover}<span class="calibre-badge">Calibre</span></div>

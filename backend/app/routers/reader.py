@@ -77,6 +77,17 @@ def _schedule_generation(work: Work) -> None:
     _EXECUTOR.submit(_bg_generate, work.id)
 
 
+def _schedule_generation_by_id(work_id: int) -> None:
+    """Как _schedule_generation, но по id — короткой сессией (коннект БД не
+    держится дольше чтения флагов)."""
+    from ..db.session import engine
+
+    with Session(engine) as s:
+        work = s.get(Work, work_id)
+        if work:
+            _schedule_generation(work)
+
+
 def _usable_cover(work: Work) -> Path | None:
     if work and work.cover_path:
         p = Path(work.cover_path)
@@ -147,26 +158,36 @@ def _serve(path: Path, sha1: str) -> FileResponse:
 
 
 @router.get("/{work_id}/file")
-def get_book_file(
-    work_id: int, session: Session = Depends(get_session)
-) -> FileResponse:
-    """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте."""
-    work = session.get(Work, work_id)
-    if not work:
-        raise HTTPException(404, "книги нет")
-    if work.site == "calibre" and not work.file_path:
+def get_book_file(work_id: int) -> FileResponse:
+    """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте.
+
+    Коннект БД держится только на чтение метаданных; сама докачка из Calibre
+    (до 180с) идёт БЕЗ занятого коннекта — иначе параллельные открытия забивали
+    пул и книга «висла, срабатывала со второй попытки»."""
+    from ..db.session import engine
+
+    with Session(engine) as session:
+        work = session.get(Work, work_id)
+        if not work:
+            raise HTTPException(404, "книги нет")
+        is_calibre_link = work.site == "calibre" and not work.file_path
+        file_path = work.file_path
+        file_format = work.file_format
+
+    if is_calibre_link:
         # Книга-ссылка: тянем файл из Calibre по требованию в вытесняемый кэш.
         from ...calibre import sync as csync
-        path = csync.ensure_cached(session, work)
+
+        path = csync.ensure_cached(work_id)
         if not path:
             raise HTTPException(502, "не удалось получить файл из Calibre")
     else:
-        if not work.file_path:
+        if not file_path:
             raise HTTPException(404, "файл книги не найден")
-        path = Path(work.file_path)
+        path = Path(file_path)
         if not path.exists():
             raise HTTPException(410, "файл книги отсутствует на диске")
-    media = _MEDIA.get(work.file_format, "application/octet-stream")
+    media = _MEDIA.get(file_format, "application/octet-stream")
     resp = FileResponse(path, media_type=media, filename=path.name)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -174,28 +195,36 @@ def get_book_file(
 
 @router.get("/{work_id}/cover")
 @router.head("/{work_id}/cover")
-def get_cover(work_id: int, session: Session = Depends(get_session)) -> FileResponse:
+def get_cover(work_id: int) -> FileResponse:
     """Обложка книги. Если её нет — пробуем сгенерировать ИИ (лениво, 1 раз).
-    Иначе 404 → фронт рисует текстовую заглушку."""
-    work = session.get(Work, work_id)
-    if not work:
-        raise HTTPException(404, "книги нет")
+    Иначе 404 → фронт рисует текстовую заглушку.
 
-    path = _usable_cover(work)
-    if path:
-        return _serve(path, work.sha1)
+    Коннект БД держится только на чтение метаданных; сетевой запрос обложки из
+    Calibre идёт без него (см. get_book_file)."""
+    from ..db.session import engine
+
+    with Session(engine) as session:
+        work = session.get(Work, work_id)
+        if not work:
+            raise HTTPException(404, "книги нет")
+        path = _usable_cover(work)
+        if path:
+            return _serve(path, work.sha1)
+        is_calibre = work.site == "calibre" and bool(work.calibre_id)
+        sha_fallback = work.sha1 or (f"cal{work.calibre_id}" if work.calibre_id else "")
 
     # Книга Calibre: берём настоящую обложку из Calibre по требованию (кешируем).
-    if work.site == "calibre" and work.calibre_id:
+    if is_calibre:
         from ...calibre import sync as csync
-        cpath = csync.ensure_cover(session, work)
+
+        cpath = csync.ensure_cover(work_id)
         if cpath:
-            return _serve(cpath, work.sha1 or f"cal{work.calibre_id}")
+            return _serve(cpath, sha_fallback)
 
     # Обложки нет — НЕ блокируем запрос генерацией: ставим её в фон (дедуп,
     # gen_failed не повторяем) и сразу отдаём 404 → фронт рисует текст-заглушку.
     # Обложка появится при следующем открытии библиотеки.
-    _schedule_generation(work)
+    _schedule_generation_by_id(work_id)
     raise HTTPException(404, "обложки нет")
 
 

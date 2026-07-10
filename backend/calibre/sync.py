@@ -285,44 +285,79 @@ def _evict_cache() -> None:
             break
 
 
-def ensure_cached(session: Session, work: Work) -> Path | None:
+def ensure_cached(work_id: int) -> Path | None:
     """Гарантировать локальный файл calibre-книги в кэше (скачать при отсутствии).
-    Возвращает путь или None. Кэш вытесняемый — книга остаётся в Calibre."""
-    if work.site != "calibre" or not work.calibre_id or not client.http_mode():
-        return None
-    fmt = (work.file_format or "epub").lower()
+    Возвращает путь или None. Кэш вытесняемый — книга остаётся в Calibre.
+
+    ВАЖНО: коннект БД НЕ держится во время сетевой докачки (до 180с). Читаем
+    метаданные короткой сессией, отпускаем коннект, качаем, затем короткой
+    сессией дописываем sha1. Иначе параллельные открытия забивали пул коннектов
+    Postgres и книга «висла».
+    """
+    from ..app.db.session import engine
+
+    with Session(engine) as s:
+        work = s.get(Work, work_id)
+        if (
+            not work
+            or work.site != "calibre"
+            or not work.calibre_id
+            or not client.http_mode()
+        ):
+            return None
+        calibre_id = work.calibre_id
+        fmt = (work.file_format or "epub").lower()
+        have_sha = bool(work.sha1)
+
     CALIBRE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    dest = CALIBRE_CACHE_DIR / f"{work.calibre_id}.{fmt}"
+    dest = CALIBRE_CACHE_DIR / f"{calibre_id}.{fmt}"
     if dest.exists() and dest.stat().st_size > 0:
         dest.touch()  # обновляем mtime для LRU
         return dest
     try:
-        path, sha = client.download_book(work.calibre_id, fmt, dest)
+        path, sha = client.download_book(calibre_id, fmt, dest)
     except Exception as e:  # noqa: BLE001
-        log.warning("Не удалось скачать calibre#%s: %s", work.calibre_id, e)
+        log.warning("Не удалось скачать calibre#%s: %s", calibre_id, e)
         return None
-    if not work.sha1:
-        work.sha1 = sha
-        session.add(work)
-        session.commit()
+    if not have_sha:
+        with Session(engine) as s:
+            w = s.get(Work, work_id)
+            if w and not w.sha1:
+                w.sha1 = sha
+                s.add(w)
+                s.commit()
     _evict_cache()
     return path
 
 
-def ensure_cover(session: Session, work: Work) -> Path | None:
-    """Обложка calibre-книги: берём /opds/cover в COVERS_DIR, кешируем в cover_path."""
-    if work.cover_path and Path(work.cover_path).exists():
-        return Path(work.cover_path)
-    if work.site != "calibre" or not work.calibre_id or not client.http_mode():
-        return None
-    data = client.cover_bytes(work.calibre_id)
+def ensure_cover(work_id: int) -> Path | None:
+    """Обложка calibre-книги: берём /opds/cover в COVERS_DIR, кешируем в cover_path.
+
+    Коннект БД не держится во время сетевого запроса обложки (см. ensure_cached).
+    """
+    from ..app.db.session import engine
+
+    with Session(engine) as s:
+        work = s.get(Work, work_id)
+        if not work:
+            return None
+        if work.cover_path and Path(work.cover_path).exists():
+            return Path(work.cover_path)
+        if work.site != "calibre" or not work.calibre_id or not client.http_mode():
+            return None
+        calibre_id = work.calibre_id
+
+    data = client.cover_bytes(calibre_id)
     if not data:
         return None
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
-    p = COVERS_DIR / f"calibre_{work.calibre_id}.jpg"
+    p = COVERS_DIR / f"calibre_{calibre_id}.jpg"
     p.write_bytes(data)
-    work.cover_path = str(p)
-    work.cover_source = "calibre"
-    session.add(work)
-    session.commit()
+    with Session(engine) as s:
+        w = s.get(Work, work_id)
+        if w:
+            w.cover_path = str(p)
+            w.cover_source = "calibre"
+            s.add(w)
+            s.commit()
     return p

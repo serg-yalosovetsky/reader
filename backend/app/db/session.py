@@ -31,7 +31,19 @@ if _IS_SQLITE:
 else:
     # Postgres (mesh-postgres): pool_pre_ping отбраковывает мёртвые соединения
     # (докачки держат сессию долго; сервер мог закрыть idle-коннект).
-    engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
+    # Пул увеличен: при открытии библиотеки фронт шлёт десятки параллельных
+    # запросов /cover — дефолт (5+10) исчерпывался и /file (открытие книги)
+    # висел 30с в очереди за коннектом → "пусто, срабатывает со второй попытки".
+    # 20+40=60 даёт запас; pool_recycle сбрасывает залежавшиеся коннекты.
+    engine = create_engine(
+        DB_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=20,
+        max_overflow=40,
+        pool_timeout=30,
+        pool_recycle=1800,
+    )
 
 
 def init_db() -> None:

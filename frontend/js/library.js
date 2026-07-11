@@ -156,6 +156,11 @@ function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
   const readState = ratio >= 0.98 ? 'read' : ratio > 0 ? 'partial' : 'unread'
   card.className = ['book-card', readState, hasUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
+  // Дочитано (read) — полоса всегда 100%. foliate почти никогда не даёт ровно
+  // 1.0 на последней странице (типично 0.9999…/0.98), поэтому «дочитано» —
+  // это порог readState (>=0.98), а не строгое ratio>=1, иначе дочитанная книга
+  // застревала на визуальном максимуме недочитанной (93%).
+  const done = readState === 'read'
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
@@ -169,7 +174,7 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
-    <div class="book-progress"><i style="width:${ratio >= 1 ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
+    <div class="book-progress"><i style="width:${done ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
   card.addEventListener('click', () => { hideHoverNow(); openBookPage(w) })
   attachHover(card, w)
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {

@@ -180,7 +180,19 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-author">${escapeHtml(w.author || '')}</div>
     </div>
     <div class="book-progress"><i style="width:${done ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
-  card.addEventListener('click', () => { hideHoverNow(); openBookPage(w) })
+  // Доступность: карточка — это кнопка «открыть книгу». Делаем её достижимой с
+  // клавиатуры (Tab) и активируемой Enter/Space (focus-visible уже стилизован).
+  card.tabIndex = 0
+  card.setAttribute('role', 'button')
+  card.setAttribute('aria-label',
+    `${w.title || 'Книга'}${w.author ? ', ' + w.author : ''}`)
+  const openThis = () => { hideHoverNow(); openBookPage(w) }
+  card.addEventListener('click', openThis)
+  card.addEventListener('keydown', (e) => {
+    // Не перехватываем активацию вложенной кнопки удаления.
+    if (e.target !== card) return
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openThis() }
+  })
   attachHover(card, w)
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
     e.stopPropagation()

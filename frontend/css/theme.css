@@ -181,6 +181,10 @@ body.reader-open { height: 100%; overflow: hidden; }
 .icon-btn {
   cursor: pointer; border: none; background: transparent; color: var(--fg-dim);
   font-size: 16px; padding: 6px 10px; border-radius: 8px;
+  /* Тач-таргет: центрируем иконку в области >=44px (WCAG 2.5.5), не раздувая
+     визуальный размер значка. */
+  min-height: 44px; min-width: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .icon-btn:hover { background: var(--bg-soft); color: var(--fg); }
 
@@ -211,8 +215,10 @@ foliate-view { width: 100%; height: 100%; display: block; }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .setting-label { font-size: 14px; color: var(--fg-dim); }
-.theme-swatches { display: flex; gap: 8px; }
-.swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; font-size: 11px; }
+.theme-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; font-size: 11px; position: relative; }
+/* Тач-зона 44px вокруг кружка 30px (WCAG 2.5.5) без изменения его вида/раскладки. */
+.swatch::before { content: ''; position: absolute; inset: -7px; }
 .swatch[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .stepper { display: flex; align-items: center; gap: 6px; }
 .stepper-val { font-size: 13px; min-width: 48px; text-align: center; color: var(--fg); }

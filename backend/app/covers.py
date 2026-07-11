@@ -129,7 +129,15 @@ def fetch_cover_bytes(source_url: str) -> bytes | None:
         )
         if not m:
             return None
-        data = _fetch(m.group(1), _UA, binary=True, base=source_url)
+        img_url = m.group(1)
+        # ficbook отдаёт в og:image АЛЬБОМНЫЙ соц-кроп обложки (`/fanfic-covers/m_…`,
+        # 600×400 → отсекся бы как баннер). Настоящая обложка фика — портретная
+        # display-версия `/d_…` (400×600). Подменяем префикс, чтобы взять её.
+        # Дженерик-заглушку (`/assets/design/…socials.png`) это не трогает — она
+        # не в /fanfic-covers/ и отсекается по форме кадра как раньше.
+        if "/fanfic-covers/" in img_url:
+            img_url = re.sub(r"/m_", "/d_", img_url, count=1)
+        data = _fetch(img_url, _UA, binary=True, base=source_url)
         return data if data and len(data) > 200 else None
     except Exception:  # noqa: BLE001
         return None

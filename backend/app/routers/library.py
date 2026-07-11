@@ -27,11 +27,10 @@ def _fsize(p: str) -> int:
         return 0
 
 
-@router.post("/maintenance")
-def maintenance(session: Session = Depends(get_session)) -> dict:
-    """Убрать дубликаты книг (оставить самый полный файл), подчистить мониторинг,
-    добэкафиллить обложки."""
-    # 1) Группировка по (название, автор).
+def _dedup_works(session: Session) -> int:
+    """Схлопнуть дубли книг (одинаковые название+автор): оставить самый полный
+    файл, перевесить на него мониторинг, снести прогресс и файлы дублей.
+    Возвращает число удалённых книг."""
     groups: dict[tuple, list[Work]] = {}
     for w in session.exec(select(Work)).all():
         groups.setdefault((_norm(w.title), _norm(w.author)), []).append(w)
@@ -62,15 +61,13 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
             session.delete(dup)
             removed_works += 1
     session.commit()
+    return removed_works
 
-    # 2) Дедуп мониторинга: одна запись на work_id/source_url + снятие ложных
-    #    has_update (см. accounts.dedup — единый переиспользуемый модуль).
-    from ...accounts.dedup import dedup_monitored
 
-    _dd = dedup_monitored(session)
-    removed_mon = _dd["removed"]
-
-    # 3) Бэкафилл обложек.
+def _backfill_covers(session: Session) -> int:
+    """Дозаполнить настоящие обложки: встроенная в файл → с сайта-источника/зеркал.
+    ИИ-обложку (generated/gen_failed) считаем временной и всегда вытесняем
+    найденной настоящей. Возвращает число обновлённых книг."""
     added_covers = 0
     for w in session.exec(select(Work)).all():
         # ИИ-обложка (сгенерирована / генерация не удалась) — временная заглушка,
@@ -100,6 +97,22 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
             session.add(w)
             added_covers += 1
     session.commit()
+    return added_covers
+
+
+@router.post("/maintenance")
+def maintenance(session: Session = Depends(get_session)) -> dict:
+    """Убрать дубликаты книг (оставить самый полный файл), подчистить мониторинг,
+    добэкафиллить обложки."""
+    removed_works = _dedup_works(session)
+
+    # Дедуп мониторинга: одна запись на work_id/source_url + снятие ложных
+    # has_update (см. accounts.dedup — единый переиспользуемый модуль).
+    from ...accounts.dedup import dedup_monitored
+
+    removed_mon = dedup_monitored(session)["removed"]
+
+    added_covers = _backfill_covers(session)
     return {
         "removed_duplicates": removed_works,
         "removed_monitored": removed_mon,

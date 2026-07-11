@@ -29,6 +29,16 @@ def _merge_group(group: list[Monitored]) -> Monitored:
     return keep
 
 
+def _collapse_group(session: Session, group: list[Monitored]) -> Monitored:
+    """Слить группу дублей: оставить каноническую запись, удалить остальные.
+    Возвращает канон (has_update у него может ещё уточниться по числу глав)."""
+    keep = _merge_group(group)
+    session.add(keep)
+    for dup in group[1:]:
+        session.delete(dup)
+    return keep
+
+
 def dedup_monitored(session: Session) -> dict:
     """Свести дубли Monitored к одной записи на work_id / source_url и снять
     ложные has_update. Возвращает {'removed': N, 'flags_fixed': M}."""
@@ -45,11 +55,8 @@ def dedup_monitored(session: Session) -> dict:
 
     # Дубли с известным work_id — сливаем и нормализуем флаг по реальным главам.
     for wid, group in by_work.items():
-        keep = _merge_group(group)
-        session.add(keep)
-        for dup in group[1:]:
-            session.delete(dup)
-            removed += 1
+        keep = _collapse_group(session, group)
+        removed += len(group) - 1
         work = session.get(Work, wid)
         if (
             work
@@ -62,11 +69,8 @@ def dedup_monitored(session: Session) -> dict:
 
     # Дубли без work_id — только по source_url (главы сверить не с чем).
     for url, group in orphans.items():
-        keep = _merge_group(group)
-        session.add(keep)
-        for dup in group[1:]:
-            session.delete(dup)
-            removed += 1
+        _collapse_group(session, group)
+        removed += len(group) - 1
 
     session.commit()
     return {"removed": removed, "flags_fixed": flags_fixed}

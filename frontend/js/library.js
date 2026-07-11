@@ -37,6 +37,17 @@ function observeCovers(grid) {
   for (const img of imgs) _coverIO.observe(img)
 }
 
+// Текстовая заглушка обложки (видна пока картинка грузится / если её нет).
+function coverFallback(title) {
+  return `<span class="cover-fallback">${escapeHtml(title || 'Без названия')}</span>`
+}
+
+// <img> обложки с ленивой подгрузкой (data-src ставится при подходе к вьюпорту)
+// и текстовым фолбэком под ним.
+function coverImg(src, title) {
+  return `<img data-src="${src}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${coverFallback(title)}`
+}
+
 // ===================== БИБЛИОТЕКА =====================
 export async function loadLibrary() {
   setLibWorks(await api.get('/api/library'))
@@ -167,10 +178,9 @@ function bookCard(w, ratio, hasUpdate) {
   const showUpdate = hasUpdate && !done
   card.className = ['book-card', readState, showUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
-  const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
-  const cover = `<img data-src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
+  const cover = coverImg(`/api/reader/${w.id}/cover?v=${w.cover_v||0}`, w.title)
   const badge = showUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
   card.innerHTML = `
@@ -210,10 +220,9 @@ function bookCard(w, ratio, hasUpdate) {
 function calibreCard(b) {
   const card = document.createElement('div')
   card.className = 'book-card'
-  const fallback = `<span class="cover-fallback">${escapeHtml(b.title || 'Без названия')}</span>`
   const cover = b.has_cover
-    ? `<img data-src="/api/calibre/${b.calibre_id}/cover" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
-    : fallback
+    ? coverImg(`/api/calibre/${b.calibre_id}/cover`, b.title)
+    : coverFallback(b.title)
   card.innerHTML = `
     <div class="book-cover" style="position:relative">${cover}<span class="calibre-badge">Calibre</span></div>
     <div class="book-meta">
@@ -235,24 +244,29 @@ function calibreCard(b) {
   return card
 }
 
+// Общий статус-строки внизу формы добавления: показать сообщение (или ошибку).
+function setIngestStatus(msg, { error = false } = {}) {
+  const status = $('#ingest-status')
+  status.hidden = false
+  status.classList.toggle('error', error)
+  status.textContent = msg
+}
+
 // Добавление по ссылке или названию (/api/ingest): URL → адаптеры/FanFicFare,
 // название → поиск в бесплатных агрегаторах (searchfloor/readli).
 $('#ingest-form').addEventListener('submit', async (e) => {
   e.preventDefault()
   const q = $('#ingest-input').value.trim()
   if (!q) return
-  const status = $('#ingest-status')
   const isUrl = /^https?:\/\//i.test(q)
-  status.hidden = false; status.classList.remove('error')
-  status.textContent = isUrl ? 'Скачиваю…' : 'Ищу по названию…'
+  setIngestStatus(isUrl ? 'Скачиваю…' : 'Ищу по названию…')
   try {
     const work = await api.post('/api/ingest', { query: q })
-    status.textContent = 'Готово: ' + (work.title || 'книга добавлена')
+    setIngestStatus('Готово: ' + (work.title || 'книга добавлена'))
     $('#ingest-input').value = ''
     await loadLibrary()
   } catch (err) {
-    status.classList.add('error')
-    status.textContent = 'Не удалось добавить: ' + err.message.slice(0, 200)
+    setIngestStatus('Не удалось добавить: ' + err.message.slice(0, 200), { error: true })
   }
 })
 
@@ -260,34 +274,32 @@ $('#ingest-form').addEventListener('submit', async (e) => {
 $('#upload-input').addEventListener('change', async (e) => {
   const file = e.target.files[0]
   if (!file) return
-  const status = $('#ingest-status')
-  status.hidden = false; status.classList.remove('error'); status.textContent = 'Загружаю файл…'
+  setIngestStatus('Загружаю файл…')
   const fd = new FormData(); fd.append('file', file)
   try {
     const r = await fetch('/api/library/upload', { method: 'POST', body: fd })
     if (!r.ok) throw new Error(await r.text())
-    status.textContent = 'Файл добавлен.'
+    setIngestStatus('Файл добавлен.')
     await loadLibrary()
   } catch (err) {
-    status.classList.add('error'); status.textContent = 'Ошибка загрузки: ' + err.message.slice(0, 160)
+    setIngestStatus('Ошибка загрузки: ' + err.message.slice(0, 160), { error: true })
   }
   e.target.value = ''
 })
 
 // Синхронизация с ReadEra (импорт прогресса из бэкапа + экспорт веб-прогресса).
 $('#readera-sync').addEventListener('click', async () => {
-  const status = $('#ingest-status')
-  status.hidden = false; status.classList.remove('error'); status.textContent = 'Синхронизирую с ReadEra…'
+  setIngestStatus('Синхронизирую с ReadEra…')
   try {
     const r = await api.post('/api/readera/sync', {})
     const imp = r.import || {}, exp = r.export || {}
     let msg = `ReadEra: импортировано позиций — ${imp.updated ?? 0}`
     if (!imp.ok && imp.reason) msg += ` (${imp.reason})`
     if (exp.patched) msg += `; для restore в ReadEra создан файл ${exp.restore_file}`
-    status.textContent = msg
+    setIngestStatus(msg)
     await loadLibrary()
   } catch (err) {
-    status.classList.add('error'); status.textContent = 'Sync ошибка: ' + err.message.slice(0, 160)
+    setIngestStatus('Sync ошибка: ' + err.message.slice(0, 160), { error: true })
   }
 })
 

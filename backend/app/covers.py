@@ -22,6 +22,10 @@ _GENERIC_COVER_MD5 = {
     "9173cbd4f0e3c7757e27fa5ec5a982dd",  # Calibre «нет обложки», 19501 б (282×400)
 }
 
+# Порог формы кадра: og:image соцсетей — альбомный баннер (~1200×630), а обложка
+# книги всегда портретная. Кадр заметно шире, чем выше, обложкой не считаем.
+_BANNER_MIN_ASPECT = 1.15
+
 
 def is_generic_cover(data: bytes | None, *, check_aspect: bool = False) -> bool:
     """True, если байты — не настоящая обложка книги, а заглушка-баннер источника.
@@ -41,7 +45,7 @@ def is_generic_cover(data: bytes | None, *, check_aspect: bool = False) -> bool:
         size = _img_size(data)
         if size:
             w, h = size
-            if w > h * 1.15:  # заметно шире, чем выше → баннер, не обложка
+            if w > h * _BANNER_MIN_ASPECT:  # заметно шире, чем выше → баннер
                 return True
     return False
 
@@ -254,17 +258,25 @@ def _img_ext(b: bytes) -> str:
     return ".jpg"
 
 
+def _read_opf(z: zipfile.ZipFile) -> tuple[str, str] | None:
+    """(текст OPF, путь до OPF) по META-INF/container.xml. None, если не найден."""
+    try:
+        container = z.read("META-INF/container.xml").decode("utf-8", "ignore")
+    except KeyError:
+        return None
+    m = re.search(r'full-path="([^"]+)"', container)
+    if not m:
+        return None
+    opf_path = m.group(1)
+    return z.read(opf_path).decode("utf-8", "ignore"), opf_path
+
+
 def _epub_cover(path) -> bytes | None:
     with zipfile.ZipFile(path) as z:
-        try:
-            container = z.read("META-INF/container.xml").decode("utf-8", "ignore")
-        except KeyError:
+        opf_info = _read_opf(z)
+        if not opf_info:
             return None
-        m = re.search(r'full-path="([^"]+)"', container)
-        if not m:
-            return None
-        opf_path = m.group(1)
-        opf = z.read(opf_path).decode("utf-8", "ignore")
+        opf, opf_path = opf_info
         opf_dir = posixpath.dirname(opf_path)
 
         href = None
@@ -329,14 +341,10 @@ def _epub_description(path) -> str:
 
     try:
         with zipfile.ZipFile(path) as z:
-            try:
-                container = z.read("META-INF/container.xml").decode("utf-8", "ignore")
-            except KeyError:
+            opf_info = _read_opf(z)
+            if not opf_info:
                 return ""
-            m = re.search(r'full-path="([^"]+)"', container)
-            if not m:
-                return ""
-            opf = z.read(m.group(1)).decode("utf-8", "ignore")
+            opf, _ = opf_info
             desc_m = re.search(
                 r"<dc:description[^>]*>(.*?)</dc:description>", opf, re.S | re.I
             )
@@ -394,9 +402,22 @@ def extract_pdf_cover(pdf_path: str | Path, sha1: str) -> Path | None:
         with tempfile.TemporaryDirectory() as td:
             out = str(Path(td) / "cover")
             subprocess.run(
-                ["pdftoppm", "-jpeg", "-f", "1", "-l", "1", "-r", "110",
-                 "-singlefile", str(pdf_path), out],
-                check=True, timeout=90, capture_output=True,
+                [
+                    "pdftoppm",
+                    "-jpeg",
+                    "-f",
+                    "1",
+                    "-l",
+                    "1",
+                    "-r",
+                    "110",
+                    "-singlefile",
+                    str(pdf_path),
+                    out,
+                ],
+                check=True,
+                timeout=90,
+                capture_output=True,
             )
             jpg = Path(out + ".jpg")
             if jpg.exists():

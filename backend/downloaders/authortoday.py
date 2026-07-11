@@ -88,30 +88,32 @@ def search_work(title: str, author: str = "") -> str | None:
             r = c.get("https://author.today/search", params={"q": q, "type": "works"})
             if r.status_code != 200:
                 return None
-            work_ids = list(dict.fromkeys(re.findall(r'href="/work/(\d+)"', r.text)))
-            if not work_ids:
-                return None
-
-            # Заголовки: class="bookcard-title"…<a href="/work/ID">…</a>
+            # Основные результаты выдачи — блоки .book-title (+ .book-author рядом),
+            # а НЕ .bookcard-title (там лишь боковые частичные совпадения по
+            # подсвеченным словам, без нужной работы — из-за них поиск промахивался).
+            # Формат:
+            #   <div class="book-title"><a ... href="/work/ID">Название</a></div>
+            #   <div class="book-author"><a ...>Автор</a></div>
             title_by_id: dict[str, str] = {}
+            work_ids: list[str] = []
             for m in re.finditer(
-                r'class="bookcard-title".*?href="/work/(\d+)"[^>]*>(.*?)</a>',
+                r'<div class="book-title">\s*<a[^>]*href="/work/(\d+)"[^>]*>(.*?)</a>',
                 r.text,
                 re.S,
             ):
                 wid = m.group(1)
-                raw = re.sub(r"<[^>]+>", "", m.group(2)).strip()
-                raw = re.sub(r"\s+", " ", raw)
-                if wid not in title_by_id and 3 < len(raw) < 200:
+                raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(2))).strip()
+                if wid not in title_by_id and raw:
                     title_by_id[wid] = raw
+                    work_ids.append(wid)
+            if not work_ids:
+                return None
 
-            # Авторы — идут в том же порядке, что буккарды на странице
-            author_by_id: dict[str, str] = {}
+            # Авторы — в том же порядке, что блоки .book-title.
             at_authors = re.findall(
-                r'class="bookcard-author[^"]*"[^>]*>.*?<a[^>]*>([^<]+)</a>',
-                r.text,
-                re.S,
+                r'<div class="book-author">\s*<a[^>]*>([^<]+)</a>', r.text
             )
+            author_by_id: dict[str, str] = {}
             for i, wid in enumerate(work_ids):
                 if i < len(at_authors):
                     author_by_id[wid] = re.sub(r"\s+", " ", at_authors[i]).strip()
@@ -120,7 +122,11 @@ def search_work(title: str, author: str = "") -> str | None:
             AUTHOR_MIN = 0.35
 
             best_id, best_score = None, -1.0
-            for wid in work_ids[:5]:
+            # Окно кандидатов: не только топ-5 выдачи. AT сортирует по популярности,
+            # и точное совпадение по названию бывает не в первой пятёрке (напр.
+            # «Сломанный Меч» ниже более раскрученных «Меч…»). Фильтр по
+            # similarity отсекает нерелевантное, поэтому окно можно держать широким.
+            for wid in work_ids[:30]:
                 t = title_by_id.get(wid)
                 if not t:
                     continue

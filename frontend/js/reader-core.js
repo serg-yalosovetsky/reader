@@ -6,6 +6,7 @@ import { prefs, MARGIN_INLINE, FONT_STACKS, GFONTS } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx } from './core/state.js'
 import { restorePosition, captureAnchor } from './core/position.js'
+import { inlineImagesOnLoad } from './core/inline-images.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
@@ -51,6 +52,7 @@ export async function openReader(work) {
   document.getElementById('reader')?.classList.remove('chrome-hidden')
   view.addEventListener('relocate', onRelocate)
   view.addEventListener('load', attachKeysToDoc)
+  view.addEventListener('load', inlineImagesOnLoad)
   view.addEventListener('draw-annotation', onDrawAnnotation)
   applyViewStyles()
   buildTOC()

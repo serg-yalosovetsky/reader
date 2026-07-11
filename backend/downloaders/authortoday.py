@@ -88,35 +88,49 @@ def search_work(title: str, author: str = "") -> str | None:
             r = c.get("https://author.today/search", params={"q": q, "type": "works"})
             if r.status_code != 200:
                 return None
-            # Основные результаты выдачи — блоки .book-title (+ .book-author рядом),
-            # а НЕ .bookcard-title (там лишь боковые частичные совпадения по
-            # подсвеченным словам, без нужной работы — из-за них поиск промахивался).
-            # Формат:
-            #   <div class="book-title"><a ... href="/work/ID">Название</a></div>
-            #   <div class="book-author"><a ...>Автор</a></div>
+            # Кандидатов собираем из ДВУХ типов блоков выдачи AT, т.к. нужная работа
+            # непредсказуемо попадает то в один, то в другой:
+            #   • .book-title (+ .book-author) — основные результаты;
+            #   • .bookcard-title (+ .bookcard-authors) — боковые карточки
+            #     (частичные совпадения по подсвеченным <em>-словам).
+            # Раньше парсили только один тип — и промахивались мимо реальных фиков
+            # («Сломанный Меч» был в book-title, «Бродяга Грег» — в bookcard-title).
             title_by_id: dict[str, str] = {}
+            author_by_id: dict[str, str] = {}
             work_ids: list[str] = []
-            for m in re.finditer(
-                r'<div class="book-title">\s*<a[^>]*href="/work/(\d+)"[^>]*>(.*?)</a>',
-                r.text,
-                re.S,
-            ):
-                wid = m.group(1)
-                raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(2))).strip()
-                if wid not in title_by_id and raw:
-                    title_by_id[wid] = raw
+
+            def _clean(s: str) -> str:
+                return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
+
+            def _collect(title_pat: str, author_pat: str) -> None:
+                # Название — обязательно; автор — опционально (сопоставляем по
+                # порядку появления в пределах одного типа блока). Требовать блок
+                # автора в одном regex с названием нельзя: у части карточек его нет
+                # в ожидаемом виде, и тогда терялась вся карточка (так «Бродяга
+                # Грег» выпадал, хотя присутствовал в bookcard-title).
+                ids = re.findall(title_pat, r.text, re.S)
+                authors = re.findall(author_pat, r.text, re.S)
+                for i, (wid, t_raw) in enumerate(ids):
+                    t = _clean(t_raw)
+                    if not t or wid in title_by_id:
+                        continue
+                    title_by_id[wid] = t
+                    if i < len(authors):
+                        a = _clean(authors[i])
+                        if a:
+                            author_by_id[wid] = a
                     work_ids.append(wid)
+
+            _collect(
+                r'<div class="book-title">\s*<a[^>]*href="/work/(\d+)"[^>]*>(.*?)</a>',
+                r'<div class="book-author">\s*<a[^>]*>([^<]+)</a>',
+            )
+            _collect(
+                r'<div class="bookcard-title">.*?href="/work/(\d+)"[^>]*>(.*?)</a>',
+                r'<div class="bookcard-authors">.*?<a[^>]*>([^<]+)</a>',
+            )
             if not work_ids:
                 return None
-
-            # Авторы — в том же порядке, что блоки .book-title.
-            at_authors = re.findall(
-                r'<div class="book-author">\s*<a[^>]*>([^<]+)</a>', r.text
-            )
-            author_by_id: dict[str, str] = {}
-            for i, wid in enumerate(work_ids):
-                if i < len(at_authors):
-                    author_by_id[wid] = re.sub(r"\s+", " ", at_authors[i]).strip()
 
             TITLE_MIN = 0.80
             AUTHOR_MIN = 0.35
@@ -133,17 +147,17 @@ def search_work(title: str, author: str = "") -> str | None:
                 title_s = _sim(title, t)
                 if title_s < TITLE_MIN:
                     continue
+                score = title_s
                 if author:
                     at_author = author_by_id.get(wid, "")
                     if at_author:
                         author_s = _sim(author, at_author)
-                        if author_s < AUTHOR_MIN:
+                        # Разные авторы отсекаем, только если название НЕ почти
+                        # точное — иначе рискуем выкинуть верный фик из-за сбитого
+                        # по порядку сопоставления автора (блоки без автора).
+                        if author_s < AUTHOR_MIN and title_s < 0.95:
                             continue
                         score = (title_s + author_s) / 2
-                    else:
-                        score = title_s
-                else:
-                    score = title_s
                 if score > best_score:
                     best_score = score
                     best_id = wid

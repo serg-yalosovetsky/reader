@@ -63,17 +63,12 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
             removed_works += 1
     session.commit()
 
-    # 2) Дедуп мониторинга по work_id / source_url.
-    seen: set = set()
-    removed_mon = 0
-    for m in session.exec(select(Monitored)).all():
-        key = ("w", m.work_id) if m.work_id else ("u", m.source_url)
-        if key in seen:
-            session.delete(m)
-            removed_mon += 1
-        else:
-            seen.add(key)
-    session.commit()
+    # 2) Дедуп мониторинга: одна запись на work_id/source_url + снятие ложных
+    #    has_update (см. accounts.dedup — единый переиспользуемый модуль).
+    from ...accounts.dedup import dedup_monitored
+
+    _dd = dedup_monitored(session)
+    removed_mon = _dd["removed"]
 
     # 3) Бэкафилл обложек.
     added_covers = 0

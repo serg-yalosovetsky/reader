@@ -155,18 +155,23 @@ function attachHover(card, w) {
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
   const readState = ratio >= 0.98 ? 'read' : ratio > 0 ? 'partial' : 'unread'
-  card.className = ['book-card', readState, hasUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
   // Дочитано (read) — полоса всегда 100%. foliate почти никогда не даёт ровно
   // 1.0 на последней странице (типично 0.9999…/0.98), поэтому «дочитано» —
   // это порог readState (>=0.98), а не строгое ratio>=1, иначе дочитанная книга
   // застревала на визуальном максимуме недочитанной (93%).
   const done = readState === 'read'
+  // Плашку «обновление» не показываем на дочитанной книге: ficbook-лента метит
+  // has_update при любой активности автора (не только новые главы), и дочитанная
+  // книга висела с ложной плашкой. Когда реально докачается новая глава,
+  // непрочитанный контент уронит ratio ниже порога — плашка вернётся сама.
+  const showUpdate = hasUpdate && !done
+  card.className = ['book-card', readState, showUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
   const fallback = `<span class="cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
   const cover = `<img data-src="/api/reader/${w.id}/cover?v=${w.cover_v||0}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${fallback}`
-  const badge = hasUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
+  const badge = showUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
   card.innerHTML = `
     <div class="book-cover">${cover}${badge}${offBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>

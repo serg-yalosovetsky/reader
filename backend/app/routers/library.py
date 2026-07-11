@@ -78,20 +78,26 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
     # 3) Бэкафилл обложек.
     added_covers = 0
     for w in session.exec(select(Work)).all():
-        is_generated = w.cover_source == "generated"
-        # Уже есть валидная НЕ-ИИ обложка — не трогаем.
-        if w.cover_path and os.path.exists(w.cover_path) and not is_generated:
+        # ИИ-обложка (сгенерирована / генерация не удалась) — временная заглушка,
+        # её ВСЕГДА вытесняем настоящей, если удалось найти.
+        is_ai = w.cover_source in ("generated", "gen_failed")
+        # Уже есть настоящая (не-ИИ) обложка — не трогаем.
+        if w.cover_path and os.path.exists(w.cover_path) and not is_ai:
             continue
-        # ИИ-обложку заменяем ТОЛЬКО настоящей встроенной (из файла книги). Веб-
-        # источник (og:image) НЕ трогаем: у безобложечных фиков он отдаёт дженерик-
-        # баннер сайта, который затирал хорошую ИИ-картинку (потеря ~13 обложек).
         c = None
         src = ""
+        # 1) встроенная в файл книги (самый надёжный источник).
         if w.file_path and os.path.exists(w.file_path):
             c = covers.extract_cover(w.file_path, w.file_format, w.sha1)
             src = "embedded" if c else ""
-        if not c and not is_generated and w.source_url:
-            c = covers.fetch_source_cover(w.source_url, w.sha1)
+        # 2) настоящая обложка с сайта-источника или зеркал на других сайтах.
+        #    Даже поверх ИИ: реальная обложка приоритетнее сгенерированной. Раньше
+        #    источник для ИИ-книг НЕ пробовался — и книга, у которой обложка не
+        #    скачалась с первого раза (сайт под защитой/таймаут), НАВСЕГДА
+        #    оставалась с ИИ-картинкой. Дженерик-баннер отсекается по md5+форме
+        #    кадра внутри fetch_source_cover, так что хорошую ИИ он не затрёт.
+        if not c and w.source_url:
+            c = covers.fetch_source_cover(w.source_url, w.sha1, w.title, w.author)
             src = "source" if c else ""
         if c:
             w.cover_path = str(c)

@@ -4,6 +4,7 @@ export let view = null
 export let currentWork = null
 export let bookDoc = null
 export let lastCfi = ''
+export let lastAnchor = ''
 export let lastIdx = null
 export let _selIndex = -1
 export let libWorks = [], libCalibre = [], libProgress = {}
@@ -14,6 +15,7 @@ export const setView = (v) => { view = v }
 export const setCurrentWork = (w) => { currentWork = w }
 export const setBookDoc = (d) => { bookDoc = d }
 export const setLastCfi = (c) => { lastCfi = c }
+export const setLastAnchor = (a) => { lastAnchor = a }
 export const setLastIdx = (i) => { lastIdx = i }
 export const setSelIndex = (i) => { _selIndex = i }
 export const setLibWorks = (v) => { libWorks = v }

@@ -3,6 +3,7 @@
 Прогресс хранится как ratio (0..1, совместимо с ReadEra) + точный locator для
 foliate-js. На этапе 3 этот же прогресс реконсилится с бэкапом ReadEra.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/api/progress", tags=["progress"])
 class ProgressIn(BaseModel):
     ratio: float = Field(ge=0.0, le=1.0)
     locator: str = ""
+    text_anchor: str = ""
 
 
 @router.get("")
@@ -50,6 +52,10 @@ def set_progress(
     if prog:
         prog.ratio = body.ratio
         prog.locator = body.locator
+        # Пустой якорь не затираем сохранённым: релокейт без видимого текста
+        # (пустая/картиночная страница) не должен стирать рабочий якорь.
+        if body.text_anchor:
+            prog.text_anchor = body.text_anchor
         prog.last_read_time = utcnow()
         prog.source = "web"
     else:
@@ -57,6 +63,7 @@ def set_progress(
             work_id=work_id,
             ratio=body.ratio,
             locator=body.locator,
+            text_anchor=body.text_anchor,
             source="web",
         )
         session.add(prog)

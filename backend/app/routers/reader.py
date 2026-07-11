@@ -96,6 +96,26 @@ def _usable_cover(work: Work) -> Path | None:
     return None
 
 
+def _try_real_cover(work: Work) -> tuple[Path | None, str]:
+    """Найти НАСТОЯЩУЮ обложку книги (встроенную в файл или с сайта-источника/
+    зеркал) — прежде чем прибегать к ИИ-генерации. Возвращает (путь, источник).
+
+    Предпочитаем оригинал сгенерированному: при импорте источник мог быть под
+    защитой/таймаутом, и книга ушла в ИИ. Здесь пробуем ещё раз, в т.ч. зеркала
+    на других сайтах (у книги обложка бывает только на одном из них)."""
+    if work.file_path and Path(work.file_path).exists():
+        c = covers.extract_cover(work.file_path, work.file_format, work.sha1)
+        if c:
+            return c, "embedded"
+    if work.source_url:
+        c = covers.fetch_source_cover(
+            work.source_url, work.sha1, work.title, work.author
+        )
+        if c:
+            return c, "source"
+    return None, ""
+
+
 def _meta_of(work: Work) -> dict:
     return {
         "title": work.title,
@@ -128,6 +148,16 @@ def _generate_and_persist(
         existing = _usable_cover(work)  # другой поток мог успеть, пока ждали лок
         if existing and not force:
             return existing
+        # Оригинал важнее генерации: перед ИИ ещё раз пробуем настоящую обложку
+        # (встроенную + зеркала на других сайтах). ИИ — только если её нигде нет.
+        if not force:
+            real, real_src = _try_real_cover(work)
+            if real:
+                work.cover_path = str(real)
+                work.cover_source = real_src
+                session.add(work)
+                session.commit()
+                return real
         _ensure_brief(work)  # арт-бриф (Ollama) → в промпт; кешируется в work
         salt = (
             f"-{int(threading.current_thread().ident or 0) & 0xFFFF}" if force else ""

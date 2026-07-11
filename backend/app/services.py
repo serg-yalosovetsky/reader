@@ -48,7 +48,9 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
             cover = covers.cover_from_description(desc, sha1)
             cover_src = "description" if cover else ""
     if not cover and result.source_url:
-        cover = covers.fetch_source_cover(result.source_url, sha1)
+        cover = covers.fetch_source_cover(
+            result.source_url, sha1, result.title, result.author
+        )
         cover_src = "source" if cover else ""
     if cover:
         work.cover_path = str(cover)
@@ -110,7 +112,6 @@ def _richness(path, fmt: str) -> int:
 def register_download(result: DownloadResult, session: Session) -> Work:
     src = Path(result.file_path)
     sha1 = sha1_of_file(src)
-    new_size = src.stat().st_size
 
     existing = _find_existing(session, result)
     if existing:

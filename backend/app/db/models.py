@@ -63,6 +63,10 @@ class Progress(SQLModel, table=True):
     ratio: float = 0.0
     # Точный локатор для foliate-js (CFI/href#frag) для возврата на место в вебе.
     locator: str = ""
+    # Текстовый якорь — первые слова текста вверху экрана. Устойчив к пересборке
+    # книги (FanFicFare добавил главы → CFI съезжает на другую секцию), поэтому
+    # это основной способ восстановления позиции; locator/ratio — фолбэки.
+    text_anchor: str = ""
     # Время последнего чтения (для last-write-wins при sync с ReadEra).
     last_read_time: datetime = Field(default_factory=utcnow)
     # Откуда пришло обновление: web | readera

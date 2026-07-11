@@ -4,7 +4,8 @@ import { api } from './core/api.js'
 import { logErr } from './core/log.js'
 import { prefs, MARGIN_INLINE, FONT_STACKS, GFONTS } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
-         setView, setCurrentWork, setLastCfi, setLastIdx } from './core/state.js'
+         setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx } from './core/state.js'
+import { restorePosition, captureAnchor } from './core/position.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
@@ -12,56 +13,6 @@ import { cachedBook } from './core/offline.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
-
-// Восстановление позиции чтения при открытии книги:
-//  • есть точный локатор (CFI) → инициализируем прямо на нём;
-//  • иначе стартуем с начала текста и, если известна доля прочитанного
-//    (ratio, напр. импорт из ReadEra), доезжаем до неё;
-//  • иначе — просто начало книги.
-async function restoreReadingPosition(view, prog) {
-  // Точный локатор (CFI) может протухнуть: если книгу перекачали/пересобрали
-  // (FanFicFare добавил главы), структура документа изменилась и CFI.toRange
-  // кидает IndexSizeError (offset больше не влезает в узел). Тогда откатываемся
-  // на долю прочитанного (ratio) — устойчивый кросс-девайс якорь.
-  if (prog && prog.locator) {
-    try {
-      await view.init({ lastLocation: prog.locator })
-      // Поздний реflow (веб-шрифты @import, докачка картинок) растит контент над
-      // якорем и позиция «сползает». Дожидаемся загрузки и повторно доезжаем.
-      await settleAndReanchor(view, prog.locator)
-      return
-    } catch (e) {
-      logErr('restore by CFI failed, fallback to ratio', e)
-      // view уже отобразил нужную секцию (упал на этапе якоря) — можно доехать по доле.
-    }
-  } else {
-    await view.init({ showTextStart: true })
-  }
-  if (prog && prog.ratio > 0) {
-    try { await view.goToFraction(prog.ratio) } catch {}
-  }
-}
-
-// Бэкстоп к внутреннему ре-анкору foliate: ждём готовности шрифтов и картинок
-// текущей секции, затем ещё раз переходим на локатор уже по устоявшейся раскладке.
-async function settleAndReanchor(view, locator) {
-  try {
-    const doc = view?.renderer?.getContents?.()?.[0]?.doc
-    if (!doc) return
-    const waits = []
-    if (doc.fonts?.ready) waits.push(doc.fonts.ready.catch(() => {}))
-    for (const im of [...doc.images]) {
-      if (im.complete) continue
-      waits.push(new Promise((res) => {
-        im.addEventListener('load', res, { once: true })
-        im.addEventListener('error', res, { once: true })
-      }))
-    }
-    // Не зависаем дольше 2.5с (битые/долгие картинки).
-    await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 2500))])
-    await view.goTo(locator)
-  } catch {}
-}
 
 export async function openReader(work) {
   ttsStop()
@@ -104,9 +55,10 @@ export async function openReader(work) {
   applyViewStyles()
   buildTOC()
 
-  // Восстановить позицию: точный CFI, иначе ratio (напр. импорт из ReadEra), иначе начало.
+  // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
+  // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
   const prog = await api.get(`/api/progress/${work.id}`).catch(() => null)
-  await restoreReadingPosition(view, prog)
+  await restorePosition(view, prog)
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
   loadHighlightsWeb()
@@ -114,17 +66,21 @@ export async function openReader(work) {
 
 function onRelocate(e) {
   hideSelPopup()
-  const { fraction, cfi, index } = e.detail
+  const { fraction, cfi, index, range } = e.detail
   setLastCfi(cfi || lastCfi)
   if (typeof index === 'number') setLastIdx(index)
+  // Текстовый якорь верха экрана — основа устойчивого восстановления позиции.
+  const anchor = captureAnchor(range)
+  if (anchor) setLastAnchor(anchor)
   const pct = Math.round((fraction || 0) * 100)
   $('#progress-slider').value = fraction || 0
   $('#progress-label').textContent = pct + '%'
-  // Дебаунс-сохранение прогресса на сервер.
+  // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     if (!currentWork) return
-    api.put(`/api/progress/${currentWork.id}`, { ratio: fraction || 0, locator: cfi || '' })
+    api.put(`/api/progress/${currentWork.id}`,
+      { ratio: fraction || 0, locator: cfi || '', text_anchor: anchor || '' })
       .catch((e) => logErr('save progress', e))
   }, 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }

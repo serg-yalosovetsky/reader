@@ -113,6 +113,24 @@ def _try_real_cover(work: Work) -> tuple[Path | None, str]:
         )
         if c:
             return c, "source"
+    # PDF-книга (обычно из Calibre) без сохранённой обложки: рендерим первую
+    # страницу — у технических книг (Packt/O'Reilly) это и есть обложка.
+    if work.file_format == "pdf":
+        pdf = work.file_path
+        if not (pdf and Path(pdf).exists()):
+            try:
+                from ...calibre import sync as _csync
+
+                pdf = _csync.ensure_cached(work.id)
+            except Exception:  # noqa: BLE001
+                pdf = None
+        if pdf and Path(pdf).exists():
+            sha = work.sha1 or (
+                f"cal{work.calibre_id}" if work.calibre_id else f"w{work.id}"
+            )
+            c = covers.extract_pdf_cover(pdf, sha)
+            if c:
+                return c, "pdf"
     return None, ""
 
 

@@ -19,6 +19,7 @@ from .config import COVERS_DIR
 # Пополняемо: добавляй md5 новой заглушки, если всплывёт другой источник.
 _GENERIC_COVER_MD5 = {
     "fe79f62359104fd5d03da79e4b8c9774",  # ficbook.net дженерик-баннер, 69618 б
+    "9173cbd4f0e3c7757e27fa5ec5a982dd",  # Calibre «нет обложки», 19501 б (282×400)
 }
 
 
@@ -379,4 +380,27 @@ def cover_from_description(description: str, sha1: str) -> "Path | None":
     data = fetch_cover_bytes(url)
     if data and len(data) > 500:
         return save_cover_bytes(data, sha1)
+    return None
+
+
+def extract_pdf_cover(pdf_path: str | Path, sha1: str) -> Path | None:
+    """Обложка PDF-книги — первая страница, отрендеренная через pdftoppm (poppler).
+    Нужно для книг из Calibre, у которых обложка не сохранена как файл (OPDS её не
+    отдаёт), но по факту это первая страница PDF (типично для Packt/O'Reilly)."""
+    import subprocess
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cover")
+            subprocess.run(
+                ["pdftoppm", "-jpeg", "-f", "1", "-l", "1", "-r", "110",
+                 "-singlefile", str(pdf_path), out],
+                check=True, timeout=90, capture_output=True,
+            )
+            jpg = Path(out + ".jpg")
+            if jpg.exists():
+                return save_cover_bytes(jpg.read_bytes(), sha1)
+    except Exception:  # noqa: BLE001 — обложка не критична
+        return None
     return None

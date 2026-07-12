@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from ..calibre import client as calibre
 from ..downloaders.base import DownloadResult
 from . import covers
-from .db.models import Work, utcnow
+from .db.models import Progress, Work, utcnow
 from .storage import import_file, sha1_of_file
 
 
@@ -118,6 +118,25 @@ def _richness(path, fmt: str) -> int:
             return 0
 
 
+def _unfinish_progress(session: Session, work_id: int, old_len: int, new_len: int) -> None:
+    """Дозагрузились новые главы (текст книги вырос old_len→new_len) — прочитанная
+    книга больше не «дочитана». Масштабируем ratio по длине; если он всё равно
+    остаётся выше порога «прочитано» (0.98) из-за малого прироста — опускаем чуть
+    ниже, чтобы фронт показал плашку «обновление» и не помечал книгу прочитанной.
+    Реальная позиция чтения хранится в locator/text_anchor и не теряется."""
+    if not new_len or new_len <= old_len:
+        return
+    prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
+    if not prog or prog.ratio <= 0:
+        return
+    scaled = prog.ratio * (old_len / new_len)
+    if scaled >= 0.98:
+        scaled = 0.97
+    if scaled < prog.ratio:
+        prog.ratio = scaled
+        session.add(prog)
+
+
 def register_download(result: DownloadResult, session: Session) -> Work:
     src = Path(result.file_path)
     sha1 = sha1_of_file(src)
@@ -136,6 +155,8 @@ def register_download(result: DownloadResult, session: Session) -> Work:
             if cur_rich == 0 or new_rich > cur_rich:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
+                if cur_rich and new_rich > cur_rich:
+                    _unfinish_progress(session, existing.id, cur_rich, new_rich)
         if result.source_url and not existing.source_url:
             existing.source_url = result.source_url
         existing.updated_at = utcnow()

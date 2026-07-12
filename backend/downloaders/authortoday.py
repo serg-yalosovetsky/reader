@@ -67,6 +67,36 @@ def _decrypt(text: str, secret: str, user_id: str = "") -> str:
     return "".join(chr(ord(text[i]) ^ ord(key[i % klen])) for i in range(len(text)))
 
 
+def _title_volume(title: str) -> int | None:
+    """Номер тома из хвоста названия («… студент 9» → 9). Без номера — None."""
+    m = re.search(r"(?:^|\s)(\d{1,3})\s*$", (title or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def _resolve_series_volume(client, work_id: str, want_title: str, sim_fn) -> str | None:
+    """AT-поиск отдаёт «раскрученный» том серии (обычно 1-й) — высокие тома в выдачу
+    не попадают. По странице тома находим ссылку на цикл (/work/series/N), в цикле —
+    том с названием, точно совпадающим с искомым (sim ≥ 0.95). Две доп. сети-запроса,
+    вызываются ТОЛЬКО при рассинхроне номера тома. work_id тома или None."""
+    try:
+        wr = client.get(f"https://author.today/work/{work_id}")
+        sm = re.search(r'href="(/work/series/\d+)"', wr.text)
+        if not sm:
+            return None
+        sr = client.get("https://author.today" + sm.group(1))
+        best, best_s = None, 0.95
+        for wid, t_raw in re.findall(
+            r'href="/work/(\d+)"[^>]*>([^<]{3,90})</a>', sr.text
+        ):
+            t = re.sub(r"\s+", " ", t_raw).strip()
+            s = sim_fn(want_title, t)
+            if s >= best_s:
+                best_s, best = s, wid
+        return best
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def search_work(title: str, author: str = "") -> str | None:
     """Найти работу на author.today по названию + автору.
     Требует совпадения названия (>=0.80) и, если автор известен, автора (>=0.35).
@@ -164,6 +194,15 @@ def search_work(title: str, author: str = "") -> str | None:
 
             if best_id is None:
                 return None
+            # Серия-том: если в названии есть номер тома, а найденный кандидат —
+            # другой том того же цикла, до-резолвим точный том через страницу серии.
+            want_vol = _title_volume(title)
+            if want_vol is not None and (
+                _title_volume(title_by_id.get(best_id, "")) != want_vol
+            ):
+                exact = _resolve_series_volume(c, best_id, title, _sim)
+                if exact:
+                    return f"https://author.today/work/{exact}"
             return f"https://author.today/work/{best_id}"
         except Exception:
             return None

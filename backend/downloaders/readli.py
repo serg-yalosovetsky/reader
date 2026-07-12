@@ -128,6 +128,30 @@ def _get(c: httpx.Client, url: str, attempts: int = 4) -> httpx.Response:
     raise DownloaderError(f"readli: сетевая ошибка на {url}: {last}")
 
 
+def count_chapters(url: str) -> int | None:
+    """«Главы» readli = число страниц читалки (пагинация). Растёт при дописывании
+    книги — это и есть сигнал обновления (мониторится как last_seen_chapters).
+    Берём ТОЛЬКО 1-ю страницу: total зашит в <title> (или max pg= в ссылках),
+    качать всю книгу не нужно. None — не распарсили/сеть."""
+    try:
+        bid = _book_id(url)
+    except (UnsupportedURL, DownloaderError):
+        return None
+    try:
+        with httpx.Client(
+            timeout=25,
+            follow_redirects=True,
+            headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
+        ) as c:
+            r = _get(c, f"{_BASE}/chitat-online/?b={bid}&pg=1")
+        if r.status_code != 200:
+            return None
+        _title, total = _parse_head(BeautifulSoup(r.text, "lxml"))
+        return total or None
+    except (httpx.HTTPError, DownloaderError):
+        return None
+
+
 def download(url: str) -> DownloadResult:
     bid = _book_id(url)
     page_url = lambda n: f"{_BASE}/chitat-online/?b={bid}&pg={n}"

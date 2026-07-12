@@ -60,9 +60,11 @@ def add_monitor(
 def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
     """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
     из потоков, своей сессии у неё нет)."""
-    # readli: нет ни адаптера, ни маркера обновлений — не мониторим по главам
+    # readli: «главы» = число страниц читалки (пагинация растёт при дописывании)
     if host.endswith("readli.net"):
-        return None
+        from ..downloaders import readli as _rd
+
+        return _rd.count_chapters(url)
     # searchfloor: номер главы из плашки «Последняя глава» на странице книги
     if host.endswith("searchfloor.org"):
         from ..downloaders import searchfloor as _sf

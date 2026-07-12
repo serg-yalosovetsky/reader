@@ -119,6 +119,14 @@ body.reader-open { height: 100%; overflow: hidden; }
 .book-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .book-cover .cover-fallback { font-family: var(--font-serif); font-size: 15px; line-height: 1.25; z-index: 1; }
 .book-cover img ~ .cover-fallback { display: none; }
+.b-link { cursor: pointer; }
+.b-link:hover { text-decoration: underline; }
+.b-series { font-size: 12px; opacity: 0.75; margin-top: 2px; }
+.bp-series { margin: 4px 0; opacity: 0.8; }
+.bp-author.bp-link { color: var(--accent); }
+.bp-link { cursor: pointer; }
+.bp-link:hover { text-decoration: underline; }
+
 .book-cover .upd-badge {
   position: absolute; top: 6px; right: 6px; z-index: 2;
   background: var(--accent); color: var(--accent-text); font-size: 10px; font-weight: 700;

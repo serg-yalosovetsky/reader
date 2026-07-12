@@ -6,6 +6,7 @@ import { api } from './core/api.js'
 import { openReader } from './reader-core.js'
 import { libProgress, libMonitored } from './core/state.js'
 import { offlineSupported, isOffline, downloadBook, removeBook } from './core/offline.js'
+import { filterBy } from './library.js'
 
 let curWork = null
 
@@ -53,6 +54,14 @@ export function closeBookPage() {
   curWork = null
 }
 
+// Клик по автору/серии на странице книги: вернуться в библиотеку и отфильтровать.
+function goFilter(value) {
+  if (!value) return
+  if (history.state && history.state.bookpage) history.back()
+  else closeBookPage()
+  filterBy(value)
+}
+
 export function bookPageMeta(w) {
   // Компактная разметка метаданных — переиспользуется hover-панелью библиотеки.
   const genres = parseList(w.genres)
@@ -77,9 +86,12 @@ function renderBookPage(w) {
   // нет. Текст-фолбэк виден, пока грузится/если не удалось.
   const cover = `<img src="/api/reader/${w.id}/cover?v=${w.cover_v || 0}" alt="" onerror="this.remove()" />`
     + `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
-  const authorHtml = w.source_url
-    ? `<a class="bp-author" href="${escapeHtml(w.source_url)}" target="_blank" rel="noopener">${escapeHtml(w.author || 'Автор')}</a>`
-    : `<span class="bp-author">${escapeHtml(w.author || '')}</span>`
+  const authorHtml = w.author
+    ? `<span class="bp-author bp-link" data-flt-author title="Показать все книги автора">${escapeHtml(w.author)}</span>`
+    : `<span class="bp-author"></span>`
+  const seriesHtml = w.series
+    ? `<div class="bp-series bp-link" data-flt-series title="Показать всю серию">📚 ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>`
+    : ''
   const descHtml = w.description
     ? `<div class="bp-desc">${escapeHtml(w.description).replace(/\n+/g, '<br>')}</div>`
     : ''
@@ -96,6 +108,7 @@ function renderBookPage(w) {
       <div class="bp-info">
         <h1 class="bp-title">${escapeHtml(w.title || 'Без названия')}</h1>
         ${authorHtml}
+        ${seriesHtml}
         <div class="bp-badges">${badgesHtml}</div>
         ${factsText ? `<div class="bp-facts">${escapeHtml(factsText)}</div>` : ''}
         ${progHtml}
@@ -111,6 +124,11 @@ function renderBookPage(w) {
     </div>
     ${chipsHtml ? `<div class="bp-section"><div class="bp-section-h">Жанры и метки</div><div class="bp-chips">${chipsHtml}</div></div>` : ''}
     ${descHtml ? `<div class="bp-section"><div class="bp-section-h">Описание</div>${descHtml}</div>` : ''}`
+
+  $('#bp-body').querySelectorAll('[data-flt-author]').forEach((el) =>
+    el.addEventListener('click', () => goFilter(w.author)))
+  $('#bp-body').querySelectorAll('[data-flt-series]').forEach((el) =>
+    el.addEventListener('click', () => goFilter(w.series)))
 
   $('#bp-read').addEventListener('click', () => {
     // Открываем читалку поверх — прячем страницу книги, читалка ведёт свою историю.

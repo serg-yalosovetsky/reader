@@ -77,7 +77,7 @@ export function applyLibFilter(q) {
   resetCoverObserver()  // сбрасываем наблюдатель под новый набор карточек
   // Свои книги: показываем всегда (с фильтром если есть)
   const filtered = q
-    ? libWorks.filter(w => match(w.title) || match(w.author))
+    ? libWorks.filter(w => match(w.title) || match(w.author) || match(w.series))
     : libWorks
   for (const w of filtered) {
     grid.append(bookCard(w, libProgress[w.id] || 0, libUpdated.has(w.id)))
@@ -92,6 +92,15 @@ export function applyLibFilter(q) {
   }
   $('#lib-empty').hidden = grid.children.length > 0
   observeCovers(grid)  // подгрузим обложки только для видимых карточек
+}
+
+// Программно применить фильтр (клик по автору/серии). Значение кладём в поле
+// фильтра — оно же служит индикатором и «сбросом» (очистить поле → весь список).
+export function filterBy(value) {
+  const inp = $('#lib-filter')
+  if (inp) inp.value = value || ''
+  applyLibFilter((value || '').trim())
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 // ===================== Hover-панель (только десктоп/мышь) =====================
@@ -187,7 +196,8 @@ function bookCard(w, ratio, hasUpdate) {
     <div class="book-cover">${cover}${badge}${offBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
-      <div class="b-author">${escapeHtml(w.author || '')}</div>
+      <div class="b-author${w.author ? ' b-link' : ''}" data-flt="author">${escapeHtml(w.author || '')}</div>
+      ${w.series ? `<div class="b-series b-link" data-flt="series" title="Показать всю серию">📚 ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>` : ''}
     </div>
     <div class="book-progress"><i style="width:${done ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
   // Доступность: карточка — это кнопка «открыть книгу». Делаем её достижимой с
@@ -204,6 +214,13 @@ function bookCard(w, ratio, hasUpdate) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openThis() }
   })
   attachHover(card, w)
+  card.querySelectorAll('[data-flt]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const val = el.dataset.flt === 'series' ? w.series : w.author
+      if (!val) return
+      e.stopPropagation(); hideHoverNow(); filterBy(val)
+    })
+  })
   card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
     e.stopPropagation()
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return

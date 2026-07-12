@@ -76,7 +76,7 @@ def _find_existing(session: Session, result: DownloadResult) -> Work | None:
         ).first()
         if w:
             return w
-    from .book_identity import same_book, work_descriptor
+    from .book_identity import extract_text_sample, same_book, work_descriptor
 
     ex = result.extra or {}
     rd = {
@@ -86,9 +86,21 @@ def _find_existing(session: Session, result: DownloadResult) -> Work | None:
         "series_index": ex.get("series_index", 0),
         "annotation": ex.get("annotation", ""),
     }
+    _rt: dict = {}
+
+    def _res_text() -> str:  # текст скачанного файла, считаем один раз
+        if "t" not in _rt:
+            _rt["t"] = extract_text_sample(result.file_path, result.file_format)
+        return _rt["t"]
+
     if _norm(result.title):
         for w in session.exec(select(Work)).all():
-            if same_book(rd, work_descriptor(w)):
+            gtb = (
+                (lambda w=w: extract_text_sample(w.file_path, w.file_format))
+                if w.file_path
+                else None
+            )
+            if same_book(rd, work_descriptor(w), get_text_a=_res_text, get_text_b=gtb):
                 return w
     return None
 

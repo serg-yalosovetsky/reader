@@ -53,8 +53,19 @@ def _dedup_works(session: Session) -> int:
             continue
         clusters: list[list[Work]] = []
         for w in ws:
+            gta = (
+                (lambda w=w: bi.extract_text_sample(w.file_path, w.file_format))
+                if w.file_path
+                else None
+            )
             for cl in clusters:
-                if bi.same_book(_dsc(w), _dsc(cl[0])):
+                c0 = cl[0]
+                gtb = (
+                    (lambda c0=c0: bi.extract_text_sample(c0.file_path, c0.file_format))
+                    if c0.file_path
+                    else None
+                )
+                if bi.same_book(_dsc(w), _dsc(c0), get_text_a=gta, get_text_b=gtb):
                     cl.append(w)
                     break
             else:

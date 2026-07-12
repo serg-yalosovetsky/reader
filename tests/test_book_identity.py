@@ -70,3 +70,30 @@ def test_author_relation_basics():
     assert author_relation("Cokol-d", "Анна Светлая") == CONFLICT
     assert author_relation("noslnosl", 'Абрамов Владимир "noslnosl"') == MATCH
     assert author_relation("", "кто-то") == "unknown"
+
+
+# --- текст-фолбэк: когда аннотации нет, сверяем по тексту книги ---
+_TXT_A = ("Глава первая. Герой очнулся в незнакомом лесу под чёрным небом, "
+          "не помня ничего о прошлом, кроме огня во снах. " * 30)
+_TXT_B_SAME = _TXT_A
+_TXT_C_DIFF = ("Совсем другая книга про космический корабль, экипаж которого "
+               "исследует далёкую галактику и сталкивается с чужим разумом. " * 30)
+
+
+def test_text_fallback_same_no_annotation():
+    a = {"title": "Нагльфар", "author": "Морроу Винд"}
+    b = {"title": "Нагльфар", "author": "Кузьмин Марк"}  # ник vs имя, аннотаций нет
+    assert same_book(a, b) is False  # без текста — консервативно разные
+    assert same_book(a, b, get_text_a=lambda: _TXT_A, get_text_b=lambda: _TXT_B_SAME) is True
+
+
+def test_text_fallback_diff_text():
+    a = {"title": "Оракул", "author": "Архин"}
+    b = {"title": "Оракул", "author": "Денис Бобкин"}
+    assert same_book(a, b, get_text_a=lambda: _TXT_A, get_text_b=lambda: _TXT_C_DIFF) is False
+
+
+def test_text_fallback_unknown_author():
+    a = {"title": "Книга", "author": ""}  # автор неизвестен
+    b = {"title": "Книга", "author": "Некто"}
+    assert same_book(a, b, get_text_a=lambda: _TXT_A, get_text_b=lambda: _TXT_B_SAME) is True

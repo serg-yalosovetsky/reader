@@ -191,18 +191,46 @@ def same_book(
     if ser == MATCH and ann is not None and ann >= ann_medium:
         return True
 
-    # 3) Автор явно конфликтует, аннотация не подтверждает — сверяем текст, если дали.
-    if auth == CONFLICT and (ann is None or ann < ann_medium):
-        if get_text_a and get_text_b:
-            try:
-                if _text_fingerprint(get_text_a(), get_text_b()):
-                    return True
-            except Exception:
-                pass
-        return False
+    # 3) Аннотации нет/слабая — последняя опора: сверка ТЕКСТА книги (если доступна).
+    #    Срабатывает и при CONFLICT, и при UNKNOWN авторе (нет аннотации → смотрим текст).
+    if (ann is None or ann < ann_medium) and get_text_a and get_text_b:
+        try:
+            if _text_fingerprint(get_text_a(), get_text_b()):
+                return True
+        except Exception:
+            pass
 
-    # 4) Неоднозначно → консервативно РАЗНЫЕ.
+    # 4) Ничего не подтвердило → консервативно РАЗНЫЕ.
     return False
+
+
+def extract_text_sample(path, fmt: str = "", max_chars: int = 4000) -> str:
+    """Первые ~max_chars символов ТЕКСТА книги (epub/fb2) — для сверки идентичности
+    по содержимому, когда аннотаций нет. Пустая строка при любой ошибке."""
+    import zipfile
+
+    if not path:
+        return ""
+    try:
+        p = str(path)
+        if (fmt or "").lower() == "fb2" or p.lower().endswith(".fb2"):
+            with open(p, encoding="utf-8", errors="ignore") as fh:
+                data = fh.read(300_000)
+            m = re.search(r"<body\b.*?>(.*?)</body>", data, re.S | re.I)
+            txt = re.sub(r"<[^>]+>", " ", m.group(1) if m else data)
+            return re.sub(r"\s+", " ", txt).strip()[:max_chars]
+        z = zipfile.ZipFile(p)
+        parts: list[str] = []
+        total = 0
+        for n in z.namelist():
+            if n.lower().endswith((".xhtml", ".html", ".htm")):
+                parts.append(re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
+                total += len(parts[-1])
+                if total > max_chars * 3:
+                    break
+        return re.sub(r"\s+", " ", " ".join(parts)).strip()[:max_chars]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def work_descriptor(w) -> dict:
@@ -216,4 +244,6 @@ def work_descriptor(w) -> dict:
         "annotation": g("description") or "",
         "chapters": g("chapters_count") or 0,
         "words": g("words") or 0,
+        "file_path": g("file_path") or "",
+        "file_format": g("file_format") or "",
     }

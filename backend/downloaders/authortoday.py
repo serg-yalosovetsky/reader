@@ -212,6 +212,28 @@ def fetch_meta(url: str) -> dict | None:
     return meta
 
 
+def fetch_text_sample(url: str, max_chars: int = 4000) -> str:
+    """Первые ~max_chars символов текста книги AT (первая глава) — для сверки
+    идентичности по содержимому, когда аннотаций нет. Аноним; '' при неудаче."""
+    work_id = _work_id(url)
+    with httpx.Client(
+        timeout=30,
+        follow_redirects=True,
+        headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
+    ) as c:
+        try:
+            rr = _get(c, f"{_BASE}/reader/{work_id}")
+            chapters = _parse_chapters(rr.text)
+            if not chapters:
+                return ""
+            uid_m = _USERID_RE.search(rr.text)
+            user_id = uid_m.group(1) if uid_m and uid_m.group(1) != "0" else ""
+            html = _fetch_chapter(c, work_id, str(chapters[0]["id"]), user_id)
+            return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()[:max_chars]
+        except Exception:  # noqa: BLE001
+            return ""
+
+
 def _login(c: httpx.Client, email: str, password: str) -> bool:
     """Войти в author.today через JSON API. Возвращает True если успешно."""
     try:

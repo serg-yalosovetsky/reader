@@ -114,7 +114,15 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
     if not at_url:
         return None
     at_meta = _at.fetch_meta(at_url)
-    if not at_meta or not _bi.same_book(our, at_meta):
+    # Аннотации может не быть — тогда идентичность сверяем по тексту (первая глава).
+    gta = (
+        (lambda: _bi.extract_text_sample(our.get("file_path"), our.get("file_format")))
+        if our.get("file_path")
+        else None
+    )
+    if not at_meta or not _bi.same_book(
+        our, at_meta, get_text_a=gta, get_text_b=lambda: _at.fetch_text_sample(at_url)
+    ):
         return None  # тёзка/другая книга — не берём как «зеркало»
     at_cnt = at_meta.get("chapters") or _at.count_chapters(at_url)
     if not at_cnt:

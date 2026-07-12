@@ -31,20 +31,20 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # Концевая рекламная врезка Цокольного этажа в FB2: <section> с заголовком
 # «Nota bene» (промо сайта, VPN, telegram-бот, «наградите автора»). Вырезаем.
 _PROMO_RE = re.compile(
-    r"<section>\s*<title>\s*<p>\s*Nota bene\s*</p>\s*</title>.*?</section>",
+    rb"<section>\s*<title>\s*<p>\s*Nota bene\s*</p>\s*</title>.*?</section>",
     re.S | re.I,
 )
 
 
 def _strip_promo(raw: bytes) -> bytes:
-    """Убрать промо-врезку «Nota bene…» из FB2. Best-effort: при любой неожиданности
-    возвращаем исходные байты (книга важнее косметики)."""
+    """Убрать промо-врезку «Nota bene…» из FB2. Работаем НА БАЙТАХ: decode всего файла
+    в str раздувает память в разы (FB2 тут до 40+ МБ; кириллица → 2–4 байта/символ +
+    копия regex + re-encode = пик 200–300 МБ). «Nota bene» — ASCII, bytes-regexp ловит
+    врезку без декода. Best-effort: при любой неожиданности возвращаем исходные байты."""
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
+        return _PROMO_RE.sub(b"", raw)
+    except Exception:  # noqa: BLE001
         return raw
-    cleaned = _PROMO_RE.sub("", text)
-    return cleaned.encode("utf-8") if cleaned != text else raw
 
 
 def supports(url: str) -> bool:

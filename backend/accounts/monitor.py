@@ -60,9 +60,14 @@ def add_monitor(
 def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
     """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
     из потоков, своей сессии у неё нет)."""
-    # searchfloor/readli: нет FanFicFare-адаптера — не мониторим по главам
-    if host.endswith(("searchfloor.org", "readli.net")):
+    # readli: нет ни адаптера, ни маркера обновлений — не мониторим по главам
+    if host.endswith("readli.net"):
         return None
+    # searchfloor: номер главы из плашки «Последняя глава» на странице книги
+    if host.endswith("searchfloor.org"):
+        from ..downloaders import searchfloor as _sf
+
+        return _sf.count_chapters(url)
     # author.today: FanFicFare не поддерживает — используем наш адаптер
     if host.endswith("author.today"):
         from ..downloaders import authortoday as _at

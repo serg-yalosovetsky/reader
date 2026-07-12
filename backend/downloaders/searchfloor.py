@@ -164,3 +164,60 @@ def search_book(title: str, author: str = "") -> str | None:
     ids = re.findall(r"/b/(\d+)", r.text)
     # Доп. фильтрация по автору, если задан и встречается рядом — упрощённо берём первый.
     return ids[0] if ids else None
+# --- Мониторинг обновлений ---------------------------------------------------
+# Страница книги /b/<id> показывает плашку «Последняя глава» (есть только у
+# онгоингов; у завершённых её нет — они и не обновляются). Парсим из неё номер
+# главы — получаем числовой счётчик для механики last_seen_chapters монитора.
+
+_ORD_UNITS = {
+    "первая": 1, "вторая": 2, "третья": 3, "четвертая": 4, "четвёртая": 4,
+    "пятая": 5, "шестая": 6, "седьмая": 7, "восьмая": 8, "девятая": 9,
+    "десятая": 10, "одиннадцатая": 11, "двенадцатая": 12, "тринадцатая": 13,
+    "четырнадцатая": 14, "пятнадцатая": 15, "шестнадцатая": 16,
+    "семнадцатая": 17, "восемнадцатая": 18, "девятнадцатая": 19,
+    "двадцатая": 20, "тридцатая": 30, "сороковая": 40, "пятидесятая": 50,
+}
+_ORD_TENS = {"двадцать": 20, "тридцать": 30, "сорок": 40, "пятьдесят": 50}
+
+
+def _parse_chapter_number(marker: str) -> int | None:
+    """Номер главы из текста плашки: «Глава 12», «Глава шестая. …»,
+    «Глава двадцать первая». Эпилог/пролог и прочее без номера — None."""
+    low = marker.lower()
+    m = re.search(r"глав\w*\s*№?\s*(\d+)", low)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(?:^|\s)(\d+)\s*глав", low)
+    if m:
+        return int(m.group(1))
+    if "глав" not in low:
+        return None
+    words = re.findall(r"[а-яё]+", low)
+    for i, w in enumerate(words):
+        if w in _ORD_TENS and i + 1 < len(words) and words[i + 1] in _ORD_UNITS:
+            unit = _ORD_UNITS[words[i + 1]]
+            if unit < 10:
+                return _ORD_TENS[w] + unit
+        if w in _ORD_UNITS:
+            return _ORD_UNITS[w]
+    return None
+
+
+def count_chapters(url: str) -> int | None:
+    """Текущее число глав книги по плашке «Последняя глава» на /b/<id>.
+    None — плашки нет (завершённая книга) или номер не распарсился."""
+    m = re.search(r"/(?:book|b)/(\d+)", urlparse(url).path)
+    if not m:
+        return None
+    try:
+        with _client() as c:
+            r = c.get(f"{_BASE}/b/{m.group(1)}")
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "lxml")
+        el = soup.select_one('p[data-bs-title="Последняя глава"]')
+        if not el:
+            return None
+        return _parse_chapter_number(el.get_text(" ", strip=True))
+    except httpx.HTTPError:
+        return None

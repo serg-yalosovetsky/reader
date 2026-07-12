@@ -66,7 +66,9 @@ export async function loadLibrary() {
   libWorks.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
   // Загружаем Calibre один раз (фоном, не блокируем рендер)
   api.get('/api/calibre/books').then(books => { setLibCalibre(books || []) }).catch(() => {})
-  applyLibFilter('')
+  // Сохраняем активный фильтр (клик по автору/серии, ручной ввод) при перезагрузке
+  // библиотеки — иначе возврат со страницы книги (popstate→loadLibrary) сбрасывал бы его.
+  applyLibFilter((($('#lib-filter') || {}).value || '').trim())
 }
 
 export function applyLibFilter(q) {

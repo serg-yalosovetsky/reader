@@ -330,6 +330,9 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
             # попробует найти более полную бесплатную версию на зеркалах.
             "partial_paid": paid_tail,
             "total_chapters": len(chapters),
+            # Аннотация нужна _find_existing/same_book для дедупа зеркал (иначе
+            # AT-зеркало той же книги регистрируется как новый Work — рецидив дублей).
+            "annotation": annotation,
             **at_meta,
         },
     )

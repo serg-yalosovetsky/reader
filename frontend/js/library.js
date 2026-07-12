@@ -140,7 +140,8 @@ function showHover(card, w) {
   const { chipsHtml, badgesHtml, factsText } = bookPageMeta(w)
   el.innerHTML = `
     <div class="lh-title">${escapeHtml(w.title || 'Без названия')}</div>
-    <div class="lh-author">${escapeHtml(w.author || '')}</div>
+    <div class="lh-author${w.author ? ' lh-link' : ''}" data-flt="author" title="Показать все книги автора">${escapeHtml(w.author || '')}</div>
+    ${w.series ? `<div class="lh-series lh-link" data-flt="series" title="Показать всю серию">📚 ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>` : ''}
     ${badgesHtml ? `<div class="lh-badges">${badgesHtml}</div>` : ''}
     ${factsText ? `<div class="lh-facts">${escapeHtml(factsText)}</div>` : ''}
     ${chipsHtml ? `<div class="lh-chips">${chipsHtml}</div>` : ''}
@@ -150,6 +151,12 @@ function showHover(card, w) {
     </div>`
   el.querySelector('.lh-read').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openReader(w) })
   el.querySelector('.lh-open').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openBookPage(w) })
+  el.querySelectorAll('[data-flt]').forEach((elx) => {
+    elx.addEventListener('click', (e) => {
+      e.stopPropagation(); el.hidden = true
+      filterBy(elx.dataset.flt === 'series' ? w.series : w.author)
+    })
+  })
   // Позиционируем справа от карточки, если влезает, иначе слева.
   el.hidden = false
   const r = card.getBoundingClientRect()

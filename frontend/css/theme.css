@@ -119,7 +119,9 @@ body.reader-open { height: 100%; overflow: hidden; }
 .book-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .book-cover .cover-fallback { font-family: var(--font-serif); font-size: 15px; line-height: 1.25; z-index: 1; }
 .book-cover img ~ .cover-fallback { display: none; }
-.b-link { cursor: pointer; }
+.b-link, .lh-link { cursor: pointer; }
+.lh-link:hover { text-decoration: underline; }
+.lh-series { opacity: 0.8; margin-top: 2px; }
 .b-link:hover { text-decoration: underline; }
 .b-series { font-size: 12px; opacity: 0.75; margin-top: 2px; }
 .bp-series { margin: 4px 0; opacity: 0.8; }

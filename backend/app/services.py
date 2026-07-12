@@ -61,7 +61,7 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
 
     meta = bookmeta.extract_meta(dest, result.file_format)
     # Адаптеры (author.today) могут дать поля, которых нет в файле.
-    for k in ("genres", "rating", "status", "characters", "fandom", "words"):
+    for k in ("genres", "rating", "status", "characters", "fandom", "words", "series", "series_index"):
         if not meta.get(k) and result.extra.get(k):
             meta[k] = result.extra[k]
     if meta:

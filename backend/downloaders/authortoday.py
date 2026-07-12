@@ -413,6 +413,16 @@ def _parse_work_meta(html: str) -> tuple[str, str, str, dict]:
             genres.append(txt)
     if genres:
         extra["genres"] = json.dumps(genres, ensure_ascii=False)
+    # Цикл/серия — ссылка /work/series/<id>; рядом бывает «#N».
+    ser = soup.select_one("a[href*='/work/series/']")
+    if ser:
+        s_txt = ser.get_text(strip=True)
+        if s_txt:
+            extra["series"] = s_txt
+        around = ser.parent.get_text(" ", strip=True) if ser.parent else s_txt
+        mnum = re.search(r"#\s*(\d+)", around)
+        if mnum:
+            extra["series_index"] = int(mnum.group(1))
     # Возрастной рейтинг (бейдж 18+/16+…).
     age = soup.select_one(".book-age-limit, .badge-age, [class*='age']")
     if age:

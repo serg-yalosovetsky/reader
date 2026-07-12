@@ -207,6 +207,8 @@ def _fb2_meta(path: str) -> dict:
 
     seq = re.search(r"<sequence\b[^>]*name=\"([^\"]+)\"", scope, re.I)
     fandom = unescape(seq.group(1)).strip() if seq else ""
+    seq_num = re.search(r"<sequence\b[^>]*number=\"([\d.]+)\"", scope, re.I)
+    series_index = int(float(seq_num.group(1))) if seq_num else 0
 
     kw = re.search(r"<keywords>(.*?)</keywords>", scope, re.S | re.I)
     if kw:
@@ -222,6 +224,9 @@ def _fb2_meta(path: str) -> dict:
         out["genres"] = json.dumps(genres, ensure_ascii=False)
     if fandom:
         out["fandom"] = fandom
+        out["series"] = fandom
+    if series_index:
+        out["series_index"] = series_index
     return out
 
 
@@ -264,6 +269,22 @@ def extract_epub_meta(epub_path: str | Path) -> dict:
     if mw:
         words = int(re.sub(r"\D", "", mw.group(1)) or 0)
 
+    # Серия/цикл: calibre:series (+ series_index) или belongs-to-collection.
+    series = ""
+    series_index = 0
+    msr = re.search(r'name="calibre:series"[^>]+content="([^"]+)"', opf, re.I) or \
+        re.search(r'content="([^"]+)"[^>]+name="calibre:series"', opf, re.I)
+    if msr:
+        series = unescape(msr.group(1)).strip()
+    if not series:
+        mc = re.search(r'property="belongs-to-collection"[^>]*>(.*?)</meta>', opf, re.S | re.I)
+        if mc:
+            series = unescape(re.sub(r"<[^>]+>", "", mc.group(1))).strip()
+    msi = re.search(r'name="calibre:series_index"[^>]+content="([\d.]+)"', opf, re.I) or \
+        re.search(r'content="([\d.]+)"[^>]+name="calibre:series_index"', opf, re.I)
+    if msi:
+        series_index = int(float(msi.group(1)))
+
     out: dict = {"meta_synced": True}
     if description:
         out["description"] = description
@@ -275,6 +296,10 @@ def extract_epub_meta(epub_path: str | Path) -> dict:
         out["status"] = status
     if words:
         out["words"] = words
+    if series:
+        out["series"] = series
+    if series_index:
+        out["series_index"] = series_index
     return out
 
 

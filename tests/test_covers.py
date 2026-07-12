@@ -50,6 +50,9 @@ def test_mirror_urls_dedup_and_search(monkeypatch):
         authortoday, "search_work", lambda t, a="": "https://author.today/work/42"
     )
     monkeypatch.setattr(searchfloor, "search_book", lambda t, a="": "99")
+    monkeypatch.setattr(
+        authortoday, "fetch_meta", lambda url: {"title": "Название", "author": "Автор"}
+    )
 
     urls = covers._mirror_urls("Название", "Автор", "https://ficbook.net/readfic/1")
     # Исходный источник всегда первый.
@@ -76,6 +79,9 @@ def test_fetch_source_cover_skips_banner_takes_real(monkeypatch):
     monkeypatch.setattr(covers, "fetch_cover_bytes", fake_fetch)
     monkeypatch.setattr(
         authortoday, "search_work", lambda t, a="": "https://author.today/work/42"
+    )
+    monkeypatch.setattr(
+        authortoday, "fetch_meta", lambda url: {"title": "T", "author": "A"}
     )
     monkeypatch.setattr(searchfloor, "search_book", lambda t, a="": None)
 

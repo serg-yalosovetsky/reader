@@ -188,6 +188,30 @@ def count_chapters(url: str) -> int | None:
             return None
 
 
+def fetch_meta(url: str) -> dict | None:
+    """Лёгкие метаданные книги AT (title/author/annotation/series[_index]) для
+    сверки идентичности через book_identity.same_book. Без скачивания глав."""
+    work_id = _work_id(url)
+    with httpx.Client(
+        timeout=20,
+        follow_redirects=True,
+        headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
+    ) as c:
+        try:
+            r = c.get(f"{_BASE}/work/{work_id}")
+            if r.status_code != 200:
+                return None
+            title, author, annotation, extra = _parse_work_meta(r.text)
+        except Exception:  # noqa: BLE001
+            return None
+    meta = {"title": title, "author": author, "annotation": annotation}
+    if extra.get("series"):
+        meta["series"] = extra["series"]
+    if extra.get("series_index"):
+        meta["series_index"] = extra["series_index"]
+    return meta
+
+
 def _login(c: httpx.Client, email: str, password: str) -> bool:
     """Войти в author.today через JSON API. Возвращает True если успешно."""
     try:

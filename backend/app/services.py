@@ -76,10 +76,19 @@ def _find_existing(session: Session, result: DownloadResult) -> Work | None:
         ).first()
         if w:
             return w
-    title_n = _norm(result.title)
-    if title_n:
+    from .book_identity import same_book, work_descriptor
+
+    ex = result.extra or {}
+    rd = {
+        "title": result.title or "",
+        "author": result.author or "",
+        "series": ex.get("series", ""),
+        "series_index": ex.get("series_index", 0),
+        "annotation": ex.get("annotation", ""),
+    }
+    if _norm(result.title):
         for w in session.exec(select(Work)).all():
-            if _norm(w.title) == title_n and _norm(w.author) == _norm(result.author):
+            if same_book(rd, work_descriptor(w)):
                 return w
     return None
 

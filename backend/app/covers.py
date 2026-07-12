@@ -176,8 +176,15 @@ def _mirror_urls(title: str, author: str, source_url: str) -> list[str]:
     if title:
         try:
             from ..downloaders import authortoday
+            from . import book_identity as _bi
 
-            add(authortoday.search_work(title, author or ""))
+            at_url = authortoday.search_work(title, author or "")
+            if at_url:
+                at_meta = authortoday.fetch_meta(at_url)
+                if at_meta and _bi.same_book(
+                    {"title": title, "author": author}, at_meta
+                ):
+                    add(at_url)  # верифицировано — не тёзка
         except Exception:  # noqa: BLE001 — зеркало не нашлось, не критично
             pass
         try:

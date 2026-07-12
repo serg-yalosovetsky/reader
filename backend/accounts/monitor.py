@@ -95,15 +95,28 @@ def _at_eligible(host: str, work_id: int | None, title: str) -> bool:
     return bool(work_id) and bool(title)
 
 
-def _check_at_source(title: str, author: str) -> tuple[str, int] | None:
-    """Ищем работу на author.today по названию. (at_url, at_chapters) или None.
-    Чистая сеть, без БД — вызывается из потоков. Запросы к AT анонимные."""
-    from ..downloaders import authortoday as _at
+def _descriptor(w) -> dict:
+    """Дескриптор книги для book_identity.same_book (из ORM-Work или None)."""
+    from ..app import book_identity as _bi
 
-    at_url = _at.search_work(title, author or "")
+    return _bi.work_descriptor(w) if w else {"title": "", "author": ""}
+
+
+def _check_at_source(our: dict) -> tuple[str, int] | None:
+    """Ищем ТУ ЖЕ книгу на author.today и ВЕРИФИЦИРУЕМ идентичность (не тёзку!)
+    через book_identity.same_book. Раньше матч шёл по названию — и тянулась чужая
+    книга-однофамилица с чужой обложкой, плодя дубли и перецепляя монитор.
+    (at_url, at_chapters) или None. Чистая сеть, без БД (вызывается из потоков)."""
+    from ..downloaders import authortoday as _at
+    from ..app import book_identity as _bi
+
+    at_url = _at.search_work(our.get("title", ""), our.get("author", "") or "")
     if not at_url:
         return None
-    at_cnt = _at.count_chapters(at_url)
+    at_meta = _at.fetch_meta(at_url)
+    if not at_meta or not _bi.same_book(our, at_meta):
+        return None  # тёзка/другая книга — не берём как «зеркало»
+    at_cnt = at_meta.get("chapters") or _at.count_chapters(at_url)
     if not at_cnt:
         return None
     return (at_url, at_cnt)
@@ -131,7 +144,7 @@ def _at_task(task: dict) -> tuple[str, int] | None:
     if not _at_eligible(task["host"], task["work_id"], task["title"]):
         return None
     try:
-        return _check_at_source(task["title"], task["author"])
+        return _check_at_source(task["our"])
     except Exception:  # noqa: BLE001
         return None
 
@@ -285,6 +298,7 @@ def check_all(
                 "work_id": mon.work_id,
                 "title": _w.title if _w else "",
                 "author": (_w.author if _w else "") or "",
+                "our": _descriptor(_w),
                 "has_update": mon.has_update,
             }
         )
@@ -429,9 +443,7 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     at_info = None
     if _at_eligible(host, work_id, _w.title if _w else ""):
         try:
-            at_info = _check_at_source(
-                _w.title if _w else "", (_w.author if _w else "") or ""
-            )
+            at_info = _check_at_source(_descriptor(_w))
         except Exception:
             pass
 

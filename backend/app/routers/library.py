@@ -31,35 +31,60 @@ def _dedup_works(session: Session) -> int:
     """Схлопнуть дубли книг (одинаковые название+автор): оставить самый полный
     файл, перевесить на него мониторинг, снести прогресс и файлы дублей.
     Возвращает число удалённых книг."""
-    groups: dict[tuple, list[Work]] = {}
+    from collections import defaultdict
+
+    from .. import book_identity as bi
+
+    def _dsc(w: Work) -> dict:
+        d = bi.work_descriptor(w)
+        d["annotation"] = w.description or ""
+        return d
+
+    # Группируем по базовому названию (дёшево), внутри — кластеризуем по same_book:
+    # одна книга с автором-ником и настоящим именем сливается, тёзки и разные тома —
+    # нет (устойчиво к записи автора на разных ресурсах).
+    buckets: dict[str, list[Work]] = defaultdict(list)
     for w in session.exec(select(Work)).all():
-        groups.setdefault((_norm(w.title), _norm(w.author)), []).append(w)
+        buckets[bi._title_key(w.title)[0]].append(w)
 
     removed_works = 0
-    for ws in groups.values():
+    for ws in buckets.values():
         if len(ws) <= 1:
             continue
-        ws.sort(
-            key=lambda w: _fsize(w.file_path), reverse=True
-        )  # самый полный — первым
-        keep = ws[0]
-        for dup in ws[1:]:
-            for m in session.exec(
-                select(Monitored).where(Monitored.work_id == dup.id)
-            ).all():
-                m.work_id = keep.id
-                session.add(m)
-            for p in session.exec(
-                select(Progress).where(Progress.work_id == dup.id)
-            ).all():
-                session.delete(p)
-            if dup.file_path and dup.file_path != keep.file_path:
-                try:
-                    os.remove(dup.file_path)
-                except OSError:
-                    pass
-            session.delete(dup)
-            removed_works += 1
+        clusters: list[list[Work]] = []
+        for w in ws:
+            for cl in clusters:
+                if bi.same_book(_dsc(w), _dsc(cl[0])):
+                    cl.append(w)
+                    break
+            else:
+                clusters.append([w])
+        for cl in clusters:
+            if len(cl) <= 1:
+                continue
+            # Безопасность: не сливаем сборники/омнибусы без автора (upload с пустым
+            # автором) — иначе рискуем склеить их с одиночной книгой того же названия.
+            if any(w.site == "upload" and not (w.author or "").strip() for w in cl):
+                continue
+            cl.sort(key=lambda w: _fsize(w.file_path), reverse=True)  # полный — первым
+            keep = cl[0]
+            for dup in cl[1:]:
+                for m in session.exec(
+                    select(Monitored).where(Monitored.work_id == dup.id)
+                ).all():
+                    m.work_id = keep.id
+                    session.add(m)
+                for p in session.exec(
+                    select(Progress).where(Progress.work_id == dup.id)
+                ).all():
+                    session.delete(p)
+                if dup.file_path and dup.file_path != keep.file_path:
+                    try:
+                        os.remove(dup.file_path)
+                    except OSError:
+                        pass
+                session.delete(dup)
+                removed_works += 1
     session.commit()
     return removed_works
 

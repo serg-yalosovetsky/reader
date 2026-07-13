@@ -1,5 +1,5 @@
 // Навигация, панели, жесты/клавиши, полноэкранный, проверка обновлений книги.
-import { $ } from './core/dom.js'
+import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { prefs } from './core/prefs.js'
 import { view, currentWork, bookDoc, lastIdx, libWorks, navStack,
@@ -166,16 +166,21 @@ $('#update-btn').addEventListener('click', async () => {
   try {
     const res = await api.post(`/api/monitored/check/${workId}`)
     if (res.error) {
-      btn.dataset.state = 'err'; btn.title = res.error === 'not_monitored' ? 'Книга не отслеживается' : res.error
+      const emsg = res.error === 'not_monitored' ? 'Книга не отслеживается' : `Ошибка: ${res.error}`
+      btn.dataset.state = 'err'; btn.title = emsg
+      toast(emsg, 'err')
       setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
       return
     }
     if (res.downloaded) {
-      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.) — перезагружаем...`
+      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.)`
+      toast(`Загружено новых глав до ${res.chapters_found} — открываю обновлённую книгу`, 'ok')
     } else if (res.has_update) {
-      btn.dataset.state = 'ok'; btn.title = `Обновление есть, но загрузить не удалось`
+      btn.dataset.state = 'err'; btn.title = 'Обновление есть, но скачать не удалось'
+      toast('Обновление есть, но скачать не удалось. Попробуйте позже.', 'err')
     } else {
-      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет — перезагружаем...'
+      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет'
+      toast('Новых глав нет — книга актуальна', 'info')
     }
     // Всегда перезагружаем epub: он мог обновиться плановым чеком пока книга была открыта
     await loadLibrary()
@@ -183,6 +188,7 @@ $('#update-btn').addEventListener('click', async () => {
     if (freshWork) { await openReader(freshWork); return }
   } catch {
     btn.dataset.state = 'err'; btn.title = 'Ошибка проверки'
+    toast('Не удалось проверить обновления (сеть?)', 'err')
   }
   setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
 })

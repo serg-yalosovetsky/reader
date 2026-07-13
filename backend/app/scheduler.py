@@ -53,6 +53,9 @@ def _monitor_job() -> None:
 def _calibre_sync_job() -> None:
     # Пере-синк каталога Calibre в Work-ссылки: новые книги появляются в
     # библиотеке ридера, метаданные обновляются. Файлы не копируются.
+    # Затем — дедуп: calibre-стабы (site=calibre, без файла) плодят дубли уже
+    # скачанных книг (ник vs имя автора на разных ресурсах). Раньше дедуп был
+    # только ручной (POST /api/library/maintenance) → дубли копились.
     from ..calibre import sync as csync
     try:
         with Session(engine) as session:
@@ -60,6 +63,20 @@ def _calibre_sync_job() -> None:
         log.info("Calibre catalog sync: %s", res)
     except Exception as e:  # noqa: BLE001
         log.warning("Calibre catalog sync failed: %s", e)
+    try:
+        from .routers.library import _dedup_works
+        from ..accounts.dedup import dedup_monitored
+
+        with Session(engine) as session:
+            removed = _dedup_works(session)
+            removed_mon = dedup_monitored(session).get("removed", 0)
+        if removed or removed_mon:
+            log.info(
+                "Auto-dedup after calibre sync: works=%s monitored=%s",
+                removed, removed_mon,
+            )
+    except Exception as e:  # noqa: BLE001
+        log.warning("Auto-dedup failed: %s", e)
 
 
 def _ficbook_feed_job() -> None:

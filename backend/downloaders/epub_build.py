@@ -54,8 +54,17 @@ def build_epub(
         if heading:
             toc.append(item)
 
-    # Если заголовков не было — одну запись оглавления на книгу.
-    book.toc = tuple(toc) if toc else (spine[0],) if spine else ()
+    # TOC: секции с заголовками — по ним. Если заголовков нет, но секций несколько
+    # (readli/searchfloor отдают постранично, heading=None) — ВСЕ в оглавление
+    # («Часть N»), иначе читалка показывала только первую. Одна секция — одна запись.
+    if toc:
+        book.toc = tuple(toc)
+    elif len(spine) > 1:
+        book.toc = tuple(spine)
+    elif spine:
+        book.toc = (spine[0],)
+    else:
+        book.toc = ()
     book.add_item(epub.EpubNcx())
     book.spine = spine
 

@@ -1,7 +1,8 @@
 // Библиотека: список книг, ingest/upload, ReadEra-sync, тема библиотеки.
-import { $, escapeHtml } from './core/dom.js'
+import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { prefs, savePrefs } from './core/prefs.js'
+import { currentWork } from './core/state.js'
 import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
          setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
@@ -49,8 +50,29 @@ function coverImg(src, title) {
 }
 
 // ===================== БИБЛИОТЕКА =====================
+// Снимок числа глав по книгам — чтобы заметить фоновую авто-докачку и показать toast.
+// В памяти (не localStorage): при перезагрузке страницы пере-сеется, без устаревших пушей.
+let _chapSnap = null
+function detectAutoUpdates() {
+  const cur = new Map(libWorks.map((w) => [w.id, w.chapters_count || 0]))
+  if (_chapSnap === null) { _chapSnap = cur; return }  // первый заход — сеем базу без toast
+  const grown = []
+  for (const [id, n] of cur) {
+    const prev = _chapSnap.get(id)
+    // Пропускаем текущую открытую книгу — по ней уже был toast ручного обновления.
+    if (prev !== undefined && n > prev && id !== currentWork?.id) {
+      const w = libWorks.find((x) => x.id === id)
+      grown.push({ title: w?.title || 'Книга', n })
+    }
+  }
+  _chapSnap = cur
+  if (grown.length === 1) toast(`«${grown[0].title}» обновлена сама — ${grown[0].n} гл.`, 'ok', 6000)
+  else if (grown.length > 1) toast(`Обновилось книг: ${grown.length} — есть новые главы`, 'ok', 6000)
+}
+
 export async function loadLibrary() {
   setLibWorks(await api.get('/api/library'))
+  detectAutoUpdates()
   // Один батч-запрос вместо N последовательных (раньше книги появлялись через 3-5с).
   const [monitored, progAll] = await Promise.all([
     api.get('/api/monitored').catch(() => []),

@@ -27,9 +27,24 @@ def _antiforgery(html: str) -> str:
     return m.group(1) if m else ""
 
 
+def _cookies_dict(jar_holder) -> dict:
+    """Куки → dict без конфликтов: дубли имён (домен/поддомен, напр. __ddg8_ на
+    author.today и .author.today) валили _cookies_dict(c.cookies) — берём последнее."""
+    jar = getattr(jar_holder, "jar", jar_holder)
+    out = {}
+    try:
+        for ck in jar:
+            out[ck.name] = ck.value
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _ficbook_book_id(url: str) -> str | None:
     """Извлечь book_id из ficbook URL (работает и с chapter_id и без)."""
-    m = re.search(r'/readfic/(\d+)', url)
+    # Id бывает числовым (12245524) и UUID (019cba23-6719-...). Старый \d+
+    # обрезал UUID до ведущих цифр («019») → плодились подписки на битые URL.
+    m = re.search(r'/readfic/([0-9a-f-]+)', url)
     return m.group(1) if m else None
 
 
@@ -73,7 +88,7 @@ def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list
             book_id = _ficbook_book_id(url)
             if book_id:
                 urls.append(f"https://ficbook.net/readfic/{book_id}")
-    return list(dict.fromkeys(urls)), dict(c.cookies)
+    return list(dict.fromkeys(urls)), _cookies_dict(c.cookies)
 
 
 # ----------------- author.today -----------------
@@ -99,7 +114,7 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str]
                           headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
             feed = c.get("https://author.today/feed")
             if "account/logoff" in feed.text or "logOff" in feed.text:
-                return _at_updates_from_feed(c), dict(c.cookies)
+                return _at_updates_from_feed(c), _cookies_dict(c.cookies)
         # cookie протухла — пробуем обычный вход ниже.
     with httpx.Client(timeout=40, follow_redirects=True,
                       headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
@@ -121,7 +136,7 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str]
         if not res.get("isSuccessful", False):
             msg = "; ".join(res.get("messages") or []) or "не удалось войти"
             raise RuntimeError(f"author.today: {msg}")
-        return _at_updates_from_feed(c), dict(c.cookies)
+        return _at_updates_from_feed(c), _cookies_dict(c.cookies)
 
 
 # ----------------- fanfics.me -----------------
@@ -133,7 +148,7 @@ def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list
         if '<form name="autent"' in r.text:
             raise RuntimeError("fanfics.me: не удалось войти")
         # TODO: разведать страницу обновлений подписок fanfics.me на живой сессии.
-        return [], dict(c.cookies)
+        return [], _cookies_dict(c.cookies)
 
 
 _ADAPTERS = {

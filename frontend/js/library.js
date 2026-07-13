@@ -7,7 +7,7 @@ import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
          setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
 import { openBookPage, bookPageMeta } from './book-page.js'
-import { isOffline } from './core/offline.js'
+import { isOffline, removeBook, downloadBook } from './core/offline.js'
 
 // ---- Ленивая подгрузка обложек ----
 // Раньше карточки рендерились с готовым <img src>, и браузер разом запрашивал
@@ -51,23 +51,50 @@ function coverImg(src, title) {
 
 // ===================== БИБЛИОТЕКА =====================
 // Снимок числа глав по книгам — чтобы заметить фоновую авто-докачку и показать toast.
-// В памяти (не localStorage): при перезагрузке страницы пере-сеется, без устаревших пушей.
-let _chapSnap = null
+// В localStorage: in-memory снапшот пересеивался при каждой перезагрузке, и toast
+// про фоновые докачки практически никогда не доживал до пользователя.
+const SNAP_KEY = 'reader:chapSnap'
+function loadSnap() {
+  try { const v = JSON.parse(localStorage.getItem(SNAP_KEY)); return v ? new Map(v) : null }
+  catch { return null }
+}
+function saveSnap(m) { try { localStorage.setItem(SNAP_KEY, JSON.stringify([...m])) } catch { /* quota */ } }
+let _chapSnap = loadSnap()
 function detectAutoUpdates() {
   const cur = new Map(libWorks.map((w) => [w.id, w.chapters_count || 0]))
-  if (_chapSnap === null) { _chapSnap = cur; return }  // первый заход — сеем базу без toast
+  if (_chapSnap === null) { _chapSnap = cur; saveSnap(cur); return }  // первый заход — сеем базу без toast
   const grown = []
   for (const [id, n] of cur) {
     const prev = _chapSnap.get(id)
     // Пропускаем текущую открытую книгу — по ней уже был toast ручного обновления.
     if (prev !== undefined && n > prev && id !== currentWork?.id) {
       const w = libWorks.find((x) => x.id === id)
-      grown.push({ title: w?.title || 'Книга', n })
+      grown.push({ id, title: w?.title || 'Книга', n })
     }
   }
   _chapSnap = cur
+  saveSnap(cur)
   if (grown.length === 1) toast(`«${grown[0].title}» обновлена сама — ${grown[0].n} гл.`, 'ok', 6000)
   else if (grown.length > 1) toast(`Обновилось книг: ${grown.length} — есть новые главы`, 'ok', 6000)
+  // Обновившиеся офлайн-копии освежаем в фоне: читалка открывает книги
+  // cache-first, и без переустановки копии открывался бы старый файл.
+  for (const g of grown) {
+    if (isOffline(g.id)) removeBook(g.id).then(() => downloadBook(g.id)).catch(() => {})
+  }
+}
+
+// Плашка в шапке: сколько подписок нашли обновление, но оно ещё не скачано.
+// Видит и подписки без карточки (ficbook-сироты, у которых ещё нет work_id).
+function renderPendingPill(monitored) {
+  const pill = $('#pending-pill')
+  if (!pill) return
+  const n = (monitored || []).filter((m) => m.has_update).length
+  pill.hidden = n === 0
+  if (n) {
+    pill.textContent = `⬇ ${n}`
+    pill.title = `Обновлений ждут скачивания: ${n} — открыть «Аккаунты»`
+    pill.onclick = () => $('#accounts-btn')?.click()
+  }
 }
 
 export async function loadLibrary() {
@@ -80,6 +107,7 @@ export async function loadLibrary() {
   ])
   setLibUpdated(new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id)))
   setLibMonitored(new Set(monitored.filter((m) => m.work_id).map((m) => m.work_id)))
+  renderPendingPill(monitored)
   setLibProgress(progAll || {})
   // Единый класс «недавняя активность»: и обновление глав, и открытие/чтение
   // бампят work.updated_at на бэке. Сортируем строго по свежести — самое свежее
@@ -223,8 +251,12 @@ function bookCard(w, ratio, hasUpdate) {
   const cover = coverImg(`/api/reader/${w.id}/cover?v=${w.cover_v||0}`, w.title)
   const badge = showUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
+  // Явное состояние чтения: ✓ у дочитанной, процент у начатой — 5px-полосы
+  // прогресса не хватало, «не видно, что книга прочитана/начата».
+  const readBadge = done ? '<span class="read-badge" title="Прочитано">✓</span>' : ''
+  const pctBadge = readState === 'partial' ? `<span class="pct-badge">${pct}%</span>` : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}${badge}${offBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
+    <div class="book-cover">${cover}${badge}${offBadge}${readBadge}${pctBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author${w.author ? ' b-link' : ''}" data-flt="author">${escapeHtml(w.author || '')}</div>

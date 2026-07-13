@@ -98,6 +98,12 @@ self.addEventListener('fetch', (e) => {
   }
   // Прочие API: network-first с кэш-фолбэком.
   if (url.pathname.startsWith('/api/')) {
+    // Статус фоновой проверки не кэшируем: кэшированный «done» прошлой
+    // проверки выглядел бы как итог текущей.
+    if (url.pathname === '/api/monitored/check/status') {
+      e.respondWith(fetch(req))
+      return
+    }
     e.respondWith(networkFirst(req, API_CACHE))
     return
   }

@@ -99,6 +99,9 @@ class Monitored(SQLModel, table=True):
     last_seen_chapters: int = 0
     has_update: bool = False
     last_checked: Optional[datetime] = None
+    # Ошибки автодокачки: счётчик подряд неудач (для backoff) и текст последней.
+    fail_count: int = 0
+    last_error: Optional[str] = None
 
 
 class SyncState(SQLModel, table=True):

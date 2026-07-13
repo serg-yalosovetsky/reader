@@ -27,8 +27,14 @@ async function loadMonitored() {
   for (const m of items) {
     const row = document.createElement('div'); row.className = 'mon-row' + (m.has_update ? ' has-update' : '')
     const name = m.title || m.source_url
+    // Ошибка автодокачки — раньше провалы были видны только в логах сервера.
+    const paused = (m.fail_count || 0) >= 5
+    const errTip = escapeHtml(m.last_error || '').replace(/"/g, '&quot;')
+    const errBadge = m.has_update && m.last_error
+      ? ` <span class="badge badge-err" title="${errTip}">${paused ? 'не качается — на паузе' : 'скачать не удалось'}</span>`
+      : ''
     row.innerHTML = `<span class="mon-title">${escapeHtml(name)}</span>` +
-      `<span>${m.last_seen_chapters} гл.${m.has_update ? ' <span class="badge">обновление</span>' : ''}</span>`
+      `<span>${m.last_seen_chapters} гл.${m.has_update ? ' <span class="badge">обновление</span>' : ''}${errBadge}</span>`
     box.append(row)
   }
 }

@@ -258,6 +258,8 @@ def _download_and_write(
     mon = session.get(Monitored, mon_id)  # re-fetch после commit
     mon.work_id = work.id
     mon.has_update = False
+    mon.fail_count = 0
+    mon.last_error = None
     mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
     mon.last_checked = utcnow()
     session.add(mon)
@@ -271,6 +273,12 @@ def _download_and_write(
     session.commit()  # один быстрый commit: cover_path + mon + дубликаты
 
     return {"downloaded": True, "source_used": best_url}
+
+
+# После стольких подряд неудач автодокачки подписка выводится из авторетрая
+# (карусель «качаем→падаем» каждый тик душила VPS и бампала updated_at).
+# Сбрасывается ручной проверкой (POST /api/monitored/check) или успехом.
+_MAX_FAILS = 5
 
 
 def check_all(
@@ -331,6 +339,7 @@ def check_all(
                 "author": (_w.author if _w else "") or "",
                 "our": _descriptor(_w),
                 "has_update": mon.has_update,
+                "last_seen": mon.last_seen_chapters,
             }
         )
     # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
@@ -341,9 +350,13 @@ def check_all(
     for i, t in enumerate(tasks):
         if progress_cb:
             progress_cb(i + 1, total_tasks, t["title"] or t["url"], t["host"])
-        if t.get("has_update"):
-            cur_by[t["mon_id"]] = None  # skip; в фазе 2 — прямая докачка
+        if t.get("has_update") and not t.get("last_seen"):
+            # Initial/сирота: сравнивать не с чем — прямая докачка в фазе 2.
+            cur_by[t["mon_id"]] = None
         else:
+            # Для has_update с известным last_seen СЧИТАЕМ главы: ficbook-лента
+            # метит любую активность автора, и без сверки ложный флаг гонял
+            # полную перекачку каждый тик.
             cur_by[t["mon_id"]] = _count_chapters_task(t)
     # 1b) Поиск на author.today — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
     at_by: dict[int, tuple[str, int] | None] = {}
@@ -364,7 +377,10 @@ def check_all(
         cur, at_info = counts.get(mon.id, (None, None))
         checked += 1
         if cur is None:
-            if not (mon.has_update and auto_download):
+            if (
+                not (mon.has_update and auto_download)
+                or (mon.fail_count or 0) >= _MAX_FAILS
+            ):
                 mon.last_checked = utcnow()
                 session.add(mon)
                 session.commit()
@@ -392,6 +408,11 @@ def check_all(
                 detail["error"] = str(e)[:200]
                 _log.warning("reader download error: %s", e)
                 mon = session.get(Monitored, mon.id)
+                if mon is None:  # мог быть удалён параллельным дедупом
+                    details.append(detail)
+                    continue
+                mon.fail_count = (mon.fail_count or 0) + 1
+                mon.last_error = str(e)[:300]
                 mon.last_checked = utcnow()
                 session.add(mon)
                 session.commit()
@@ -406,10 +427,17 @@ def check_all(
                 best_url = at_url
                 best_cur = at_cnt
         needs_initial = not mon.work_id and best_cur > 0
+        if mon.has_update and best_cur and best_cur <= mon.last_seen_chapters:
+            # Ложный флаг (лента метит любую активность автора): на сайте глав
+            # не больше, чем уже видели — снимаем без перекачки.
+            mon.has_update = False
+            mon.fail_count = 0
+            mon.last_error = None
+            session.add(mon)
         if (
             best_cur > mon.last_seen_chapters
             or needs_initial
-            or (mon.has_update and auto_download)
+            or (mon.has_update and auto_download and (mon.fail_count or 0) < _MAX_FAILS)
         ):
             mon.has_update = True
             updated += 1
@@ -428,9 +456,16 @@ def check_all(
                 except Exception as e:  # noqa: BLE001
                     detail["error"] = str(e)[:200]
                     _log.warning("reader download error: %s", e)
+                    _mf = session.get(Monitored, mon.id)
+                    if _mf is not None:
+                        _mf.fail_count = (_mf.fail_count or 0) + 1
+                        _mf.last_error = str(e)[:300]
+                        session.add(_mf)
             details.append(detail)
         # last_seen двигаем только если докачка удалась или обновлений нет
         mon = session.get(Monitored, mon.id)  # re-fetch после возможного commit
+        if mon is None:  # мог быть удалён параллельным дедупом
+            continue
         if not mon.has_update:
             mon.last_seen_chapters = max(mon.last_seen_chapters, cur or 0)
         mon.last_checked = utcnow()
@@ -519,6 +554,18 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     return detail
 
 
+def reset_fail_counters(session: Session) -> int:
+    """Снять backoff со всех подписок (ручной запуск проверки = новая попытка)."""
+    n = 0
+    for mon in session.exec(select(Monitored).where(Monitored.fail_count > 0)).all():
+        mon.fail_count = 0
+        session.add(mon)
+        n += 1
+    if n:
+        session.commit()
+    return n
+
+
 def list_monitored(session: Session) -> list[dict]:
     """Список отслеживаемого с заголовками работ (для UI), без дубликатов."""
     out = []
@@ -541,6 +588,8 @@ def list_monitored(session: Session) -> list[dict]:
                 "last_seen_chapters": mon.last_seen_chapters,
                 "has_update": mon.has_update,
                 "last_checked": mon.last_checked,
+                "fail_count": mon.fail_count or 0,
+                "last_error": mon.last_error,
             }
         )
     return out

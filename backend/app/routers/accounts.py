@@ -60,12 +60,15 @@ def add_monitored(body: MonitorIn, session: Session = Depends(get_session)) -> d
 
 
 @router.post("/monitored/check")
-def check_now() -> dict:
+def check_now(session: Session = Depends(get_session)) -> dict:
     """Запустить проверку обновлений в фоне и сразу вернуть управление.
 
     Раньше проверка шла синхронно и при 38 фиклах вылезала за nginx-таймаут (60s)
     → 504. Теперь стартуем фоновый поток и отдаём {status}; результат фронт
     забирает поллингом GET /api/monitored/check/status."""
+    # Ручной запуск = пользователь просит попробовать снова: снимаем backoff
+    # с подписок, выведенных из авторетрая после серии неудач.
+    monitor.reset_fail_counters(session)
     return check_job.start("manual")
 
 

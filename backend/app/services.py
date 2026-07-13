@@ -217,11 +217,15 @@ def register_download(result: DownloadResult, session: Session) -> Work:
             if fuller or better_structure:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
+                # Файл реально заменён — только это событие бампает updated_at.
+                # Библиотека сортируется по updated_at; безусловный бамп при
+                # no-op перекачке (тот же sha1 / не полнее) поднимал книгу на
+                # каждом тике монитора и заглушал сигнал «недавно читал».
+                existing.updated_at = utcnow()
                 if cur_rich and new_rich > cur_rich:
                     _unfinish_progress(session, existing.id, cur_rich, new_rich)
         if result.source_url and not existing.source_url:
             existing.source_url = result.source_url
-        existing.updated_at = utcnow()
         session.add(existing)
         session.commit()
         session.refresh(existing)

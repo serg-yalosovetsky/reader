@@ -167,7 +167,6 @@ def migrate_local_to_refs(session: Session, dry_run: bool = True) -> dict:
             if not w.genres and b.get("tags"):
                 w.genres = json.dumps(b["tags"], ensure_ascii=False)
             w.meta_synced = True
-            w.updated_at = utcnow()
             session.add(w)
             assigned[cid] = w
             if old_file and os.path.exists(old_file):
@@ -199,10 +198,16 @@ def sync_catalog(session: Session) -> dict:
     """Upsert Work-ссылки по всем книгам Calibre (site=calibre). Идемпотентно."""
     if not client.http_mode():
         return {"status": "skipped", "reason": "not http mode"}
+    from ..app import book_identity as bi
+
+    # calibre_id может «переехать» на не-calibre работу при дедупе — матчимся
+    # по нему среди ВСЕХ работ, иначе синк пересоздавал бы удалённый дубль.
     existing: dict[int, Work] = {}
-    for w in session.exec(select(Work).where(Work.site == "calibre")).all():
+    by_title: dict[tuple, list[Work]] = {}
+    for w in session.exec(select(Work)).all():
         if w.calibre_id is not None:
             existing[w.calibre_id] = w
+        by_title.setdefault(bi._title_key(w.title), []).append(w)
 
     added = updated = 0
     seen = set()
@@ -216,6 +221,29 @@ def sync_catalog(session: Session) -> dict:
         desc = b.get("description") or ""
         w = existing.get(cid)
         if w is None:
+            # Книга уже есть из другого источника (upload/AT/...)? Привязываем
+            # calibre_id к ней вместо создания стаба-дубля: то же нормализованное
+            # название (с томом) и совместимый автор (пустой или совпадающий).
+            cand = None
+            cal_a = (b["authors"] or "").strip().lower()
+            for ex in by_title.get(bi._title_key(b["title"]), []):
+                if ex.calibre_id is not None:
+                    continue
+                ex_a = (ex.author or "").strip().lower()
+                if not ex_a or not cal_a or ex_a == cal_a \
+                        or ex_a in cal_a or cal_a in ex_a:
+                    cand = ex
+                    break
+            if cand is not None:
+                cand.calibre_id = cid
+                if desc and not cand.description:
+                    cand.description = desc
+                if genres != "[]" and not cand.genres:
+                    cand.genres = genres
+                session.add(cand)
+                existing[cid] = cand
+                updated += 1
+                continue
             session.add(
                 Work(
                     title=b["title"],
@@ -246,7 +274,8 @@ def sync_catalog(session: Session) -> dict:
                 w.genres = genres
                 changed = True
             if changed:
-                w.updated_at = utcnow()
+                # Обогащение метаданных — не контент-событие: updated_at не
+                # бампаем, иначе плановый синк ломает сортировку библиотеки.
                 session.add(w)
                 updated += 1
     session.commit()

@@ -80,6 +80,17 @@ def _dedup_works(session: Session) -> int:
             cl.sort(key=lambda w: _fsize(w.file_path), reverse=True)  # полный — первым
             keep = cl[0]
             for dup in cl[1:]:
+                # Переносим на выжившего то, чего у него нет: calibre_id (иначе
+                # следующий calibre-синк пересоздаст удалённый дубль — рецидив),
+                # описание и обложку.
+                if dup.calibre_id is not None and keep.calibre_id is None:
+                    keep.calibre_id = dup.calibre_id
+                if dup.description and not keep.description:
+                    keep.description = dup.description
+                if dup.cover_path and not keep.cover_path:
+                    keep.cover_path = dup.cover_path
+                    keep.cover_source = dup.cover_source
+                session.add(keep)
                 for m in session.exec(
                     select(Monitored).where(Monitored.work_id == dup.id)
                 ).all():

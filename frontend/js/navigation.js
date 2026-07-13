@@ -7,6 +7,7 @@ import { view, currentWork, bookDoc, lastIdx, libWorks, navStack,
 import { ttsStop } from './tts.js'
 import { loadLibrary } from './library.js'
 import { openReader, applyViewStyles } from './reader-core.js'
+import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
 
 // ===================== Навигация и панели =====================
@@ -175,6 +176,11 @@ $('#update-btn').addEventListener('click', async () => {
     if (res.downloaded) {
       btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.)`
       toast(`Загружено новых глав до ${res.chapters_found} — открываю обновлённую книгу`, 'ok')
+      // Освежаем офлайн-копию: openReader читает cache-first, и без
+      // переустановки записи открылся бы СТАРЫЙ файл, а не докачанный.
+      if (isOffline(workId)) {
+        try { await removeBook(workId); await downloadBook(workId) } catch { /* офлайн-копия снята, книга откроется из сети */ }
+      }
     } else if (res.has_update) {
       btn.dataset.state = 'err'; btn.title = 'Обновление есть, но скачать не удалось'
       toast('Обновление есть, но скачать не удалось. Попробуйте позже.', 'err')

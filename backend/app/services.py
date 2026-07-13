@@ -149,6 +149,44 @@ def _unfinish_progress(session: Session, work_id: int, old_len: int, new_len: in
         session.add(prog)
 
 
+_GENERIC_SECTION = re.compile(
+    r"^(часть|part|страница|page|раздел|section)\s*[\dIVXLCM]+$", re.I
+)
+
+
+def _real_chapters(path, fmt) -> int:
+    """Число секций с ОСМЫСЛЕННЫМ заголовком главы (не плейсхолдер «Часть N»).
+    Отличает книгу с реальной разбивкой (author.today/новый readli — «Глава N»,
+    именованные главы) от page-blob («Часть 1..N») или цельного файла. Заголовок
+    книги в TOC тоже считается, но это одинаковая добавка у обоих сравниваемых —
+    на относительное сравнение не влияет."""
+    import zipfile
+
+    try:
+        p = str(path)
+        low = (fmt or "").lower()
+        titles: list[str] = []
+        if low == "epub" or p.lower().endswith(".epub"):
+            z = zipfile.ZipFile(p)
+            ncx = [n for n in z.namelist() if n.lower().endswith(".ncx")]
+            if ncx:
+                titles = re.findall(
+                    r"<text>(.*?)</text>", z.read(ncx[0]).decode("utf-8", "ignore"), re.S
+                )
+        elif low == "fb2" or p.lower().endswith(".fb2"):
+            with open(p, encoding="utf-8", errors="ignore") as fh:
+                data = fh.read()
+            titles = re.findall(r"<section[^>]*>\s*<title>(.*?)</title>", data, re.S)
+        real = 0
+        for raw in titles:
+            ttl = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
+            if ttl and not _GENERIC_SECTION.match(ttl):
+                real += 1
+        return real
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def register_download(result: DownloadResult, session: Session) -> Work:
     src = Path(result.file_path)
     sha1 = sha1_of_file(src)
@@ -164,7 +202,19 @@ def register_download(result: DownloadResult, session: Session) -> Work:
                 else 0
             )
             new_rich = _richness(str(src), result.file_format)
-            if cur_rich == 0 or new_rich > cur_rich:
+            # Структурная оценка: сколько реальных глав (не «Часть N»-плейсхолдеров).
+            cur_ch = (
+                _real_chapters(existing.file_path, existing.file_format)
+                if existing.file_path and Path(existing.file_path).exists()
+                else 0
+            )
+            new_ch = _real_chapters(str(src), result.file_format)
+            # Заменяем если: (а) новый полнее по тексту, ИЛИ (б) у нового ЕСТЬ реальная
+            # разбивка на главы, а у текущего заметно меньше, при почти равном объёме
+            # (не короче 90%) — структурный апгрейд page-blob → реальные главы.
+            fuller = cur_rich == 0 or new_rich > cur_rich
+            better_structure = new_ch > cur_ch and new_rich >= cur_rich * 0.9
+            if fuller or better_structure:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
                 if cur_rich and new_rich > cur_rich:

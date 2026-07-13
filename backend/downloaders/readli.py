@@ -168,15 +168,18 @@ def download(url: str) -> DownloadResult:
         title, total = _parse_head(soup)
         author = _parse_author(soup)
 
-        sections: list[tuple[str | None, str]] = []
-        sections.append((None, _extract_text(soup)))
+        # Собираем HTML ВСЕХ страниц (с сохранением <h3>Глава N</h3>), затем режем
+        # на реальные главы — readli пагинирует книгу, но главы размечены <h3> и
+        # тянутся через несколько страниц. Резать по страницам = терять главы.
+        pages_html: list[str] = [_page_html(soup)]
         for n in range(2, total + 1):
-            s = BeautifulSoup(_get(c, page_url(n)).text, "lxml")
-            sections.append((None, _extract_text(s)))
+            pages_html.append(_page_html(BeautifulSoup(_get(c, page_url(n)).text, "lxml")))
             time.sleep(0.2)
 
-    if not any(html.strip() for _, html in sections):
+    full = "".join(pages_html)
+    if not full.strip():
         raise DownloaderError("readli: не удалось извлечь текст книги")
+    sections = _split_chapters(full)
 
     cover = None
     try:
@@ -221,6 +224,43 @@ def _parse_author(soup: BeautifulSoup) -> str:
         or soup.select_one(".book__author a")
     )
     return a.get_text(strip=True) if a else ""
+
+
+def _page_html(soup: BeautifulSoup) -> str:
+    """Внутренний HTML читалки-страницы С СОХРАНЕНИЕМ структуры (заголовки <h3> глав
+    + абзацы), в отличие от _extract_text (только <p>). Чистим скрипты/рекламу."""
+    box = soup.select_one("div.reading__text") or soup.select_one(
+        "article.reading__content"
+    )
+    if not box:
+        return ""
+    for bad in box.find_all(["script", "style", "ins", "iframe"]):
+        bad.decompose()
+    return box.decode_contents()
+
+
+def _split_chapters(full_html: str) -> list[tuple[str | None, str]]:
+    """Разрезать склеенный HTML книги на реальные главы по заголовкам <h3> (readli
+    помечает ими «Глава N»). Возвращает [(заголовок|None, html_главы)]. Нет заголовков
+    — одна секция (fallback, книга не пустая)."""
+    frag = BeautifulSoup(full_html, "html.parser")
+    chapters: list[tuple[str | None, list[str]]] = []
+    cur_title: str | None = None
+    cur_parts: list[str] = []
+    for el in frag.children:
+        name = getattr(el, "name", None)
+        if name in ("h1", "h2", "h3", "h4"):
+            if cur_parts or cur_title:
+                chapters.append((cur_title, cur_parts))
+            cur_title = el.get_text(" ", strip=True) or None
+            cur_parts = []
+        else:
+            cur_parts.append(str(el))
+    if cur_parts or cur_title:
+        chapters.append((cur_title, cur_parts))
+    out = [(ttl, "".join(parts).strip()) for ttl, parts in chapters]
+    out = [(ttl, html) for ttl, html in out if html or ttl]
+    return out or [(None, full_html)]
 
 
 def _extract_text(soup: BeautifulSoup) -> str:

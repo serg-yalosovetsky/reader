@@ -220,6 +220,14 @@ def _download_and_write(
     mon_id = mon.id
     title = work_obj.title if work_obj else ""
     author = (work_obj.author if work_obj else "") or ""
+    # Снимок дескриптора ДО expires — для сверки идентичности кандидатов-зеркал.
+    descriptor = {
+        "title": title,
+        "author": author,
+        "annotation": (work_obj.description if work_obj else "") or "",
+        "file_path": work_obj.file_path if work_obj else None,
+        "file_format": work_obj.file_format if work_obj else None,
+    }
     creds = store.creds_for_host(session, _host(best_url))
 
     # Закрываем ВСЕ pending-изменения — после этого нет открытой транзакции
@@ -227,7 +235,12 @@ def _download_and_write(
 
     # Сеть — транзакций нет вообще
     cover_bytes = _fetch_at_cover_bytes(src_url, title, author)
-    res = chain.fetch(best_url, creds=creds)
+    # Выбираем САМЫЙ ПОЛНЫЙ источник: качаем текущий + зеркала (AT/searchfloor/
+    # readli), верифицируем same_book, берём вариант с бо́льшим объёмом текста.
+    # Фолбэк на прямую докачку, если авто-выбор ничего не дал.
+    res = chain.fetch_fullest(
+        title, author, primary_url=best_url, creds=creds, descriptor=descriptor
+    ) or chain.fetch(best_url, creds=creds)
 
     # Быстрая запись (< секунды)
     work = register_download(res, session)  # внутренний commit
@@ -235,7 +248,10 @@ def _download_and_write(
     # Полный fb2-зеркала (searchfloor) не разбит на главы → num_chapters=0, и
     # register_download оставляет старый счётчик. Проставим известное из монитора
     # число глав (best_cur), иначе UI показывает устаревший «N гл».
-    if best_cur and (work.chapters_count or 0) < best_cur:
+    # Заполняем счётчик глав из монитора ТОЛЬКО если адаптер его не дал (searchfloor
+    # отдаёт цельный FB2, num_chapters=0). Иначе (readli/AT — реальные главы) не
+    # затираем настоящее число «страничным» best_cur (у readli это число страниц).
+    if best_cur and not (work.chapters_count or 0):
         work.chapters_count = best_cur
         session.add(work)
 

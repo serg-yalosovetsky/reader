@@ -119,6 +119,88 @@ def _richness(result: "DownloadResult") -> int:
             return 0
 
 
+def fetch_fullest(
+    title: str,
+    author: str = "",
+    primary_url: str | None = None,
+    creds: tuple[str, str] | None = None,
+    descriptor: dict | None = None,
+) -> DownloadResult | None:
+    """Скачать книгу из ВСЕХ доступных источников и вернуть САМЫЙ ПОЛНЫЙ вариант.
+
+    Источники: текущий primary_url + зеркала, найденные поиском (author.today,
+    searchfloor, readli). Каждый кандидат верифицируется book_identity.same_book
+    (защита от тёзок/чужих томов), полнота меряется _richness (длина текста).
+    descriptor — наш дескриптор {title,author,annotation,file_path,file_format}
+    для сверки идентичности. None — ни один источник не отдал валидный вариант."""
+    from ..app import book_identity as bi
+
+    cands: list[DownloadResult] = []
+
+    def _consider(res: "DownloadResult | None") -> None:
+        if not res or not getattr(res, "file_path", None):
+            return
+        if descriptor:
+            cand = {
+                "title": res.title or "",
+                "author": res.author or "",
+                "annotation": (res.extra or {}).get("annotation", ""),
+            }
+            gtb = lambda: bi.extract_text_sample(res.file_path, res.file_format)
+            gta = (
+                (lambda: bi.extract_text_sample(
+                    descriptor.get("file_path"), descriptor.get("file_format")))
+                if descriptor.get("file_path")
+                else None
+            )
+            try:
+                if not bi.same_book(descriptor, cand, get_text_a=gta, get_text_b=gtb):
+                    return
+            except Exception:  # noqa: BLE001 — сверка не должна валить докачку
+                pass
+        cands.append(res)
+
+    # 1) текущий источник (как есть, с creds для закрытого контента)
+    if primary_url:
+        try:
+            _consider(fetch(primary_url, creds=creds))
+        except Exception:  # noqa: BLE001
+            pass
+    # 2) author.today по названию/автору (volume-aware search_work)
+    if title:
+        try:
+            from . import authortoday
+
+            at_url = authortoday.search_work(title, author)
+            if at_url and at_url != primary_url:
+                _consider(authortoday.download(at_url))
+        except Exception:  # noqa: BLE001
+            pass
+        # 3) searchfloor
+        try:
+            from . import searchfloor
+
+            bid = searchfloor.search_book(title, author)
+            if bid:
+                sf_url = f"https://searchfloor.org/b/{bid}"
+                if sf_url != primary_url:
+                    _consider(searchfloor._download_book(bid, sf_url))
+        except Exception:  # noqa: BLE001
+            pass
+        # 4) readli
+        try:
+            from . import readli
+
+            _consider(readli.search_and_download(title, author))
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not cands:
+        return None
+    best = max(cands, key=_richness)
+    return best
+
+
 def _search_free(title: str, author: str = "") -> DownloadResult | None:
     """Проверяем ВСЕ бесплатные зеркала (searchfloor + readli) и возвращаем самый
     ПОЛНЫЙ вариант (по длине текста), а не первый успешный."""

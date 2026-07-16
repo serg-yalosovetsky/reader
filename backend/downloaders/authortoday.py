@@ -502,7 +502,15 @@ def _parse_work_meta(html: str) -> tuple[str, str, str, dict]:
     if genres:
         extra["genres"] = json.dumps(genres, ensure_ascii=False)
     # Цикл/серия — ссылка /work/series/<id>; рядом бывает «#N».
-    ser = soup.select_one("a[href*='/work/series/']")
+    # ПЕРВАЯ ссылка /work/series/ у платного цикла — кнопка «Купить цикл», её текст
+    # НЕ название серии (иначе same_book даёт ложный CONFLICT и плодит дубль Work).
+    # Берём первую ссылку с осмысленным текстом, пропуская покупку.
+    ser = None
+    for _cand in soup.select("a[href*='/work/series/']"):
+        _t = _cand.get_text(strip=True)
+        if _t and not re.match(r"(?i)^\s*(купить|приобрести|buy)\b", _t):
+            ser = _cand
+            break
     if ser:
         s_txt = ser.get_text(strip=True)
         if s_txt:

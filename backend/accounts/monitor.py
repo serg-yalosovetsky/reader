@@ -257,22 +257,39 @@ def _download_and_write(
 
     mon = session.get(Monitored, mon_id)  # re-fetch после commit
     mon.work_id = work.id
-    mon.has_update = False
-    mon.fail_count = 0
-    mon.last_error = None
-    mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
+    # last_seen двигаем ТОЛЬКО по материализованному контенту: файл мог прийти из
+    # отставшего зеркала или свежая глава платная. Считаем реальные главы в
+    # применённом файле; если их < best_cur — обещанная глава не докачана, has_update
+    # оставляем и штрафуем (backoff погасит карусель), иначе глава теряется навсегда
+    # (best_cur<=last_seen → «актуально»). materialized==0 (не смогли посчитать, напр.
+    # page-blob) → доверяем best_cur, старое поведение.
+    from ..app.services import _real_chapters as _rc
+    materialized = _rc(work.file_path, work.file_format) if work.file_path else 0
+    got_all = (materialized == 0) or (materialized >= best_cur)
     mon.last_checked = utcnow()
+    if got_all:
+        mon.has_update = False
+        mon.fail_count = 0
+        mon.last_error = None
+        mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
+    else:
+        mon.has_update = True
+        mon.fail_count = (mon.fail_count or 0) + 1
+        mon.last_error = (
+            f"докачано {materialized} гл., на сайте {best_cur} — глава недоступна?"
+        )
+        mon.last_seen_chapters = max(mon.last_seen_chapters, materialized)
     session.add(mon)
     # Синхронизируем все дубликаты monitored для того же work_id
     for dup in session.exec(
         select(Monitored).where(Monitored.work_id == work.id, Monitored.id != mon_id)
     ).all():
-        dup.has_update = False
-        dup.last_seen_chapters = max(dup.last_seen_chapters, best_cur)
+        dup.has_update = mon.has_update
+        dup.last_seen_chapters = max(dup.last_seen_chapters, mon.last_seen_chapters)
         session.add(dup)
     session.commit()  # один быстрый commit: cover_path + mon + дубликаты
 
-    return {"downloaded": True, "source_used": best_url}
+    return {"downloaded": got_all, "source_used": best_url, "chapters": materialized}
 
 
 # После стольких подряд неудач автодокачки подписка выводится из авторетрая

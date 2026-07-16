@@ -111,12 +111,25 @@ def _richness(result: "DownloadResult") -> int:
                     )
             return len(" ".join(parts))
         with open(p, encoding="utf-8", errors="ignore") as fh:
-            return len(re.sub(r"<[^>]+>", " ", fh.read()))
+            data = fh.read()
+        # fb2 <binary> — base64 обложки, не текст: иначе жирная обложка
+        # «перевешивает» лишнюю главу другого зеркала.
+        data = re.sub(r"<binary\b[^>]*>.*?</binary>", " ", data, flags=re.S)
+        return len(re.sub(r"<[^>]+>", " ", data))
     except Exception:  # noqa: BLE001
         try:
             return os.path.getsize(result.file_path)
         except Exception:  # noqa: BLE001
             return 0
+
+
+def _chapters(result: "DownloadResult") -> int:
+    """Число реальных глав в скачанном варианте (структурная мера)."""
+    from ..app.services import _real_chapters
+    try:
+        return _real_chapters(result.file_path, result.file_format)
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def fetch_fullest(
@@ -197,7 +210,14 @@ def fetch_fullest(
 
     if not cands:
         return None
+    # Полнота — по тексту, но структурный апгрейд (больше реальных глав при
+    # почти равном объёме, >=90%) перевешивает: свежий источник с лишней
+    # главой не должен проигрывать толстому, но отставшему зеркалу.
     best = max(cands, key=_richness)
+    best_rich, best_ch = _richness(best), _chapters(best)
+    for _r in cands:
+        if _chapters(_r) > best_ch and _richness(_r) >= best_rich * 0.9:
+            best, best_rich, best_ch = _r, _richness(_r), _chapters(_r)
     return best
 
 
@@ -227,5 +247,12 @@ def _search_free(title: str, author: str = "") -> DownloadResult | None:
         pass
     if not cands:
         return None
+    # Полнота — по тексту, но структурный апгрейд (больше реальных глав при
+    # почти равном объёме, >=90%) перевешивает: свежий источник с лишней
+    # главой не должен проигрывать толстому, но отставшему зеркалу.
     best = max(cands, key=_richness)
+    best_rich, best_ch = _richness(best), _chapters(best)
+    for _r in cands:
+        if _chapters(_r) > best_ch and _richness(_r) >= best_rich * 0.9:
+            best, best_rich, best_ch = _r, _richness(_r), _chapters(_r)
     return best

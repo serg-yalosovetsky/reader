@@ -122,7 +122,11 @@ def _richness(path, fmt: str) -> int:
                     )
             return len(" ".join(parts))
         with open(p, encoding="utf-8", errors="ignore") as fh:
-            return len(re.sub(r"<[^>]+>", " ", fh.read()))
+            data = fh.read()
+        # fb2 <binary> — base64 обложки/картинок, НЕ текст книги. Без выреза
+        # зеркало с жирной обложкой «перевешивает» зеркало с лишней главой.
+        data = re.sub(r"<binary\b[^>]*>.*?</binary>", " ", data, flags=re.S)
+        return len(re.sub(r"<[^>]+>", " ", data))
     except Exception:  # noqa: BLE001
         try:
             return Path(path).stat().st_size

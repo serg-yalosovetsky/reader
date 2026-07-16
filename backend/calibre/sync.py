@@ -25,7 +25,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from ..app.config import CALIBRE_CACHE_DIR, CALIBRE_CACHE_MAX_MB, COVERS_DIR
-from ..app.db.models import Bookmark, Highlight, Monitored, Progress, Work, utcnow
+from ..app.db.models import Blacklist, Bookmark, Highlight, Monitored, Progress, Work, utcnow
 from . import client
 
 log = logging.getLogger("reader.calibre.sync")
@@ -209,7 +209,18 @@ def sync_catalog(session: Session) -> dict:
             existing[w.calibre_id] = w
         by_title.setdefault(bi._title_key(w.title), []).append(w)
 
-    added = updated = 0
+    # Книги, удалённые пользователем «крестиком» (чёрный список по title+author),
+    # не воскрешаем из каталога Calibre: книга физически остаётся в Calibre, и без
+    # этой проверки плановый синк создавал её Work заново (source_url пуст → монитор
+    # не при чём; drive_books/monitor блэклист уважают, а sync_catalog — нет). _norm
+    # совпадает с services._norm, которым delete_work писал title_norm/author_norm.
+    bl_pairs = {
+        (bl.title_norm, bl.author_norm)
+        for bl in session.exec(select(Blacklist)).all()
+        if bl.title_norm
+    }
+
+    added = updated = skipped_blacklist = 0
     seen = set()
     for b in client.iter_opds_books():
         cid = b["calibre_id"]
@@ -221,6 +232,10 @@ def sync_catalog(session: Session) -> dict:
         desc = b.get("description") or ""
         w = existing.get(cid)
         if w is None:
+            # Удалена пользователем — не воскрешать (ни стабом, ни привязкой calibre_id).
+            if (_norm(b["title"]), _norm(b["authors"])) in bl_pairs:
+                skipped_blacklist += 1
+                continue
             # Книга уже есть из другого источника (upload/AT/...)? Привязываем
             # calibre_id к ней вместо создания стаба-дубля: то же нормализованное
             # название (с томом) и совместимый автор (пустой или совпадающий).
@@ -283,6 +298,7 @@ def sync_catalog(session: Session) -> dict:
         "status": "ok",
         "added": added,
         "updated": updated,
+        "skipped_blacklist": skipped_blacklist,
         "catalog_total": len(seen),
     }
 

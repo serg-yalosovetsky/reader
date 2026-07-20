@@ -122,6 +122,9 @@ function bookCSS() {
     html { font-size: ${Math.round(prefs.fontScale * 100)}%; }
     body { font-family: ${fam}; }
     ${scrolledBody}
+    /* Книги часто задают свой color на абзацах/спанах — он перебивает тему
+       и в тёмных темах даёт нечитаемый серый. Форсируем наследование от body. */
+    body *:not(a):not(mark) { color: inherit !important; }
     a:link, a:visited { color: ${accent}; }
     html, body { text-align: left !important; }
     p, li, blockquote, dd { line-height: 1.55; text-align: left !important; }

@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
+from .textclean import clean_html, clean_title
 
 _BASE = "https://readli.net"
 _UA = (
@@ -236,7 +237,9 @@ def _page_html(soup: BeautifulSoup) -> str:
         return ""
     for bad in box.find_all(["script", "style", "ins", "iframe"]):
         bad.decompose()
-    return box.decode_contents()
+    # Служебные комментарии (<!-- quoter = 1; -->), рекламные блоки и промо-хвост
+    # AT: без этого они переживают сборку EPUB и видны читателю как текст.
+    return clean_html(box.decode_contents())
 
 
 def _split_chapters(full_html: str) -> list[tuple[str | None, str]]:
@@ -252,7 +255,8 @@ def _split_chapters(full_html: str) -> list[tuple[str | None, str]]:
         if name in ("h1", "h2", "h3", "h4"):
             if cur_parts or cur_title:
                 chapters.append((cur_title, cur_parts))
-            cur_title = el.get_text(" ", strip=True) or None
+            # Источник склеивает номер и название («Глава перваяЭскадрон»).
+            cur_title = clean_title(el.get_text(" ", strip=True)) or None
             cur_parts = []
         else:
             cur_parts.append(str(el))

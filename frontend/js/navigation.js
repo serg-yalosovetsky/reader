@@ -42,23 +42,50 @@ async function gotoChapterStart(dir) {
   if (target < 0) return
   try { await view.goTo(String(target)) } catch { dir > 0 ? view.next() : view.prev() }
 }
-$('#prev-btn').addEventListener('click', () => view?.prev())
-$('#next-btn').addEventListener('click', () => view?.next())
+// Шаг листания в «Ленте»: чуть МЕНЬШЕ экрана, чтобы строка, разрезанная краем
+// экрана, не терялась: она целиком уезжает наверх следующего экрана. Перекрытие
+// ≈ 1.6 строки (читаем реальный line-height книги), с потолком 6–20% высоты.
+// В постраничном режиме (колонки) foliate distance игнорирует — там строки не режутся.
+function pageStep() {
+  const size = view?.renderer?.size || 0
+  if (!size) return undefined
+  let lh = 0
+  try {
+    // line-height берём с АБЗАЦА: на body он часто 'normal' (не число), и мы
+    // сваливались в грубую оценку fontSize*1.5.
+    const win = bookDoc?.defaultView
+    const el = bookDoc?.querySelector('p') || bookDoc?.body
+    const cs = el && win?.getComputedStyle(el)
+    lh = parseFloat(cs?.lineHeight) || (parseFloat(cs?.fontSize) || 0) * 1.5
+  } catch { lh = 0 }
+  if (!Number.isFinite(lh) || lh <= 0) lh = 0
+  const overlap = Math.min(Math.max(lh ? lh * 1.6 : size * 0.1, size * 0.06), size * 0.2)
+  return Math.round(size - overlap)
+}
+function goNext() { view?.next(pageStep()) }
+function goPrev() { view?.prev(pageStep()) }
+
+$('#prev-btn').addEventListener('click', goPrev)
+$('#next-btn').addEventListener('click', goNext)
 $('#progress-slider').addEventListener('input', (e) => view?.goToFraction(parseFloat(e.target.value)))
 
 // Зоны клика по краям — перелистывание.
-$('#tap-prev').addEventListener('click', () => view?.prev())
-$('#tap-next').addEventListener('click', () => view?.next())
+$('#tap-prev').addEventListener('click', goPrev)
+$('#tap-next').addEventListener('click', goNext)
 
-// Клавиатура: стрелки, PageUp/Down, Home/End, пробел (вниз; Shift+пробел — вверх).
+// Клавиатура: стрелки, PageUp/Down, Home/End, пробел и Enter (вниз; с Shift — вверх).
 function handleKey(e) {
   if ($('#reader').hidden || !view) return
+  // В полях ввода (поиск, заметки) клавиши листания не перехватываем.
+  const t = e.target
+  if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName || ''))) return
   const k = e.key
-  if (k === 'ArrowLeft') { view.prev(); e.preventDefault() }
-  else if (k === 'ArrowRight') { view.next(); e.preventDefault() }
-  else if (k === 'PageUp') { view.prev(); e.preventDefault() }
-  else if (k === 'PageDown') { view.next(); e.preventDefault() }
-  else if (k === ' ' || k === 'Spacebar') { e.shiftKey ? view.prev() : view.next(); e.preventDefault() }
+  if (k === 'ArrowLeft') { goPrev(); e.preventDefault() }
+  else if (k === 'ArrowRight') { goNext(); e.preventDefault() }
+  else if (k === 'PageUp') { goPrev(); e.preventDefault() }
+  else if (k === 'PageDown') { goNext(); e.preventDefault() }
+  else if (k === ' ' || k === 'Spacebar') { e.shiftKey ? goPrev() : goNext(); e.preventDefault() }
+  else if (k === 'Enter') { e.shiftKey ? goPrev() : goNext(); e.preventDefault() }
   else if (k === 'Home') { view.goToFraction(0); e.preventDefault() }
   else if (k === 'End') { view.goToFraction(1); e.preventDefault() }
 }
@@ -70,7 +97,7 @@ function wheelNav(deltaY) {
   if (wheelThrottle) return
   wheelThrottle = true
   setTimeout(() => { wheelThrottle = false }, 400)
-  if (deltaY > 0) view.next(); else view.prev()
+  if (deltaY > 0) goNext(); else goPrev()
 }
 export function attachKeysToDoc(e) {
   setBookDoc(e.detail.doc)

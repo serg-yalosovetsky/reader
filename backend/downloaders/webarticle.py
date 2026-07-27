@@ -92,7 +92,33 @@ def _get_html(client: httpx.Client, url: str) -> tuple[str, str]:
     ct = r.headers.get("content-type", "")
     if ct and not any(t in ct for t in ("html", "xml", "text")):
         raise DownloaderError(f"{url}: это не веб-страница ({ct[:40]})")
-    return r.text, str(r.url)
+    return _decode(r), str(r.url)
+
+
+def _decode(r: httpx.Response) -> str:
+    """Текст страницы с правильной кодировкой.
+
+    Старые рунет-сайты отдают `Content-Type: text/html` без charset, а тело — в
+    windows-1251. httpx в этом случае предполагает utf-8, и вся кириллица
+    превращается в мусор — книга собиралась из нечитаемых символов. Порядок:
+    charset из заголовка → <meta charset> в теле → utf-8, иначе cp1251.
+    """
+    enc = r.charset_encoding
+    raw = r.content
+    if not enc:
+        m = re.search(rb"""charset=["']?\s*([\w-]+)""", raw[:4096], re.I)
+        if m:
+            enc = m.group(1).decode("ascii", "ignore")
+    if not enc:
+        try:
+            raw.decode("utf-8")
+            enc = "utf-8"
+        except UnicodeDecodeError:
+            enc = "cp1251"
+    try:
+        return raw.decode(enc, "replace")
+    except LookupError:  # выдуманное имя кодировки в meta
+        return raw.decode("utf-8", "replace")
 
 
 # --------------------------------------------------------------------------- #
@@ -514,6 +540,11 @@ def build_book(
                         break
                 except Exception:  # noqa: BLE001 — обложка не критична
                     pass
+        # og:image есть не у всех блогов (github.io, старый blogspot). Тогда
+        # обложка — первая иллюстрация книги: она с той же страницы, то есть по
+        # теме, и это честнее пустой карточки или ИИ-картинки по описанию.
+        if not cover and images.items:
+            cover = images.items[0][1]
 
     book_title = (title or "").strip() or _series_title([a.title for a in arts])
     book_author = (author or "").strip() or next((a.author for a in arts if a.author), "")
@@ -761,7 +792,12 @@ def discover_parts(url: str, limit: int = MAX_PARTS) -> dict:
 
     by_num: dict[int, str] = {}
     for c in cands:
-        c = c.split("#")[0].rstrip("/") + "/"
+        # Хвостовой слэш добавляем только «каталожным» адресам (WordPress).
+        # Для blogspot и прочих «…/post.html» слэш в конце даёт 404 — так все
+        # 18 найденных эпизодов молча отваливались при сборке.
+        c = c.split("#")[0]
+        if not re.search(r"\.\w{2,5}$", urlparse(c).path):
+            c = c.rstrip("/") + "/"
         n = _part_num(c, prefix)
         if n is None or (urlparse(c).hostname != urlparse(final).hostname):
             continue

@@ -135,6 +135,28 @@ class ImageStore:
         self.total_bytes = 0
         self.skipped = 0
 
+    def preload(self, url: str, data: bytes, mime: str) -> str | None:
+        """Зарегистрировать картинку, пришедшую НЕ из сети (ресурс .mhtml).
+
+        Нужна для сайтов, недоступных с VPS (LiveJournal): страницу сохраняет
+        человек в браузере, а картинки едут внутри того же файла.
+        """
+        if not data or url in self._by_url:
+            return self._by_url.get(url)
+        mime = (mime or "").lower()
+        if mime not in _MIME_EXT or len(data) > MAX_IMG_BYTES:
+            return None
+        digest = hashlib.sha1(data).hexdigest()
+        if digest in self._by_hash:
+            self._by_url[url] = self._by_hash[digest]
+            return self._by_hash[digest]
+        name = f"images/i{len(self.items) + 1:03d}.{_MIME_EXT[mime]}"
+        self.items.append((name, data, mime))
+        self.total_bytes += len(data)
+        self._by_url[url] = name
+        self._by_hash[digest] = name
+        return name
+
     def add(self, url: str) -> str | None:
         """Скачать картинку и вернуть путь внутри EPUB (или None, если не вышло)."""
         if url in self._by_url:
@@ -543,8 +565,12 @@ def build_book(
         # og:image есть не у всех блогов (github.io, старый blogspot). Тогда
         # обложка — первая иллюстрация книги: она с той же страницы, то есть по
         # теме, и это честнее пустой карточки или ИИ-картинки по описанию.
-        if not cover and images.items:
-            cover = images.items[0][1]
+        if not cover:
+            for _name, data, mime in images.items:
+                # иконки интерфейса и аватарки в обложку не годятся
+                if mime != "image/svg+xml" and len(data) >= 20_000:
+                    cover = data
+                    break
 
     book_title = (title or "").strip() or _series_title([a.title for a in arts])
     book_author = (author or "").strip() or next((a.author for a in arts if a.author), "")
@@ -565,6 +591,123 @@ def build_book(
     )
     return DownloadResult(
         file_path=path,
+        file_format="epub",
+        title=book_title,
+        author=book_author,
+        site=host,
+        source_url=arts[0].url,
+        num_chapters=len(sections),
+        extra={
+            "annotation": annotation,
+            "web_parts": [a.url for a in arts],
+            "images": len(images.items),
+            "images_skipped": images.skipped,
+            "warnings": warnings,
+        },
+    )
+
+
+def parse_mhtml(path: str | Path) -> tuple[str, str, list[tuple[str, bytes, str]]]:
+    """Разобрать сохранённую браузером страницу (.mhtml/.mht).
+
+    Возвращает (исходный URL, html, [(url ресурса, байты, mime)]). Формат — MIME
+    multipart/related, поэтому читается стандартным `email`: первая text/html
+    часть — сама страница, image/* — её картинки.
+    """
+    import email
+    from email import policy
+
+    with open(path, "rb") as fh:
+        msg = email.message_from_binary_file(fh, policy=policy.default)
+    base = (msg.get("Snapshot-Content-Location") or "").strip()
+    html = ""
+    resources: list[tuple[str, bytes, str]] = []
+    for part in msg.walk():
+        ct = (part.get_content_type() or "").lower()
+        if ct == "text/html" and not html:
+            raw = part.get_payload(decode=True) or b""
+            html = raw.decode(part.get_content_charset() or "utf-8", "replace")
+            base = base or (part.get("Content-Location") or "").strip()
+        elif ct.startswith("image/"):
+            loc = (part.get("Content-Location") or "").strip()
+            data = part.get_payload(decode=True) or b""
+            if loc and data:
+                resources.append((loc, data, ct))
+    if not html:
+        raise DownloaderError(f"{Path(path).name}: в файле нет HTML-страницы")
+    return base or f"file://{Path(path).name}", html, resources
+
+
+def build_book_from_files(
+    paths: list[str | Path],
+    title: str = "",
+    author: str = "",
+    progress_cb=None,
+) -> DownloadResult:
+    """Книга из страниц, сохранённых человеком в браузере (.mhtml/.html).
+
+    Путь для источников, недоступных с сервера (LiveJournal блокирует, антибот,
+    закрытый доступ): страницу открывает и сохраняет Серж, а сборка — та же, что
+    и для живых ссылок, включая картинки из сохранённого файла.
+    """
+    sections: list[tuple[str | None, str]] = []
+    warnings: list[str] = []
+    arts: list[Article] = []
+    with make_client() as client:
+        images = ImageStore(client)
+        for i, path in enumerate(paths, 1):
+            if progress_cb:
+                progress_cb(i, len(paths), str(path))
+            try:
+                if str(path).lower().endswith((".mhtml", ".mht")):
+                    src_url, html, resources = parse_mhtml(path)
+                else:
+                    html = Path(path).read_bytes().decode("utf-8", "replace")
+                    src_url, resources = f"file://{Path(path).name}", []
+            except Exception as e:  # noqa: BLE001
+                warnings.append(f"{Path(path).name}: {type(e).__name__}")
+                continue
+            for loc, data, mime in resources:
+                images.preload(loc, data, mime)
+
+            full = BeautifulSoup(html, "lxml")
+            art = Article(url=src_url)
+            art.title = _page_title(full, src_url)
+            art.author = _page_author(full)
+            lang = (full.find("html") or {}).get("lang") if full.find("html") else ""
+            art.lang = (lang or "").split("-")[0].lower()
+            body = _content_soup(html)
+            art.chars = len(body.get_text(" ", strip=True))
+            art.html = _sanitize(body, src_url, images)
+            if art.chars < MIN_ARTICLE_CHARS:
+                warnings.append(f"{Path(path).name}: почти нет текста ({art.chars} симв.)")
+                if not art.chars:
+                    continue
+            arts.append(art)
+            sections.append((art.title or f"Часть {i}", art.html))
+
+        if not sections:
+            raise DownloaderError("ни из одного файла не удалось извлечь текст")
+
+        cover = None
+        for _name, data, mime in images.items:
+            if mime != "image/svg+xml" and len(data) >= 20_000:
+                cover = data
+                break
+
+    book_title = (title or "").strip() or _series_title([a.title for a in arts])
+    book_author = (author or "").strip() or next((a.author for a in arts if a.author), "")
+    host = urlparse(arts[0].url).hostname or ""
+    lang = next((a.lang for a in arts if a.lang), "") or "ru"
+    ident = "web-" + hashlib.sha1("\n".join(a.url for a in arts).encode()).hexdigest()[:16]
+    annotation = f"Собрано из {len(sections)} сохранённых страниц" + (f" ({host})" if host else "") + "."
+
+    path_out: Path = build_epub(
+        ident, book_title, book_author, sections,
+        lang=lang, annotation=annotation, cover=cover, images=images.items,
+    )
+    return DownloadResult(
+        file_path=path_out,
         file_format="epub",
         title=book_title,
         author=book_author,

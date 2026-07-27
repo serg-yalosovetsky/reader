@@ -338,6 +338,13 @@ $('#ingest-form').addEventListener('submit', async (e) => {
   e.preventDefault()
   const q = $('#ingest-input').value.trim()
   if (!q) return
+  // Несколько ссылок разом — это не «скачай фанфик», а «собери из них книгу».
+  const many = q.split(/\s+/).filter((u) => /^https?:\/\//i.test(u))
+  if (many.length > 1) {
+    openWebModal(many)
+    $('#ingest-input').value = ''
+    return
+  }
   const isUrl = /^https?:\/\//i.test(q)
   setIngestStatus(isUrl ? 'Скачиваю…' : 'Ищу по названию…')
   try {
@@ -401,4 +408,116 @@ document.querySelector('#lib-theme-btn')?.addEventListener('click', () => {
   document.documentElement.dataset.theme = prefs.theme
   savePrefs()
   updateLibThemeBtn()
+})
+
+
+// ===================== Книга из статей =====================
+// Несколько ссылок → одна книга: ссылка = глава, картинки скачиваются внутрь.
+// Сборка идёт в фоне на бэкенде (десятки страниц не укладываются в таймаут
+// nginx), поэтому здесь только запуск и поллинг /api/ingest/web/status.
+let webPolling = false
+
+function setWebStatus(msg, { error = false } = {}) {
+  const el = $('#web-status')
+  el.hidden = false
+  el.classList.toggle('error', error)
+  el.textContent = msg
+}
+
+function webUrls() {
+  return $('#web-urls').value.split(/\s+/).filter((u) => /^https?:\/\//i.test(u))
+}
+
+function updateWebCount() {
+  const n = webUrls().length
+  $('#web-count').textContent = n ? `ссылок: ${n}` : ''
+}
+
+export function openWebModal(urls) {
+  if (urls && urls.length) $('#web-urls').value = urls.join('\n')
+  $('#web-overlay').hidden = false
+  updateWebCount()
+  $('#web-urls').focus()
+}
+
+$('#web-btn')?.addEventListener('click', () => openWebModal())
+$('#web-close')?.addEventListener('click', () => { $('#web-overlay').hidden = true })
+$('#web-overlay')?.addEventListener('click', (e) => {
+  if (e.target === $('#web-overlay')) $('#web-overlay').hidden = true
+})
+$('#web-urls')?.addEventListener('input', updateWebCount)
+
+// Опрос фоновой задачи: onDone получает result, ошибки показываем сами.
+async function pollWebJob(label, onDone) {
+  if (webPolling) return
+  webPolling = true
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500))
+      const st = await api.get('/api/ingest/web/status')
+      if (st.status === 'running') {
+        const pr = st.progress || {}
+        if (st.kind === 'build' && pr.total) {
+          setWebStatus(`${label}: ${pr.current}/${pr.total} — ${(pr.url || '').slice(0, 70)}`)
+        } else {
+          setWebStatus(`${label}…`)
+        }
+        continue
+      }
+      if (st.status === 'error') { setWebStatus('Не вышло: ' + st.error, { error: true }); return }
+      if (st.status === 'done') { await onDone(st.result || {}); return }
+      setWebStatus('Задача не запустилась', { error: true })
+      return
+    }
+  } catch (err) {
+    setWebStatus('Ошибка связи: ' + err.message.slice(0, 160), { error: true })
+  } finally {
+    webPolling = false
+  }
+}
+
+$('#web-discover')?.addEventListener('click', async () => {
+  const urls = webUrls()
+  if (!urls.length) { setWebStatus('Вставьте хотя бы одну ссылку', { error: true }); return }
+  setWebStatus('Ищу остальные части серии…')
+  try {
+    await api.post('/api/ingest/web/discover', { url: urls[0] })
+  } catch (err) {
+    setWebStatus('Не вышло: ' + err.message.slice(0, 160), { error: true }); return
+  }
+  await pollWebJob('Ищу части', async (res) => {
+    const parts = res.parts || []
+    if (parts.length) {
+      // найденное объединяем с уже вставленным вручную (продолжение серии
+      // нередко живёт на другом сайте — его ссылки пользователь добавил сам)
+      const known = new Set(parts.map((p) => p.url))
+      const extra = webUrls().filter((u) => !known.has(u) && !known.has(u + '/'))
+      $('#web-urls').value = parts.map((p) => p.url).concat(extra).join('\n')
+      updateWebCount()
+      if (!$('#web-title').value.trim() && res.series) $('#web-title').value = res.series
+    }
+    setWebStatus(`Нашлось частей: ${parts.length}. ${res.note || ''}`)
+  })
+})
+
+$('#web-build')?.addEventListener('click', async () => {
+  const urls = webUrls()
+  if (!urls.length) { setWebStatus('Вставьте хотя бы одну ссылку', { error: true }); return }
+  setWebStatus(`Собираю книгу из ${urls.length} статей…`)
+  try {
+    await api.post('/api/ingest/web', {
+      urls,
+      title: $('#web-title').value.trim(),
+      author: $('#web-author').value.trim(),
+    })
+  } catch (err) {
+    setWebStatus('Не вышло: ' + err.message.slice(0, 160), { error: true }); return
+  }
+  await pollWebJob('Скачиваю', async (res) => {
+    let msg = `Готово: «${res.title}» — глав ${res.chapters}, картинок ${res.images}`
+    if (res.images_skipped) msg += ` (пропущено картинок: ${res.images_skipped})`
+    if ((res.warnings || []).length) msg += `; часть ссылок не открылась: ${res.warnings.length}`
+    setWebStatus(msg)
+    await loadLibrary()
+  })
 })

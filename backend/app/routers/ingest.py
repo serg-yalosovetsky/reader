@@ -8,6 +8,7 @@ from sqlmodel import Session
 from ...accounts import monitor, store
 from ...downloaders import chain
 from ...downloaders.base import DownloaderError
+from .. import webjob
 from ..db.models import Work
 from ..db.session import get_session
 from ..services import register_download
@@ -40,6 +41,50 @@ def ingest(body: IngestIn, session: Session = Depends(get_session)) -> Work:
     if work.source_url:
         monitor.add_monitor(session, work.source_url, work.id, work.chapters_count)
     return work
+
+
+# ---- сборка книги из веб-статей (несколько ссылок → одна книга) ----
+
+
+class WebIn(BaseModel):
+    urls: list[str]
+    title: str = ""
+    author: str = ""
+
+
+class DiscoverIn(BaseModel):
+    url: str
+
+
+@router.post("/web")
+def ingest_web(body: WebIn) -> dict:
+    """Собрать одну книгу из нескольких статей: ссылка = глава, картинки внутрь.
+
+    Работа идёт в фоне (десятки страниц с картинками не укладываются в
+    nginx proxy_read_timeout) — статус забирать поллингом GET /api/ingest/web/status.
+    """
+    urls = [u.strip() for u in (body.urls or []) if (u or "").strip()]
+    if not urls:
+        raise HTTPException(400, "не передано ни одной ссылки")
+    bad = [u for u in urls if not chain.is_url(u)]
+    if bad:
+        raise HTTPException(400, f"это не ссылки: {', '.join(bad[:3])}")
+    return webjob.start_build(urls, title=body.title, author=body.author)
+
+
+@router.post("/web/discover")
+def ingest_web_discover(body: DiscoverIn) -> dict:
+    """Найти остальные части серии по ссылке на одну из них (в фоне)."""
+    url = (body.url or "").strip()
+    if not chain.is_url(url):
+        raise HTTPException(400, "нужна http(s)-ссылка")
+    return webjob.start_discover(url)
+
+
+@router.get("/web/status")
+def ingest_web_status() -> dict:
+    """Статус фоновой задачи: idle | running | done | error (+progress/result)."""
+    return webjob.state()
 
 
 def _host(url: str) -> str:

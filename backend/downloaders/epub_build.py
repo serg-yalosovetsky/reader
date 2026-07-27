@@ -24,8 +24,12 @@ def build_epub(
     lang: str = "ru",
     annotation: str = "",
     cover: bytes | None = None,
+    images: list[tuple[str, bytes, str]] | None = None,
 ) -> Path:
     """sections: список (заголовок|None, html). cover — байты обложки (встраивается).
+    images: [(file_name, содержимое, media_type)] — картинки, на которые ссылаются
+    секции (относительным путём, напр. `images/i001.jpg`); нужны, чтобы статьи
+    из веба читались офлайн с иллюстрациями.
     Возвращает путь к .epub."""
     book = epub.EpubBook()
     book.set_identifier(identifier)
@@ -41,6 +45,13 @@ def build_epub(
             book.set_cover(f"cover.{ext}", cover)
         except Exception:  # noqa: BLE001 — обложка не критична для сборки
             pass
+
+    for n, (fname, data, mime) in enumerate(images or [], 1):
+        book.add_item(
+            epub.EpubItem(
+                uid=f"img{n:04d}", file_name=fname, media_type=mime, content=data
+            )
+        )
 
     spine: list = []
     toc: list = []

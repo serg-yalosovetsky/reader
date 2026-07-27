@@ -23,6 +23,12 @@
     .sel-act { background: none; border: none; color: inherit; padding: 6px 10px; cursor: pointer;
       border-radius: 6px; font-size: 14px; white-space: nowrap; }
     .sel-act:hover { background: rgba(128,128,128,.18); }
+    .web-urls { width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
+      font: inherit; font-size: 14px; line-height: 1.45; padding: 8px 10px;
+      color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+    .web-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+    .web-row input[type="text"] { flex: 1 1 180px; min-width: 0; }
+    .web-count { font-size: 13px; opacity: .75; }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -41,6 +47,7 @@
         <button id="more-actions-btn" type="button" class="btn-ghost more-toggle" aria-expanded="false" title="Ещё действия">··· Ещё</button>
         <label class="btn-ghost lib-secondary" for="upload-input">Загрузить файл</label>
         <input id="upload-input" type="file" accept=".epub,.fb2,.pdf" hidden />
+        <button id="web-btn" type="button" class="btn-ghost lib-secondary" title="Собрать книгу из нескольких статей">Из статей</button>
         <button id="readera-sync" class="btn-ghost lib-main-action" title="Синхронизировать прогресс с ReadEra">⇄ ReadEra</button>
         <button id="check-updates-main" class="btn-ghost lib-main-action" title="Проверить обновления подписок">↻ Обновления</button>
         <button id="lib-theme-btn" class="btn-ghost lib-secondary lib-theme-btn" title="Тема">◑</button>
@@ -51,6 +58,39 @@
     <div class="lib-filter-bar"><input id="lib-filter" type="search" placeholder="Фильтр по названию, автору…" autocomplete="off" /></div>
     <div id="book-grid" class="book-grid"></div>
     <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
+
+    <!-- Модал сборки книги из веб-статей (несколько ссылок → одна книга) -->
+    <div id="web-overlay" class="modal-overlay" hidden>
+      <div class="modal">
+        <div class="modal-head">
+          <span>Книга из статей</span>
+          <button id="web-close" class="icon-btn">✕</button>
+        </div>
+
+        <div class="modal-section">
+          <div class="setting-label">Ссылки — по одной в строке. Каждая станет главой, картинки скачаются в книгу.</div>
+          <textarea id="web-urls" class="web-urls" rows="8" spellcheck="false"
+                    placeholder="https://example.com/part-1&#10;https://example.com/part-2"></textarea>
+          <div class="web-row">
+            <button id="web-discover" type="button" class="btn-ghost" title="Найти остальные части серии по первой ссылке">Найти все части</button>
+            <span id="web-count" class="web-count"></span>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="setting-label">Название и автор (необязательно — определим сами)</div>
+          <div class="web-row">
+            <input id="web-title" type="text" placeholder="Название книги" />
+            <input id="web-author" type="text" placeholder="Автор" />
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <button id="web-build" type="button" class="btn-primary">Собрать книгу</button>
+        </div>
+        <div id="web-status" class="ingest-status" hidden></div>
+      </div>
+    </div>
 
     <!-- Модал аккаунтов и обновлений -->
     <div id="accounts-overlay" class="modal-overlay" hidden>

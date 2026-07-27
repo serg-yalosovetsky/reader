@@ -3,7 +3,8 @@
 Порядок:
 1. author.today  -> собственный адаптер (этап 2b);
 2. известные FanFicFare-домены -> FanFicFare;
-3. иначе -> FanFicFare (вдруг знает), при UnsupportedURL -> FicHub.
+3. иначе -> FanFicFare (вдруг знает), при UnsupportedURL -> FicHub,
+   а если и он не знает -> webarticle (обычная веб-страница как книга).
 """
 
 from __future__ import annotations
@@ -77,7 +78,16 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     try:
         return fff.download(url, extra_options=opts)
     except UnsupportedURL:
+        pass
+    try:
         return fichub.download(url)
+    except DownloaderError:
+        # Не фанфик, а обычная веб-страница (блог, лонгрид, разбор) — собираем
+        # книгу из самой статьи: текст + встроенные картинки. Несколько ссылок
+        # одной серией собирает /api/ingest/web (backend/downloaders/webarticle).
+        from . import webarticle
+
+        return webarticle.download(url)
 
 
 def _fallback_free(title: str, author: str) -> DownloadResult:

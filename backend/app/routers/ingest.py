@@ -54,6 +54,8 @@ class WebIn(BaseModel):
 
 class DiscoverIn(BaseModel):
     url: str
+    title: str = ""
+    author: str = ""
 
 
 @router.post("/web")
@@ -70,6 +72,19 @@ def ingest_web(body: WebIn) -> dict:
     if bad:
         raise HTTPException(400, f"это не ссылки: {', '.join(bad[:3])}")
     return webjob.start_build(urls, title=body.title, author=body.author)
+
+
+@router.post("/web/auto")
+def ingest_web_auto(body: DiscoverIn) -> dict:
+    """Одна ссылка → книга: сами находим остальные части серии и собираем.
+
+    Точка для «кинул ссылку и забыл» (скилл Алисы, шэр с телефона). Прогресс —
+    там же, GET /api/ingest/web/status (stage: discover → download).
+    """
+    url = (body.url or "").strip()
+    if not chain.is_url(url):
+        raise HTTPException(400, "нужна http(s)-ссылка")
+    return webjob.start_auto(url, title=body.title, author=body.author)
 
 
 @router.post("/web/discover")

@@ -23,10 +23,10 @@ from .services import register_download
 _lock = threading.Lock()
 _state: dict = {
     "status": "idle",       # idle | running | done | error
-    "kind": None,           # discover | build
+    "kind": None,           # discover | build | auto
     "started_at": None,
     "finished_at": None,
-    "progress": {"current": 0, "total": 0, "url": ""},
+    "progress": {"current": 0, "total": 0, "url": "", "stage": ""},
     "result": None,
     "error": None,
 }
@@ -50,7 +50,7 @@ def _begin(kind: str) -> dict | None:
                     "started_at": _state["started_at"]}
         _state.update(status="running", kind=kind, started_at=_now(),
                       finished_at=None, result=None, error=None)
-        _state["progress"].update(current=0, total=0, url="")
+        _state["progress"].update(current=0, total=0, url="", stage="")
     return None
 
 
@@ -117,3 +117,52 @@ def start_build(urls: list[str], title: str = "", author: str = "") -> dict:
 
     threading.Thread(target=_run, daemon=True, name="web-build").start()
     return {"status": "started", "kind": "build", "total": len(urls)}
+
+
+def start_auto(url: str, title: str = "", author: str = "") -> dict:
+    """Одна ссылка → готовая книга: сами находим части серии и собираем.
+
+    Это режим «кинул ссылку и забыл» (Алиса, мобильный шэр): клиенту не нужно
+    оркестрировать discover+build двумя вызовами и держать список ссылок.
+    """
+    busy = _begin("auto")
+    if busy:
+        return busy
+
+    def _run() -> None:
+        try:
+            _state["progress"].update(stage="discover", url=url, current=0, total=0)
+            found = webarticle.discover_parts(url)
+            urls = [p["url"] for p in found.get("parts") or []] or [url]
+
+            def _progress(current: int, total: int, u: str) -> None:
+                _state["progress"].update(current=current, total=total, url=u,
+                                          stage="download")
+
+            result = webarticle.build_book(
+                urls, title=title or found.get("series", ""), author=author,
+                progress_cb=_progress,
+            )
+            with Session(engine) as session:
+                work = register_download(result, session)
+            extra = result.extra or {}
+            _finish(result={
+                "work_id": work.id,
+                "title": work.title,
+                "author": work.author,
+                "chapters": work.chapters_count,
+                "images": extra.get("images", 0),
+                "images_skipped": extra.get("images_skipped", 0),
+                "parts": len(extra.get("web_parts") or []),
+                "found": len(urls),
+                "series_note": found.get("note", ""),
+                "source": found.get("source", ""),
+                "warnings": (extra.get("warnings") or [])[:10],
+            })
+        except DownloaderError as e:
+            _finish(error=str(e)[:300])
+        except Exception as e:  # noqa: BLE001
+            _finish(error=f"{type(e).__name__}: {e}"[:300])
+
+    threading.Thread(target=_run, daemon=True, name="web-auto").start()
+    return {"status": "started", "kind": "auto"}

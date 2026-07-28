@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import scheduler
 from .config import FRONTEND_DIR
 from .db.session import init_db
-from .routers import article, accounts, bookmarks, calibre, highlights, ingest, library, progress, reader, readera, tts
+from .routers import article, accounts, bookmarks, calibre, convert, highlights, ingest, library, progress, reader, readera, tts
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ async def _no_cache_ui(request, call_next):
 
 app.include_router(library.router)
 app.include_router(reader.router)
+app.include_router(convert.router)
 app.include_router(progress.router)
 app.include_router(bookmarks.router)
 app.include_router(highlights.router)

@@ -2,6 +2,7 @@
 import { $ } from './core/dom.js'
 import { prefs, savePrefs, MARGIN_NAME } from './core/prefs.js'
 import { applyViewStyles } from './reader-core.js'
+import { pdfAsEpub, setPdfAsEpub } from './core/convert.js'
 
 // ===================== Настройки вида (UI) =====================
 export function syncSettingsUI() {
@@ -13,6 +14,7 @@ export function syncSettingsUI() {
   $('#columns-mode').value = String(prefs.columns || 1)
   // «Колонки» актуальны только в режиме страниц.
   $('#columns-row').style.display = prefs.flow === 'paginated' ? '' : 'none'
+  $('#pdf-epub').value = pdfAsEpub() ? '1' : '0'
 }
 document.querySelectorAll('.swatch').forEach((b) => b.addEventListener('click', () => {
   prefs.theme = b.dataset.theme
@@ -26,3 +28,5 @@ $('#margin-dec').addEventListener('click', () => { prefs.marginLevel = Math.max(
 $('#font-family').addEventListener('change', (e) => { prefs.fontFamily = e.target.value; savePrefs(); applyViewStyles() })
 $('#flow-mode').addEventListener('change', (e) => { prefs.flow = e.target.value; savePrefs(); syncSettingsUI(); applyViewStyles() })
 $('#columns-mode').addEventListener('change', (e) => { prefs.columns = parseInt(e.target.value, 10) || 1; savePrefs(); applyViewStyles() })
+// PDF читать как EPUB (конвертация на сервере) или как есть — макетом страниц.
+$('#pdf-epub')?.addEventListener('change', (e) => setPdfAsEpub(e.target.value === '1'))

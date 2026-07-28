@@ -16,6 +16,13 @@ COVERS_DIR = Path(os.getenv("READER_COVERS_DIR", DATA_DIR / "covers"))
 TMP_DIR = Path(os.getenv("READER_TMP_DIR", DATA_DIR / "tmp"))
 # Кэш синтезированной речи (TTS): <key>.mp3 + <key>.json (пословные тайминги).
 TTS_DIR = Path(os.getenv("READER_TTS_DIR", DATA_DIR / "tts"))
+# Книги, сконвертированные в EPUB (PDF → EPUB): <sha1>.epub. Оригинал остаётся
+# на месте — это производный файл, его можно удалить и пересобрать.
+CONVERTED_DIR = Path(os.getenv("READER_CONVERTED_DIR", DATA_DIR / "converted"))
+# calibre ebook-convert — конвертер PDF/DJVU/… → EPUB. Пусто => берём из PATH.
+EBOOK_CONVERT_BIN = os.getenv("READER_EBOOK_CONVERT_BIN", "ebook-convert")
+# Потолок времени одной конвертации (сек): толстый PDF со сканами долгий.
+CONVERT_TIMEOUT_SEC = int(os.getenv("READER_CONVERT_TIMEOUT_SEC", "900"))
 
 # БД: боевой — mesh-postgres через READER_DB_URL
 # (postgresql+psycopg://reader:…@127.0.0.1:5433/reader); по умолчанию — локальный
@@ -103,5 +110,5 @@ BRIEF_ENABLED = os.getenv("READER_BRIEF", "1").strip().lower() not in (
 
 def ensure_dirs() -> None:
     """Создать рантайм-каталоги при старте."""
-    for d in (DATA_DIR, BOOKS_DIR, COVERS_DIR, TMP_DIR, TTS_DIR):
+    for d in (DATA_DIR, BOOKS_DIR, COVERS_DIR, TMP_DIR, TTS_DIR, CONVERTED_DIR):
         d.mkdir(parents=True, exist_ok=True)

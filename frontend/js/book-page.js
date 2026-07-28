@@ -1,12 +1,13 @@
 // Страница книги: по клику на карточку показывается сводка (обложка, метаданные,
 // жанры, описание) с кнопкой «Читать». И на десктопе, и на мобиле. Отдельный
 // экран #book-page между библиотекой и читалкой.
-import { $, escapeHtml } from './core/dom.js'
+import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { openReader } from './reader-core.js'
 import { libProgress, libMonitored } from './core/state.js'
 import { offlineSupported, isOffline, downloadBook, removeBook } from './core/offline.js'
 import { filterBy } from './library.js'
+import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 
 let curWork = null
 
@@ -114,7 +115,11 @@ function renderBookPage(w) {
         ${progHtml}
         <div class="bp-actions">
           <button id="bp-read" class="btn-primary bp-btn bp-btn-read">📖 Читать книгу</button>
-          <a class="btn-ghost bp-btn" href="/api/reader/${w.id}/file" download>⬇ Скачать</a>
+          <a class="btn-ghost bp-btn" href="/api/reader/${w.id}/file?original=1" download>⬇ Скачать</a>
+          ${convertible(w) ? `
+          <button id="bp-epub" class="btn-ghost bp-btn" title="Собрать перетекающий текст вместо страниц-картинок">↻ EPUB-версия</button>
+          <button id="bp-read-orig" class="btn-ghost bp-btn" title="Открыть исходный файл как есть">📄 Читать оригинал</button>`
+          : ''}
           ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '✅ В офлайне' : '📥 Сохранить офлайн'}</button>` : ''}
           ${origBtn}
           <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
@@ -185,6 +190,35 @@ function renderBookPage(w) {
       btn.disabled = false
       btn.textContent = orig
     }
+  })
+  // PDF и прочая фиксированная вёрстка: EPUB-версия книги (перетекающий текст).
+  // Кнопка показывает состояние и позволяет пересобрать, если вышло криво.
+  const epubBtn = $('#bp-epub')
+  if (epubBtn) {
+    const paint = (st) => {
+      if (!st) return
+      if (st.status === 'pending') { epubBtn.textContent = '⏳ Собираю EPUB…'; epubBtn.disabled = true; return }
+      epubBtn.disabled = false
+      if (st.ready) epubBtn.textContent = '✅ EPUB готов — пересобрать'
+      else if (st.status === 'failed') epubBtn.textContent = '⚠ EPUB не вышел — повторить'
+      else epubBtn.textContent = '↻ Сделать EPUB-версию'
+    }
+    convertStatus(w.id).then(paint).catch(() => {})
+    epubBtn.addEventListener('click', async () => {
+      const wasReady = epubBtn.textContent.startsWith('✅')
+      epubBtn.disabled = true
+      epubBtn.textContent = '⏳ Собираю EPUB…'
+      const st = await ensureEpub(w.id, { force: wasReady }).catch((e) => ({ status: 'failed', error: e.message }))
+      paint(st)
+      if (st.ready) toast('EPUB готов — книга откроется перетекающим текстом', 'ok')
+      else if (st.status === 'failed') toast('Не удалось собрать EPUB: ' + (st.error || ''), 'err', 8000)
+      else toast('Конвертация продолжается на сервере', 'info')
+    })
+  }
+  $('#bp-read-orig')?.addEventListener('click', () => {
+    $('#book-page').hidden = true
+    document.body.classList.remove('bookpage-open')
+    openReader(w, { original: true })
   })
   $('#bp-del').addEventListener('click', async () => {
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return

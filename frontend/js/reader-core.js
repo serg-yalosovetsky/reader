@@ -1,5 +1,5 @@
 // Ядро читалки: открытие книги, релокейт/прогресс, стили книги, TOC.
-import { $ } from './core/dom.js'
+import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
 import { prefs, MARGIN_INLINE, FONT_STACKS, GFONTS } from './core/prefs.js'
@@ -11,26 +11,36 @@ import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
 import { cachedBook } from './core/offline.js'
+import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
 
-export async function openReader(work) {
+// opts.original=true — открыть исходный файл (PDF как макет), минуя EPUB-версию.
+export async function openReader(work, opts = {}) {
   ttsStop()
   setCurrentWork(work)
   document.body.classList.add('reader-open')
   $('#library').hidden = true
   $('#reader').hidden = false
   $('#reader-title').textContent = work.title || ''
+  { const _ch = $('#chapter-label'); if (_ch) _ch.textContent = '' }
   const updBtn = $('#update-btn')
   updBtn.hidden = !libMonitored.has(work.id)
   updBtn.dataset.state = ''
   updBtn.title = 'Проверить новые главы'
 
-  // История: открытие книги — отдельная запись, чтобы браузерный «назад»
-  // возвращал в библиотеку, а не уводил с сайта.
-  if (!(history.state && history.state.reader)) {
-    history.pushState({ reader: true }, '', '#read')
+  // История/URL: URL отражает ОТКРЫТУЮ книгу (#read/<id>), чтобы при
+  // переоткрытии вкладки читалка вернулась к той же книге (позицию хранит
+  // сервер). Вход из библиотеки/страницы книги — новая запись (браузерный
+  // «назад» → назад по сайту); переключение книги внутри читалки или
+  // восстановление из URL — замена записи, чтобы не плодить историю.
+  const bookHash = `#read/${encodeURIComponent(work.id)}`
+  const histState = { reader: true, id: work.id }
+  if ((history.state && history.state.reader) || location.hash === bookHash) {
+    history.replaceState(histState, '', bookHash)
+  } else {
+    history.pushState(histState, '', bookHash)
   }
 
   // Очистить прошлый экземпляр.
@@ -42,9 +52,22 @@ export async function openReader(work) {
   // Cache-first: если книга сохранена офлайн — читаем из кэша (без сети),
   // иначе тянем с сервера. Помогает на телефоне при плохом коннекте.
   let resp = await cachedBook(work.id)
-  if (!resp) resp = await fetch(`/api/reader/${work.id}/file`)
+  // PDF читаем как EPUB (перетекающий текст). Первое открытие ждёт конвертацию
+  // (секунды–минуты на толстой книге), дальше файл готов и отдаётся сразу.
+  if (!resp && !opts.original && convertible(work) && pdfAsEpub()) {
+    const t = toast('Перевожу в EPUB — будет перетекающий текст…', 'info', 60000)
+    const st = await ensureEpub(work.id).catch(() => null)
+    t?.close?.()
+    if (!st?.ready) {
+      toast(st?.error ? 'Не вышло сделать EPUB: ' + st.error : 'Конвертация ещё идёт — открываю оригинал', 'err', 6000)
+    }
+  }
+  if (!resp) resp = await fetch(`/api/reader/${work.id}/file` + (opts.original ? '?original=1' : ''))
   const blob = await resp.blob()
-  const name = `book.${work.file_format || 'epub'}`
+  // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
+  // каким движком foliate будет рендерить).
+  const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
+  const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 
   await view.open(file)
@@ -68,7 +91,7 @@ export async function openReader(work) {
 
 function onRelocate(e) {
   hideSelPopup()
-  const { fraction, cfi, index, range } = e.detail
+  const { fraction, cfi, index, range, tocItem } = e.detail
   setLastCfi(cfi || lastCfi)
   if (typeof index === 'number') setLastIdx(index)
   // Текстовый якорь верха экрана — основа устойчивого восстановления позиции.
@@ -77,6 +100,9 @@ function onRelocate(e) {
   const pct = Math.round((fraction || 0) * 100)
   $('#progress-slider').value = fraction || 0
   $('#progress-label').textContent = pct + '%'
+  // Название текущей главы (из оглавления книги) — в нижней панели у прогресса.
+  const chapEl = $('#chapter-label')
+  if (chapEl) chapEl.textContent = tocItem?.label ? tocItem.label.trim() : ''
   // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {

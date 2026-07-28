@@ -20,4 +20,6 @@ export function toast(msg, kind = 'info', ms = 4200) {
   const kill = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 250) }
   const timer = setTimeout(kill, ms)
   el.addEventListener('click', () => { clearTimeout(timer); kill() })
+  el.close = () => { clearTimeout(timer); kill() }
+  return el
 }

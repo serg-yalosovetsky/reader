@@ -52,6 +52,13 @@ class Work(SQLModel, table=True):
     status: str = ""  # в процессе | завершён
     words: int = 0  # объём в словах (если известно)
     meta_synced: bool = False  # метаданные уже разобраны (чтобы не тянуть снова)
+    # --- EPUB-версия книги с фиксированной вёрсткой (PDF → EPUB, calibre) ---
+    # Оригинал остаётся в file_path; сюда пишется производный файл, который
+    # читалка отдаёт вместо PDF (перетекающий текст, темы, TTS, подсветки).
+    converted_path: str = ""
+    # "" (не пробовали) | pending | ready | failed
+    converted_status: str = ""
+    converted_error: str = ""  # последняя ошибка конвертации (видна в UI)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

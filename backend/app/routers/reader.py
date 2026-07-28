@@ -206,8 +206,13 @@ def _serve(path: Path, sha1: str) -> FileResponse:
 
 
 @router.get("/{work_id}/file")
-def get_book_file(work_id: int) -> FileResponse:
+def get_book_file(work_id: int, original: bool = False) -> FileResponse:
     """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте.
+
+    У PDF есть EPUB-версия (convert.py) — отдаём её: перетекающий текст вместо
+    картинок-страниц. original=1 — принудительно оригинал (скачивание, сверка
+    с вёрсткой). Фактический формат — в заголовке X-Book-Format (фронт по нему
+    именует файл для foliate-js, иначе EPUB уедет в pdf.js).
 
     Коннект БД держится только на чтение метаданных; сама докачка из Calibre
     (до 180с) идёт БЕЗ занятого коннекта — иначе параллельные открытия забивали
@@ -221,6 +226,18 @@ def get_book_file(work_id: int) -> FileResponse:
         is_calibre_link = work.site == "calibre" and not work.file_path
         file_path = work.file_path
         file_format = work.file_format
+        converted = work.converted_path if work.converted_status == "ready" else ""
+
+    # EPUB-версия готова — отдаём её (оригинал остаётся доступен по original=1).
+    if converted and not original:
+        cpath = Path(converted)
+        if cpath.exists():
+            resp = FileResponse(
+                cpath, media_type=_MEDIA["epub"], filename=cpath.name
+            )
+            resp.headers["Cache-Control"] = "no-store"
+            resp.headers["X-Book-Format"] = "epub"
+            return resp
 
     if is_calibre_link:
         # Книга-ссылка: тянем файл из Calibre по требованию в вытесняемый кэш.
@@ -238,6 +255,7 @@ def get_book_file(work_id: int) -> FileResponse:
     media = _MEDIA.get(file_format, "application/octet-stream")
     resp = FileResponse(path, media_type=media, filename=path.name)
     resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Book-Format"] = file_format or ""
     return resp
 
 

@@ -33,6 +33,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" />
+  <script>
+    // Восстановление вкладки: мгновенно прячем библиотеку, если URL указывает
+    // на книгу (#read/<id>), — чтобы сетка не мелькала до открытия читалки.
+    // Класс снимает app.js, дальше видимостью управляет читалка.
+    try { if (/^#read\//.test(location.hash)) document.documentElement.classList.add('restoring-book') } catch (e) {}
+  </script>
 </head>
 <body>
   <!-- ======================= БИБЛИОТЕКА ======================= -->
@@ -175,6 +181,7 @@
     </div>
 
     <div id="reader-bottom" class="reader-bar reader-bottom">
+      <span id="chapter-label" class="chapter-label"></span>
       <button id="prev-btn" class="icon-btn" title="Назад">‹</button>
       <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" />
       <span id="progress-label" class="progress-label">0%</span>

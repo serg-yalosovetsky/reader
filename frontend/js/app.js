@@ -19,16 +19,39 @@ import './tts.js'
 
 // ===================== Старт =====================
 syncSettingsUI()
-loadLibrary()
-  .then(async () => {
-    // Deep-link: /?open=<id> сразу открывает книгу в читалке.
-    const openId = new URLSearchParams(location.search).get('open')
-    if (openId) {
-      const work = await api.get(`/api/library/${openId}`).catch(() => null)
-      if (work) openReader(work)
-    }
-  })
-  .catch((e) => { $('#ingest-status').hidden = false; $('#ingest-status').textContent = 'Сервер недоступен: ' + e.message })
+// Снимаем ранний класс-«заглушку» (его ставит инлайн-скрипт в <head>): дальше
+// видимостью управляет JS. Держать класс нельзя — иначе «назад» в библиотеку
+// оставит её скрытой (display:none победит .hidden=false).
+document.documentElement.classList.remove('restoring-book')
+
+// Восстановление вкладки: если URL указывает на книгу (#read/<id>) или это
+// deep-link (?open=<id>) — открываем читалку СРАЗУ, параллельно с загрузкой
+// библиотеки и НЕ показывая её. Иначе наполненная сетка мелькает ~секунду,
+// пока loadLibrary дорендерится, и только потом поверх открывается книга.
+const _restore = (() => {
+  const h = (location.hash.match(/^#read\/(.+)$/) || [])[1]
+  if (h) return { id: decodeURIComponent(h), fromHash: true }
+  const q = new URLSearchParams(location.search).get('open')
+  return q ? { id: q, fromHash: false } : null
+})()
+
+if (_restore) {
+  // Прячем библиотеку до первого рендера сетки — читалка откроется поверх.
+  $('#library').hidden = true
+  // Библиотеку грузим в фоне: наполнит libMonitored/прогресс и будет готова к «назад».
+  loadLibrary().catch(() => {})
+  ;(async () => {
+    const work = await api.get(`/api/library/${_restore.id}`).catch(() => null)
+    // Сбрасываем hash к «библиотеке», чтобы «назад» из книги вёл в неё, а не
+    // застревал на #read/<id>; запись самой книги добавит openReader.
+    if (_restore.fromHash) history.replaceState(null, '', location.pathname + location.search)
+    if (work) openReader(work)
+    else $('#library').hidden = false  // книги нет — показываем библиотеку
+  })()
+} else {
+  loadLibrary()
+    .catch((e) => { $('#ingest-status').hidden = false; $('#ingest-status').textContent = 'Сервер недоступен: ' + e.message })
+}
 
 // Офлайн-режим: сверяем индекс кэшированных книг и регистрируем service
 // worker (оболочка network-first: онлайн — свежий JS, офлайн — из кэша).

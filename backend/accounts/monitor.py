@@ -263,8 +263,17 @@ def _download_and_write(
     # оставляем и штрафуем (backoff погасит карусель), иначе глава теряется навсегда
     # (best_cur<=last_seen → «актуально»). materialized==0 (не смогли посчитать, напр.
     # page-blob) → доверяем best_cur, старое поведение.
-    from ..app.services import _real_chapters as _rc
-    materialized = _rc(work.file_path, work.file_format) if work.file_path else 0
+    # Полнота считается ЧИСЛОМ ГЛАВ В ФАЙЛЕ (count_sections), а не числом глав с
+    # «хорошими» названиями (_real_chapters): последний выбрасывает «Часть N», а на
+    # ficbook это настоящие авторские названия — полностью скачанная книга выглядела
+    # как «2 гл. из 14», has_update залипал, fail_count рос до сотен.
+    from ..app.services import count_sections as _cs
+
+    materialized = (
+        _cs(work.file_path, work.file_format, book_title=work.title or "")
+        if work.file_path
+        else 0
+    )
     # Сравнивать можно только однородные величины. У readli _chapter_count считает
     # СТРАНИЦЫ читалки (80), а в файле — ГЛАВЫ (21), причём адаптер сам обходит
     # всю пагинацию. Без этой поправки полностью скачанная книга вечно числится

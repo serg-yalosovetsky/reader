@@ -158,37 +158,82 @@ _GENERIC_SECTION = re.compile(
 )
 
 
-def _real_chapters(path, fmt) -> int:
-    """Число секций с ОСМЫСЛЕННЫМ заголовком главы (не плейсхолдер «Часть N»).
-    Отличает книгу с реальной разбивкой (author.today/новый readli — «Глава N»,
-    именованные главы) от page-blob («Часть 1..N») или цельного файла. Заголовок
-    книги в TOC тоже считается, но это одинаковая добавка у обоих сравниваемых —
-    на относительное сравнение не влияет."""
+# Служебные записи TOC — не главы книги (FanFicFare кладёт «Title Page», сборщики —
+# обложку и оглавление).
+_SERVICE_SECTION = re.compile(
+    r"^(title\s*page|cover|обложка|титул|титульный\s*лист|contents|"
+    r"table\s*of\s*contents|оглавление|содержание)$",
+    re.I,
+)
+
+
+def _section_titles(path, fmt) -> list[str]:
+    """Заголовки секций книги: TOC (epub NCX) либо <section><title> (fb2)."""
     import zipfile
 
     try:
         p = str(path)
         low = (fmt or "").lower()
-        titles: list[str] = []
+        raw_titles: list[str] = []
         if low == "epub" or p.lower().endswith(".epub"):
             z = zipfile.ZipFile(p)
             ncx = [n for n in z.namelist() if n.lower().endswith(".ncx")]
             if ncx:
-                titles = re.findall(
+                raw_titles = re.findall(
                     r"<text>(.*?)</text>", z.read(ncx[0]).decode("utf-8", "ignore"), re.S
                 )
         elif low == "fb2" or p.lower().endswith(".fb2"):
             with open(p, encoding="utf-8", errors="ignore") as fh:
                 data = fh.read()
-            titles = re.findall(r"<section[^>]*>\s*<title>(.*?)</title>", data, re.S)
-        real = 0
-        for raw in titles:
+            raw_titles = re.findall(r"<section[^>]*>\s*<title>(.*?)</title>", data, re.S)
+        out: list[str] = []
+        for raw in raw_titles:
             ttl = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
-            if ttl and not _GENERIC_SECTION.match(ttl):
-                real += 1
-        return real
+            if ttl:
+                out.append(ttl)
+        return out
     except Exception:  # noqa: BLE001
-        return 0
+        return []
+
+
+def count_sections(path, fmt, *, book_title: str = "") -> int:
+    """Сколько ГЛАВ реально лежит в файле — без суждений о качестве их названий.
+
+    Отвечает на вопрос «всё ли докачано», в отличие от `_real_chapters`, который
+    отвечает на «у какого из двух файлов разбивка лучше» и потому выбрасывает
+    плейсхолдеры «Часть N». Для полноты такой фильтр — катастрофа: на ficbook главы
+    ЧАСТО так и называются («Часть 1..14» — настоящее авторское название), и
+    полностью скачанная книга выглядит как «2 главы из 14».
+
+    Служебные записи TOC (Title Page / обложка / оглавление) и строка с названием
+    книги не считаются: результат сравнивается с числом глав НА САЙТЕ, а не с другим
+    файлом, поэтому лишняя добавка здесь не сокращается.
+    """
+    bt = re.sub(r"\s+", " ", (book_title or "")).strip().lower()
+    n = 0
+    for ttl in _section_titles(path, fmt):
+        if _SERVICE_SECTION.match(ttl):
+            continue
+        if bt and ttl.lower() == bt:
+            continue
+        n += 1
+    return n
+
+
+def _real_chapters(path, fmt) -> int:
+    """Число секций с ОСМЫСЛЕННЫМ заголовком главы (не плейсхолдер «Часть N»).
+    Отличает книгу с реальной разбивкой (author.today/новый readli — «Глава N»,
+    именованные главы) от page-blob («Часть 1..N») или цельного файла. Заголовок
+    книги в TOC тоже считается, но это одинаковая добавка у обоих сравниваемых —
+    на относительное сравнение не влияет.
+
+    НЕ годится для проверки «всё ли докачано» — для этого count_sections().
+    """
+    real = 0
+    for ttl in _section_titles(path, fmt):
+        if not _GENERIC_SECTION.match(ttl):
+            real += 1
+    return real
 
 
 def register_download(result: DownloadResult, session: Session) -> Work:

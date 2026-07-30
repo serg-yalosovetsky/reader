@@ -424,6 +424,12 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
             raise DownloaderError(
                 "author.today: контент 18+, требуется подтверждение возраста/вход"
             )
+        if first == "suspended":
+            # Произведение снято/заблокировано самим author.today — качать нечего
+            # ни с куками, ни без; говорим это прямо, а не «Unsuccessful».
+            raise DownloaderError(
+                f"author.today: произведение снято с публикации (глава {chapter_id})"
+            )
         if first in ("unauthorized", "paid"):
             # Глава платная/недоступна анонимно (частично-платная книга: пролог
             # бесплатно, хвост за деньги). Помечаем, чтобы download() собрал

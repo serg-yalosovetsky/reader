@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import re
-
+from datetime import datetime
 
 from pathlib import Path
 
@@ -273,7 +273,12 @@ def sync_catalog(session: Session) -> dict:
                     genres=genres,
                     meta_synced=True,
                     created_at=utcnow(),
-                    updated_at=utcnow(),
+                    # НЕ utcnow(): библиотека сортируется по updated_at, и книга,
+                    # годами лежащая в каталоге Calibre, всплывала бы наверх в тот
+                    # момент, когда синк впервые завёл на неё Work-ссылку. Берём
+                    # дату из каталога; нет её — уводим вниз (created_at остаётся
+                    # честным «когда запись появилась у нас»).
+                    updated_at=b.get("updated") or datetime(1970, 1, 1),
                 )
             )
             added += 1
@@ -387,7 +392,18 @@ def ensure_cover(work_id: int) -> Path | None:
         if not work:
             return None
         if work.cover_path and Path(work.cover_path).exists():
-            return Path(work.cover_path)
+            # Кешированный файл принимаем, только если он похож на обложку:
+            # сохранённый когда-то баннер/логотип иначе навсегда вытесняет
+            # настоящую обложку из Calibre (живой случай: PNG 122x41).
+            from ..app import covers as _covers
+
+            try:
+                if not _covers.is_generic_cover(
+                    Path(work.cover_path).read_bytes(), check_aspect=True
+                ):
+                    return Path(work.cover_path)
+            except OSError:
+                pass
         if work.site != "calibre" or not work.calibre_id or not client.http_mode():
             return None
         calibre_id = work.calibre_id

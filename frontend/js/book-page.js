@@ -14,6 +14,25 @@ let curWork = null
 const SITE_LABEL = {
   ficbook: 'ficbook.net', fanfics: 'fanfics.me', authortoday: 'author.today',
   ao3: 'AO3', ffn: 'fanfiction.net', calibre: 'Calibre', upload: 'Загружено',
+  readli: 'readli.net', searchfloor: 'searchfloor.org',
+}
+
+const HOST_LABEL = {
+  'archiveofourown.org': 'AO3', 'fanfiction.net': 'fanfiction.net',
+}
+
+// Откуда книга ВЗЯТА, а не где лежит её файл. Поле site у десятков книг
+// равно 'calibre' (так их пометила миграция на ссылки), хотя сама книга —
+// фанфик с ficbook/author.today: бейдж «Calibre» вводил в заблуждение. source_url
+// знает правду всегда, поэтому он важнее site.
+function sourceLabel(w) {
+  if (w.source_url) {
+    try {
+      const h = new URL(w.source_url).hostname.replace(/^www\./, '')
+      return HOST_LABEL[h] || h
+    } catch { /* битый URL — падаем на site ниже */ }
+  }
+  return (w.site && SITE_LABEL[w.site]) || ''
 }
 
 function parseList(s) {
@@ -70,7 +89,10 @@ export function bookPageMeta(w) {
   const badges = []
   if (w.rating) badges.push(`<span class="bp-badge bp-rating">${escapeHtml(w.rating)}</span>`)
   if (w.status) badges.push(`<span class="bp-badge bp-status">${escapeHtml(w.status)}</span>`)
-  if (w.site && SITE_LABEL[w.site]) badges.push(`<span class="bp-badge bp-site">${escapeHtml(SITE_LABEL[w.site])}</span>`)
+  const src = sourceLabel(w)
+  if (src) badges.push(`<span class="bp-badge bp-site">${escapeHtml(src)}</span>`)
+  // Файл хранится в Calibre — отдельный факт, не источник книги.
+  if (w.calibre_id && src !== 'Calibre') badges.push('<span class="bp-badge bp-site">Calibre</span>')
   const facts = []
   if (w.chapters_count) facts.push(`${w.chapters_count} гл.`)
   if (w.words) facts.push(`${fmtNum(w.words)} сл.`)

@@ -16,6 +16,7 @@ import hashlib
 import re
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -87,6 +88,19 @@ def best_format(formats, prefer=PREFER) -> Optional[str]:
     return next(iter(keys), None)
 
 
+def _parse_dt(raw: str | None) -> Optional[datetime]:
+    """ISO-8601 из OPDS (`2026-07-10T08:21:48+00:00`) -> naive UTC datetime."""
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _parse_entry(e: Element) -> Optional[dict]:
     """Разобрать <entry> OPDS в словарь книги. None — если нечего скачивать."""
     title = (e.findtext(f"{_ATOM}title") or "").strip()
@@ -130,8 +144,12 @@ def _parse_entry(e: Element) -> Optional[dict]:
         calibre_id = cover_id
     if calibre_id is None:
         return None
+    # Дата добавления/правки книги в Calibre. Нужна, чтобы плановый синк не
+    # выдавал давно лежащую в каталоге книгу за «только что появившуюся».
+    added = _parse_dt(e.findtext(f"{_ATOM}updated"))
     return {
         "calibre_id": calibre_id,
+        "updated": added,
         "title": title,
         "authors": author,
         "language": lang,
@@ -258,6 +276,7 @@ def _list_books_local() -> list[dict]:
         out.append(
             {
                 "calibre_id": r["id"],
+                "updated": None,
                 "title": r["title"],
                 "authors": r["authors"],
                 "path": r["path"],

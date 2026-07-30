@@ -265,7 +265,13 @@ def _download_and_write(
     # page-blob) → доверяем best_cur, старое поведение.
     from ..app.services import _real_chapters as _rc
     materialized = _rc(work.file_path, work.file_format) if work.file_path else 0
-    got_all = (materialized == 0) or (materialized >= best_cur)
+    # Сравнивать можно только однородные величины. У readli _chapter_count считает
+    # СТРАНИЦЫ читалки (80), а в файле — ГЛАВЫ (21), причём адаптер сам обходит
+    # всю пагинацию. Без этой поправки полностью скачанная книга вечно числится
+    # недокачанной: fail_count растёт и через _MAX_FAILS подписка выпадает
+    # из авторетрая (живой случай: «Вечно голодный студент 9», 21 гл. из 80 стр.).
+    _page_metric = _host(best_url).lower().endswith("readli.net")
+    got_all = (materialized == 0) or _page_metric or (materialized >= best_cur)
     mon.last_checked = utcnow()
     if got_all:
         mon.has_update = False

@@ -9,11 +9,14 @@
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlparse
 
 from . import fanficfare_engine as fff
 from . import fichub
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
+
+log = logging.getLogger("reader.chain")
 
 
 def is_url(s: str) -> bool:
@@ -255,6 +258,22 @@ def _search_free(title: str, author: str = "") -> DownloadResult | None:
             cands.append(r)
     except DownloaderError:
         pass
+    # Зеркало обязано быть ТОЙ ЖЕ книгой. Поиск по названию в серии легко
+    # возвращает соседний том (живой случай: запрос «Вечно голодный студент 9»
+    # → readli отдавал том 5), а вызывающий код подменял книге файл и переводил
+    # на неё подписку. same_book сравнивает и номер тома в названии.
+    from ..app.book_identity import same_book
+
+    want = {"title": title, "author": author}
+    kept = []
+    for _c in cands:
+        if same_book(want, {"title": _c.title, "author": _c.author or ""}):
+            kept.append(_c)
+        else:
+            log.info(
+                "_search_free: отброшено зеркало «%s» — это не «%s»", _c.title, title
+            )
+    cands = kept
     if not cands:
         return None
     # Полнота — по тексту, но структурный апгрейд (больше реальных глав при

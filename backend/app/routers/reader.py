@@ -89,9 +89,20 @@ def _schedule_generation_by_id(work_id: int) -> None:
 
 
 def _usable_cover(work: Work) -> Path | None:
+    """Сохранённая обложка, если она вообще похожа на обложку.
+
+    Мусор (баннер/логотип/плейсхолдер сайта) отбраковываем: иначе он навсегда
+    занимает место настоящей обложки — ветки «взять из Calibre» и «перекачать
+    с источника» ниже просто не выполняются (был живой случай: PNG 122x41).
+    """
     if work and work.cover_path:
         p = Path(work.cover_path)
         if p.exists():
+            try:
+                if covers.is_generic_cover(p.read_bytes(), check_aspect=True):
+                    return None
+            except OSError:
+                return None
             return p
     return None
 

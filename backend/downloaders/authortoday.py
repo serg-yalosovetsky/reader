@@ -424,12 +424,14 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
             raise DownloaderError(
                 "author.today: контент 18+, требуется подтверждение возраста/вход"
             )
-        if first == "unauthorized":
+        if first in ("unauthorized", "paid"):
             # Глава платная/недоступна анонимно (частично-платная книга: пролог
             # бесплатно, хвост за деньги). Помечаем, чтобы download() собрал
             # бесплатную часть и ушёл в фоллбэк на бесплатные зеркала.
+            # "Paid" приходит ЗАЛОГИНЕННОМУ пользователю, который книгу не купил;
+            # "Unauthorized" — анониму. Оба означают одно: дальше платно.
             raise _PaidChapter(
-                f"author.today: глава {chapter_id} недоступна (Unauthorized)"
+                f"author.today: глава {chapter_id} недоступна ({msgs[0]})"
             )
         raise DownloaderError(
             f"author.today: сервер ответил Unsuccessful для главы {chapter_id}"

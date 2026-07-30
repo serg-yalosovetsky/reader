@@ -230,6 +230,12 @@ def register_download(result: DownloadResult, session: Session) -> Work:
                     _unfinish_progress(session, existing.id, cur_rich, new_rich)
         if result.source_url and not existing.source_url:
             existing.source_url = result.source_url
+        # Книга, которую мы сами качаем с источника, перестаёт быть calibre-ссылкой:
+        # site=calibre ей проставил migrate_local_to_refs, но файл вернулся из
+        # монитора. Иначе UI показывает бейдж «Calibre» вместо настоящего источника,
+        # а reader.py тянет обложку из Calibre вместо обложки книги.
+        if existing.site == "calibre" and result.site and existing.file_path:
+            existing.site = result.site
         session.add(existing)
         session.commit()
         session.refresh(existing)

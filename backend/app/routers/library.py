@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import anyio
+import contextlib
 import tempfile
 from pathlib import Path
 
@@ -14,7 +15,6 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
-from ..services import _norm
 from ..storage import detect_format, import_file, sha1_of_file
 
 router = APIRouter(prefix="/api/library", tags=["library"])
@@ -101,10 +101,8 @@ def _dedup_works(session: Session) -> int:
                 ).all():
                     session.delete(p)
                 if dup.file_path and dup.file_path != keep.file_path:
-                    try:
+                    with contextlib.suppress(OSError):
                         os.remove(dup.file_path)
-                    except OSError:
-                        pass
                 session.delete(dup)
                 removed_works += 1
     session.commit()
@@ -381,15 +379,11 @@ def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     for m in session.exec(select(Monitored).where(Monitored.work_id == work_id)).all():
         session.delete(m)
     if work.file_path:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(work.file_path)
-        except OSError:
-            pass
     if work.cover_path:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(work.cover_path)
-        except OSError:
-            pass
     session.delete(work)
     session.commit()
     return {"ok": True}

@@ -19,6 +19,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+from xml.etree.ElementTree import Element
 
 import httpx
 
@@ -192,13 +193,14 @@ def download_book(calibre_id: int, fmt: str, dest: str | Path) -> tuple[Path, st
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
     h = hashlib.sha1()
-    with _client(timeout=180.0) as cli:
-        with cli.stream("GET", f"/opds/download/{calibre_id}/{fmt}/") as r:
-            r.raise_for_status()
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_bytes(1 << 20):
-                    h.update(chunk)
-                    f.write(chunk)
+    with _client(timeout=180.0) as cli, cli.stream(
+        "GET", f"/opds/download/{calibre_id}/{fmt}/"
+    ) as r:
+        r.raise_for_status()
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_bytes(1 << 20):
+                h.update(chunk)
+                f.write(chunk)
     tmp.replace(dest)
     return dest, h.hexdigest()
 

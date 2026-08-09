@@ -556,6 +556,17 @@ a.bp-author:hover { color: var(--accent); text-decoration: underline; }
 /* Ошибка докачки в списке подписок */
 .mon-row .badge-err { background: var(--danger, #b3402f); color: #fff; }
 
+/* Режим «нет сети»: книги без офлайн-копии не открыть — гасим их, чтобы тап
+   по такой карточке не был тупиком. Класс is-offline ставит loadLibrary(),
+   когда /api/library не ответил и список взят из локального снимка. */
+body.is-offline .book-card.no-offline-copy { opacity: .45; }
+body.is-offline .book-card.no-offline-copy .book-cover::after {
+  content: '🔌 нет копии';
+  position: absolute; inset: auto 6px 6px 6px; z-index: 3;
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 6px;
+  background: rgba(0,0,0,.72); color: #fff; text-align: center;
+}
+
 /* Офлайн-книги: бейдж на карточке библиотеки */
 .offline-badge {
   position: absolute; left: 6px; bottom: 6px; z-index: 2;

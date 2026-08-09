@@ -19,9 +19,18 @@ const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с
 const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE])
 
 // Минимум для первого офлайн-старта. Остальное осядет в кэш по мере обхода.
+// Минимум для первого офлайн-старта — теперь весь граф модулей, а не только
+// app.js: он их импортирует, и без сети недостающий модуль ронял загрузку
+// оболочки целиком (белый экран вместо библиотеки).
 const PRECACHE = [
-  '/', '/index.html', '/css/theme.css', '/js/app.js',
+  '/', '/index.html', '/css/theme.css',
   '/favicon.svg', '/manifest.webmanifest',
+  '/js/app.js', '/js/library.js', '/js/reader-core.js', '/js/book-page.js',
+  '/js/navigation.js', '/js/bookmarks.js', '/js/highlights.js', '/js/search.js',
+  '/js/settings.js', '/js/tts.js', '/js/accounts.js',
+  '/js/core/api.js', '/js/core/dom.js', '/js/core/state.js', '/js/core/prefs.js',
+  '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',
+  '/js/core/locator.js', '/js/core/convert.js', '/js/core/inline-images.js',
 ]
 
 self.addEventListener('install', (e) => {
@@ -49,20 +58,46 @@ self.addEventListener('message', (e) => {
 const isCacheable = (resp) =>
   resp && resp.ok && resp.status === 200 && resp.type === 'basic' && !resp.redirected
 
+// Ответ «наш» только если это не SSO-редирект и не opaque. Важно отличать от
+// isCacheable: тот решает, КЛАСТЬ ли в кэш, а этот — ОТДАВАТЬ ли приложению.
+// При частичной связи (wifi без интернета, captive portal, роуминг) запрос
+// доходит до nginx и получает 302 на sso.ibotz.fun; fetch по умолчанию редирект
+// следует и резолвится HTML-страницей логина с ok=true. Раньше такой ответ
+// уходил в приложение → api.get делал r.json() → SyntaxError → loadLibrary
+// падал на первой строке, и библиотека не рисовалась вообще. Теперь это
+// трактуется как отказ сети → отдаём кэш.
+const isOwnResponse = (resp) => resp && resp.type === 'basic' && !resp.redirected
+
+// «Сеть есть, но мёртвая» — самый частый случай в дороге. Без таймаута fetch
+// висит десятки секунд, и страница выглядит зависшей, а не офлайновой.
+const NET_TIMEOUT_MS = 2500
+
 async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName)
-  try {
+  const net = (async () => {
     const resp = await fetch(req)
+    if (!isOwnResponse(resp)) throw new Error('sso-redirect-or-opaque')
     if (isCacheable(resp)) cache.put(req, resp.clone()).catch(() => {})
     return resp
-  } catch (err) {
+  })()
+  net.catch(() => {})   // фон может отвалиться позже — без unhandledrejection
+
+  let timer
+  const timeout = new Promise((_, rej) => {
+    timer = setTimeout(() => rej(new Error('net-timeout')), NET_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([net, timeout])
+  } catch {
     const hit = await cache.match(req)
-    if (hit) return hit
+    if (hit) return hit                        // кэш есть — отдаём мгновенно
     if (req.mode === 'navigate') {
       const shell = (await caches.match('/index.html')) || (await caches.match('/'))
       if (shell) return shell
     }
-    throw err
+    return net                                 // кэша нет — ждём медленную сеть
+  } finally {
+    clearTimeout(timer)
   }
 }
 

@@ -7,7 +7,7 @@ import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
          setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
 import { openBookPage, bookPageMeta } from './book-page.js'
-import { isOffline, removeBook, downloadBook } from './core/offline.js'
+import { isOffline, offlineIds, removeBook, downloadBook } from './core/offline.js'
 
 // ---- Ленивая подгрузка обложек ----
 // Раньше карточки рендерились с готовым <img src>, и браузер разом запрашивал
@@ -97,8 +97,38 @@ function renderPendingPill(monitored) {
   }
 }
 
+// Последний успешно полученный список книг. Нужен, чтобы офлайн (или когда
+// связь «есть, но мёртвая» и SW отдаёт отказ) библиотека вообще отрисовалась:
+// раньше api.get('/api/library') без .catch ронял loadLibrary на первой строке,
+// и пользователь не видел даже те книги, что сам сохранил офлайн.
+const WORKS_KEY = 'reader:worksSnap'
+
+function saveWorksSnap(works) {
+  try { localStorage.setItem(WORKS_KEY, JSON.stringify(works)) } catch { /* quota */ }
+}
+function loadWorksSnap() {
+  try {
+    const v = JSON.parse(localStorage.getItem(WORKS_KEY) || 'null')
+    return Array.isArray(v) ? v : null
+  } catch { return null }
+}
+
 export async function loadLibrary() {
-  setLibWorks(await api.get('/api/library'))
+  let offlineMode = false
+  try {
+    const works = await api.get('/api/library')
+    setLibWorks(works)
+    saveWorksSnap(works)
+  } catch (err) {
+    const snap = loadWorksSnap()
+    if (!snap) throw err            // и снимка нет — показать честную ошибку
+    setLibWorks(snap)
+    offlineMode = true
+    const n = offlineIds().length
+    toast(n ? `Нет сети — показываю сохранённое. Офлайн доступно книг: ${n}`
+            : 'Нет сети — показываю последний список. Офлайн-копий пока нет', 'info', 6000)
+  }
+  document.body.classList.toggle('is-offline', offlineMode)
   detectAutoUpdates()
   // Один батч-запрос вместо N последовательных (раньше книги появлялись через 3-5с).
   const [monitored, progAll] = await Promise.all([
@@ -128,9 +158,14 @@ export function applyLibFilter(q) {
   grid.innerHTML = ''
   resetCoverObserver()  // сбрасываем наблюдатель под новый набор карточек
   // Свои книги: показываем всегда (с фильтром если есть)
-  const filtered = q
+  let filtered = q
     ? libWorks.filter(w => match(w.title) || match(w.author) || match(w.series))
     : libWorks
+  // Офлайн: сохранённые книги — наверх. Остальные не прячем (видно, что есть в
+  // библиотеке), но они уедут вниз и погаснут — см. .no-offline-copy в CSS.
+  if (document.body.classList.contains('is-offline')) {
+    filtered = [...filtered].sort((a, b) => (isOffline(b.id) ? 1 : 0) - (isOffline(a.id) ? 1 : 0))
+  }
   for (const w of filtered) {
     grid.append(bookCard(w, libProgress[w.id] || 0, libUpdated.has(w.id)))
   }
@@ -244,7 +279,11 @@ function bookCard(w, ratio, hasUpdate) {
   // книга висела с ложной плашкой. Когда реально докачается новая глава,
   // непрочитанный контент уронит ratio ниже порога — плашка вернётся сама.
   const showUpdate = hasUpdate && !done
-  card.className = ['book-card', readState, showUpdate ? 'has-update' : ''].filter(Boolean).join(' ')
+  // Без сети книга без офлайн-копии открыться не сможет — помечаем, чтобы тап
+  // по ней не был тупиком (CSS гасит такие карточки только в режиме офлайна).
+  const noCopy = !isOffline(w.id) ? 'no-offline-copy' : ''
+  card.className = ['book-card', readState, showUpdate ? 'has-update' : '', noCopy]
+    .filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.

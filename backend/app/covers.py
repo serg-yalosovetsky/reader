@@ -238,12 +238,15 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
     host = (urlparse(url).hostname or "").lower()
     if host.endswith("ficbook.net"):
         import cloudscraper
+        from contextlib import closing
 
-        c = cloudscraper.create_scraper(
+        # closing() обязателен — иначе keep-alive сокеты копятся в CLOSE-WAIT
+        # до упора в RLIMIT_NOFILE (см. тот же фикс в accounts/feeds.py).
+        with closing(cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows"}
-        )
-        r = c.get(url, timeout=40)
-        return r.content if binary else r.text
+        )) as c:
+            r = c.get(url, timeout=40)
+            return r.content if binary else r.text
     import httpx
 
     with httpx.Client(

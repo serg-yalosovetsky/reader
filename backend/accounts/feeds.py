@@ -11,6 +11,7 @@ author.today и fanfics.me доступны обычным клиентом.
 from __future__ import annotations
 
 import re
+from contextlib import closing
 
 import httpx
 from bs4 import BeautifulSoup
@@ -59,36 +60,41 @@ _FICBOOK_TIMEOUT = (15, 90)
 
 def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict]:
     import cloudscraper
-    c = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows"})
-    if cookies:
-        c.cookies.update(cookies)
+    # closing() обязателен: scraper — это requests.Session с keep-alive пулом.
+    # Без close() каждый тик планировщика (15 мин) оставлял сокет в CLOSE-WAIT;
+    # за ~10 дней упёрлись в RLIMIT_NOFILE=1024 и сайт перестал принимать
+    # соединения (процесс жив, порт слушает, ответ — reset).
+    with closing(cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows"})) as c:
+        if cookies:
+            c.cookies.update(cookies)
 
-    def _notifications():
-        rn = c.post("https://ficbook.net/user_notifications/get_new",
-                    headers={"X-Requested-With": "XMLHttpRequest"}, timeout=_FICBOOK_TIMEOUT)
-        try:
-            return rn.json()
-        except ValueError:
-            return None
+        def _notifications():
+            rn = c.post("https://ficbook.net/user_notifications/get_new",
+                        headers={"X-Requested-With": "XMLHttpRequest"}, timeout=_FICBOOK_TIMEOUT)
+            try:
+                return rn.json()
+            except ValueError:
+                return None
 
-    # Переиспользуем сохранённую сессию; логинимся только если куки протухли.
-    data = _notifications() if cookies else None
-    if not data or "data" not in data:
-        c.get("https://ficbook.net/", timeout=_FICBOOK_TIMEOUT)
-        r = c.post("https://ficbook.net/login_check_static",
-                   data={"login": user, "password": pw}, timeout=_FICBOOK_TIMEOUT)
-        if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
-            raise RuntimeError("ficbook: не удалось войти")
-        data = _notifications()
+        # Переиспользуем сохранённую сессию; логинимся только если куки протухли.
+        data = _notifications() if cookies else None
+        if not data or "data" not in data:
+            c.get("https://ficbook.net/", timeout=_FICBOOK_TIMEOUT)
+            r = c.post("https://ficbook.net/login_check_static",
+                       data={"login": user, "password": pw}, timeout=_FICBOOK_TIMEOUT)
+            if "Войти используя аккаунт на сайте" in r.text or "Проверка безопасности" in r.text:
+                raise RuntimeError("ficbook: не удалось войти")
+            data = _notifications()
 
-    urls = []
-    for n in ((data or {}).get("data", {}) or {}).get("notifications", []):
-        url = n.get("url", "")
-        if "/readfic/" in url:
-            book_id = _ficbook_book_id(url)
-            if book_id:
-                urls.append(f"https://ficbook.net/readfic/{book_id}")
-    return list(dict.fromkeys(urls)), _cookies_dict(c.cookies)
+        urls = []
+        for n in ((data or {}).get("data", {}) or {}).get("notifications", []):
+            url = n.get("url", "")
+            if "/readfic/" in url:
+                book_id = _ficbook_book_id(url)
+                if book_id:
+                    urls.append(f"https://ficbook.net/readfic/{book_id}")
+        return list(dict.fromkeys(urls)), _cookies_dict(c.cookies)
 
 
 # ----------------- author.today -----------------

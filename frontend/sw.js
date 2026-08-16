@@ -75,6 +75,11 @@ const isOwnResponse = (resp) => resp && resp.type === 'basic' && !resp.redirecte
 // «Сеть есть, но мёртвая» — самый частый случай в дороге. Без таймаута fetch
 // висит десятки секунд, и страница выглядит зависшей, а не офлайновой.
 const NET_TIMEOUT_MS = 2500
+// Потолок ожидания для НАВИГАЦИЙ: их нельзя закрывать кэшем, пока не ясно, что
+// сеть действительно мертва (иначе прячем форму входа), но и ждать без предела
+// нельзя. См. навигационную ветку networkFirst.
+const NAV_NET_TIMEOUT_MS = 8000
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Ответ-заглушка вместо ОТКАЗА промиса. e.respondWith(отклонённый промис) даёт
 // странице голый `TypeError: Failed to fetch` — без статуса, без тела, не
@@ -90,15 +95,17 @@ const offlineResponse = () =>
 
 async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName)
-  // Ответ страницы входа: сеть ЖИВА, протухла сессия. Отличать это от «нет
-  // связи» обязательно — см. навигационную ветку ниже.
-  let ssoResponse = null
+  // Сырой ответ сети, каким бы он ни был. Нужен, чтобы отличить «сеть умерла»
+  // от «сеть жива, но сервер отправил на вход»: во втором случае ответ ЕСТЬ.
+  // Проверять `resp.redirected` тут нельзя — у навигаций режим редиректа
+  // `manual`, и fetch резолвится opaqueredirect-ответом, у которого status=0 и
+  // redirected=false. Единственный надёжный признак — сам факт, что fetch
+  // ответил, а не отказал.
+  let rawResp = null
   const net = (async () => {
     const resp = await fetch(req)
-    if (!isOwnResponse(resp)) {
-      if (resp && resp.redirected) ssoResponse = resp
-      throw new Error('sso-redirect-or-opaque')
-    }
+    rawResp = resp
+    if (!isOwnResponse(resp)) throw new Error('sso-redirect-or-opaque')
     if (isCacheable(resp)) cache.put(req, resp.clone()).catch(() => {})
     return resp
   })()
@@ -123,9 +130,15 @@ async function networkFirst(req, cacheName) {
     // (браузер знает про отсутствие сети и отвечает мгновенно) — тогда, как и
     // раньше, отдаём оболочку и читалка работает без сети.
     if (req.mode === 'navigate') {
-      const resp = await net.catch(() => null)
-      if (ssoResponse) return ssoResponse
-      if (resp) return resp
+      // Ждём ответа дольше обычного, но НЕ бесконечно: 2.5 с здесь мало (сеть
+      // может отвечать медленно), а мёртвый captive-portal висит минутами, и
+      // без второго потолка старт офлайн-читалки на плохом мобильном канале
+      // выродился бы в долгое белое окно.
+      await Promise.race([net.catch(() => {}), sleep(NAV_NET_TIMEOUT_MS)])
+      // Сеть ответила — отдаём её ответ как есть. Для протухшей сессии это
+      // редирект (в т.ч. opaqueredirect) на форму входа, и браузер по нему
+      // пойдёт: только так пользователь может перелогиниться.
+      if (rawResp) return rawResp
       const shell = (await caches.match('/index.html')) || (await caches.match('/'))
       if (shell) return shell
       return offlineResponse()

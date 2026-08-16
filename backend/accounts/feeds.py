@@ -6,7 +6,9 @@
 
 ficbook закрыт анти-ботом (DDoS-Guard) — для него используем cloudscraper
 (httpx/обычный requests получают страницу «Проверка безопасности»).
-author.today и fanfics.me доступны обычным клиентом.
+author.today с 2026-08 закрыт Cloudflare-челленджем для датацентровых IP, и
+обходится он не клиентом, а egress'ом — см. downloaders/egress.at_client.
+fanfics.me доступен обычным клиентом.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlmodel import Session
 
+from ..downloaders import egress
 from . import monitor, store
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -116,14 +119,14 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str]
     # Если есть сохранённая cookie-сессия — используем её (без повторного входа,
     # который на новом устройстве требует email-код подтверждения).
     if cookies:
-        with httpx.Client(timeout=40, follow_redirects=True, cookies=cookies,
-                          headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+        with egress.at_client(timeout=40, follow_redirects=True, cookies=cookies,
+                              headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
             feed = c.get("https://author.today/feed")
             if "account/logoff" in feed.text or "logOff" in feed.text:
                 return _at_updates_from_feed(c), _cookies_dict(c.cookies)
         # cookie протухла — пробуем обычный вход ниже.
-    with httpx.Client(timeout=40, follow_redirects=True,
-                      headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+    with egress.at_client(timeout=40, follow_redirects=True,
+                          headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
         page = c.get("https://author.today/account/login")
         # токен именно из формы логина (на странице их несколько)
         m = re.search(r'id="loginForm".*?name="__RequestVerificationToken"[^>]*value="([^"]+)"',

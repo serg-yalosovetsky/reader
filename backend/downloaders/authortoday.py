@@ -23,6 +23,7 @@ import httpx
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
+from . import egress
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
 
 
@@ -109,7 +110,7 @@ def search_work(title: str, author: str = "") -> str | None:
         return SequenceMatcher(None, a_n, b_n).ratio()
 
     q = f"{title} {author}".strip() if author else title
-    with httpx.Client(
+    with egress.at_client(
         timeout=20,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
@@ -211,7 +212,7 @@ def search_work(title: str, author: str = "") -> str | None:
 def count_chapters(url: str) -> int | None:
     """Быстро получить число глав без скачивания текста."""
     work_id = _work_id(url)
-    with httpx.Client(
+    with egress.at_client(
         timeout=20,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
@@ -231,7 +232,7 @@ def fetch_meta(url: str) -> dict | None:
     """Лёгкие метаданные книги AT (title/author/annotation/series[_index]) для
     сверки идентичности через book_identity.same_book. Без скачивания глав."""
     work_id = _work_id(url)
-    with httpx.Client(
+    with egress.at_client(
         timeout=20,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
@@ -255,7 +256,7 @@ def fetch_text_sample(url: str, max_chars: int = 4000) -> str:
     """Первые ~max_chars символов текста книги AT (первая глава) — для сверки
     идентичности по содержимому, когда аннотаций нет. Аноним; '' при неудаче."""
     work_id = _work_id(url)
-    with httpx.Client(
+    with egress.at_client(
         timeout=30,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
@@ -307,7 +308,7 @@ def _login(c: httpx.Client, email: str, password: str) -> bool:
 
 def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     work_id = _work_id(url)
-    with httpx.Client(
+    with egress.at_client(
         timeout=60,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},

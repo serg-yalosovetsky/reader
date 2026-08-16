@@ -2,7 +2,7 @@
 // и стартовая инициализация.
 import '/vendor/foliate-js/view.js'
 import { $ } from './core/dom.js'
-import { api } from './core/api.js'
+import { api, onAuthRequired } from './core/api.js'
 import { reconcileOffline } from './core/offline.js'
 import './core/prefs.js'
 import { loadLibrary } from './library.js'
@@ -52,6 +52,25 @@ if (_restore) {
   loadLibrary()
     .catch((e) => { $('#ingest-status').hidden = false; $('#ingest-status').textContent = 'Сервер недоступен: ' + e.message })
 }
+
+// Протухшая SSO-сессия: показываем баннер с кнопкой входа. Без него всё, что
+// требует сервера (обновления, прогресс, добавление книг), молча падало —
+// библиотека при этом рисовалась из кэша service worker'а, и сайт выглядел
+// рабочим. Баннер не автопереходит на sso: пользователь мог быть в середине
+// главы, а редирект без спроса потерял бы позицию.
+onAuthRequired((err) => {
+  if (document.getElementById('sso-banner')) return
+  const bar = document.createElement('div')
+  bar.id = 'sso-banner'
+  bar.setAttribute('role', 'alert')
+  const text = document.createElement('span')
+  text.textContent = 'Сессия истекла — данные не сохраняются и обновления не проверяются.'
+  const link = document.createElement('a')
+  link.href = err.loginUrl
+  link.textContent = 'Войти'
+  bar.append(text, link)
+  document.body.appendChild(bar)
+})
 
 // Офлайн-режим: сверяем индекс кэшированных книг и регистрируем service
 // worker (оболочка network-first: онлайн — свежий JS, офлайн — из кэша).

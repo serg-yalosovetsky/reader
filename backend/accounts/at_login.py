@@ -14,6 +14,7 @@ import re
 import httpx
 from sqlmodel import Session
 
+from ..downloaders import egress
 from . import store
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -50,8 +51,8 @@ def _post_login(c: httpx.Client, token: str, user: str, pw: str,
 
 def start(user: str, pw: str) -> dict:
     """Стадия 1: логин с запросом кода. → code_sent | logged_in | error."""
-    with httpx.Client(timeout=40, follow_redirects=True,
-                      headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+    with egress.at_client(timeout=40, follow_redirects=True,
+                          headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
         page = c.get(_LOGIN)
         token = _token(page.text)
         res = _post_login(c, token, user, pw, code=None, send_email=True)
@@ -76,8 +77,8 @@ def submit_code(session: Session, code: str) -> dict:
     p = _pending.get("authortoday")
     if not p:
         return {"status": "error", "message": "Сессия входа истекла — начните заново"}
-    with httpx.Client(timeout=40, follow_redirects=True, cookies=p["cookies"],
-                      headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
+    with egress.at_client(timeout=40, follow_redirects=True, cookies=p["cookies"],
+                          headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"}) as c:
         res = _post_login(c, p["token"], p["user"], p["pw"],
                           code=code.strip(), send_email=False)
         cookies = dict(c.cookies)

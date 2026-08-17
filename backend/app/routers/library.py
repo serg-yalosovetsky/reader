@@ -297,11 +297,62 @@ def scan_drive_books(
 
 
 @router.get("/{work_id}")
-def get_work(work_id: int, session: Session = Depends(get_session)) -> Work:
+def get_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     work = session.get(Work, work_id)
     if not work:
         raise HTTPException(404, "work not found")
-    return work
+    d = work.model_dump()
+    d.update(_completeness(work, session))
+    return d
+
+
+def _completeness(work: Work, session: Session) -> dict:
+    """Полнота книги для страницы «информация»: сколько глав у нас и сколько на
+    сайте. Без этих двух чисел «недокачано» невозможно ни увидеть, ни проверить
+    — книга просто молча стоит на месте (живой случай: 21 глава из 25).
+
+    Считается только для одной книги (страница), а не для списка: обход файла
+    на каждую карточку библиотеки был бы неоправданно дорогим.
+    """
+    from ...accounts.monitor import _metric_kind
+    from ..services import count_sections
+
+    # Нет файла — нет и глав «у нас». Иначе книга-ссылка (только в Calibre или
+    # ещё не скачанная) показывала бы унаследованное от метаданных число как
+    # будто она уже лежит на диске.
+    have = (work.chapters_count or 0) if work.file_path else 0
+    if not have and work.file_path:
+        # Ленивый бэкфилл: поле появилось позже части книг, и без досчёта
+        # страница показывала бы «— из 25» на давно скачанной книге.
+        try:
+            have = count_sections(
+                work.file_path, work.file_format, book_title=work.title or ""
+            )
+        except Exception:  # noqa: BLE001
+            have = 0
+        if have:
+            work.chapters_count = have
+            session.add(work)
+            session.commit()
+
+    mons = session.exec(
+        select(Monitored).where(Monitored.work_id == work.id)
+    ).all()
+    # Из нескольких подписок берём ту, что видела больше глав — она и есть
+    # самый полный известный источник.
+    best = max(mons, key=lambda m: m.last_seen_chapters or 0, default=None)
+    site = (best.last_seen_chapters or 0) if best else 0
+    unit = _metric_kind(best.last_seen_source or best.source_url) if best else "chapters"
+    return {
+        "chapters_have": have,
+        "chapters_site": site,
+        # «страницы» у readli — величина ДРУГОГО рода, и подписывать её главами
+        # нельзя: 21 глава «из 84» выглядела бы как потеря двух третей книги.
+        "chapters_unit": unit,
+        "monitored": bool(mons),
+        "update_error": (best.last_error or "") if best else "",
+        "update_paused": bool(best and (best.fail_count or 0) >= 5),
+    }
 
 
 @router.post("/upload")

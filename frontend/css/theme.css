@@ -612,3 +612,13 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
   border: 1px solid rgba(255, 255, 255, .7); border-radius: 6px;
   padding: 4px 12px; text-decoration: none;
 }
+
+/* Полнота книги на странице «информация»: скачано N глав из M и что из этого
+   лежит в офлайне. Недокачанность подсвечивается — она означает, что книга
+   молча стоит на месте, и это надо заметить, а не искать в логах. */
+.bp-compl-box { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 2px; }
+.bp-compl { font-size: 13px; color: var(--fg-dim, #888); line-height: 1.35; }
+.bp-compl b { color: var(--fg, #ddd); font-weight: 600; }
+.bp-compl-short { color: var(--danger, #e5534b); }
+.bp-compl-short b { color: var(--danger, #e5534b); }
+.bp-compl-note { opacity: .85; }

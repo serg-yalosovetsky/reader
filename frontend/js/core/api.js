@@ -60,6 +60,15 @@ function notifyAuthRequired(err) {
   for (const fn of authListeners) { try { fn(err) } catch { /* слушатель не должен ломать запрос */ } }
 }
 
+// Сообщить о протухшей сессии из кода, который ходит в сеть МИМО api.* (скачивание
+// книги в офлайн стримит ответ вручную ради прогресса). Возвращает готовую ошибку,
+// чтобы вызывающий её бросил — баннер поднимается здесь, в одном месте.
+export function signalAuthRequired(url, method, loginUrl) {
+  const err = new AuthRequiredError(url, method, loginUrl)
+  notifyAuthRequired(err)
+  return err
+}
+
 // Разобрать ответ-ошибку и бросить ApiError (тело читаем один раз).
 async function fail(response, url, method) {
   const text = await response.text().catch(() => '')

@@ -5,7 +5,9 @@ import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { openReader } from './reader-core.js'
 import { libProgress, libMonitored } from './core/state.js'
-import { offlineSupported, isOffline, downloadBook, removeBook } from './core/offline.js'
+import {
+  offlineSupported, isOffline, downloadBook, removeBook, refreshBook, offlineMeta,
+} from './core/offline.js'
 import { filterBy } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 
@@ -101,6 +103,43 @@ export function bookPageMeta(w) {
   return { chipsHtml: chips, badgesHtml: badges.join(''), factsText: facts.join(' · ') }
 }
 
+// Строка полноты: сколько глав у нас, сколько на сайте и что из этого лежит
+// в офлайне. Раньше этих чисел не было нигде, и недокачанная книга ничем не
+// отличалась от полной — «Вечно голодный студент 9» простоял 21 главой из 25.
+function completenessHtml(w) {
+  const have = Number(w.chapters_have) || 0
+  const site = Number(w.chapters_site) || 0
+  // readli меряет СТРАНИЦАМИ пагинации — подписывать их главами нельзя.
+  const unit = w.chapters_unit === 'pages' ? 'стр.' : 'гл.'
+  const rows = []
+  if (have || site) {
+    const short = site && have && have < site
+    rows.push(
+      `<div class="bp-compl${short ? ' bp-compl-short' : ''}">`
+      + `${short ? '⚠' : '✓'} Скачано: <b>${have || '—'}</b> ${unit}`
+      + (site ? ` из <b>${site}</b>` : '')
+      + (short ? ` <span class="bp-compl-note">— не хватает ${site - have}</span>` : '')
+      + '</div>',
+    )
+  }
+  if (offlineSupported && isOffline(w.id)) {
+    const meta = offlineMeta(w.id)
+    const off = meta && meta.chapters ? meta.chapters : 0
+    const stale = off && have && have > off
+    rows.push(
+      `<div class="bp-compl${stale ? ' bp-compl-short' : ''}">`
+      + `${stale ? '⚠' : '📥'} В офлайне: <b>${off || '?'}</b> ${unit}`
+      + (have ? ` из <b>${have}</b>` : '')
+      + (stale ? ' <span class="bp-compl-note">— копия отстала, обнови</span>' : '')
+      + '</div>',
+    )
+  }
+  if (w.update_error) {
+    rows.push(`<div class="bp-compl bp-compl-short">⚠ ${escapeHtml(w.update_error)}</div>`)
+  }
+  return rows.length ? `<div class="bp-compl-box">${rows.join('')}</div>` : ''
+}
+
 function renderBookPage(w) {
   const ratio = libProgress[w.id] || 0
   const pct = Math.round(ratio * 100)
@@ -124,6 +163,7 @@ function renderBookPage(w) {
   const origBtn = w.source_url
     ? `<a class="btn-ghost bp-btn" href="${escapeHtml(w.source_url)}" target="_blank" rel="noopener">↗ Оригинал</a>`
     : ''
+  const complHtml = completenessHtml(w)
 
   $('#bp-body').innerHTML = `
     <div class="bp-hero">
@@ -134,6 +174,7 @@ function renderBookPage(w) {
         ${seriesHtml}
         <div class="bp-badges">${badgesHtml}</div>
         ${factsText ? `<div class="bp-facts">${escapeHtml(factsText)}</div>` : ''}
+        ${complHtml}
         ${progHtml}
         <div class="bp-actions">
           <button id="bp-read" class="btn-primary bp-btn bp-btn-read">📖 Читать книгу</button>
@@ -142,7 +183,9 @@ function renderBookPage(w) {
           <button id="bp-epub" class="btn-ghost bp-btn" title="Собрать перетекающий текст вместо страниц-картинок">↻ EPUB-версия</button>
           <button id="bp-read-orig" class="btn-ghost bp-btn" title="Открыть исходный файл как есть">📄 Читать оригинал</button>`
           : ''}
-          ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '✅ В офлайне' : '📥 Сохранить офлайн'}</button>` : ''}
+          ${w.monitored ? `<button id="bp-check" class="btn-ghost bp-btn" title="Спросить сайт, не появились ли новые главы">↻ Проверить обновления</button>` : ''}
+          ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '🔄 Обновить офлайн' : '📥 Сохранить офлайн'}</button>` : ''}
+          ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
           ${origBtn}
           <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
           <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
@@ -164,27 +207,69 @@ function renderBookPage(w) {
     openReader(w)
   })
   // Сохранить/убрать книгу из офлайн-кэша (Cache API). С прогрессом закачки.
+  // Сохранить/обновить офлайн-копию. У уже сохранённой книги это ОБНОВЛЕНИЕ
+  // (перекачка поверх), а не удаление: сервер мог докачать главы, а SW отдаёт
+  // книгу cache-first — без перекачки новых глав не увидеть вовсе.
   const offBtn = $('#bp-offline')
   if (offBtn) offBtn.addEventListener('click', async () => {
-    if (isOffline(w.id)) {
-      await removeBook(w.id)
-      offBtn.textContent = '📥 Сохранить офлайн'
-      return
-    }
     const orig = offBtn.textContent
+    const had = isOffline(w.id)
     offBtn.disabled = true
+    // Немедленная обратная связь: раньше кнопка молчала до первого чанка, и на
+    // медленном канале выглядела нерабочей — по ней жали снова и снова.
+    offBtn.textContent = '⏳ Начинаю…'
+    const onProgress = (rec, total) => {
+      offBtn.textContent = total
+        ? `⬇ ${Math.round((rec / total) * 100)}%`
+        : `⬇ ${Math.round(rec / 1048576)} МБ`
+    }
+    const chapters = Number(w.chapters_have) || 0
     try {
-      await downloadBook(w.id, (rec, total) => {
-        offBtn.textContent = total
-          ? `⬇ ${Math.round((rec / total) * 100)}%`
-          : `⬇ ${Math.round(rec / 1048576)} МБ`
-      })
-      offBtn.textContent = '✅ В офлайне'
+      if (had) await refreshBook(w.id, onProgress, chapters)
+      else await downloadBook(w.id, onProgress, chapters)
+      toast(had ? 'Офлайн-копия обновлена' : 'Книга сохранена офлайн', 'ok')
+      renderBookPage(w)     // перерисовать строку «В офлайне: N глав»
     } catch (e) {
       offBtn.textContent = orig
-      alert('Не удалось сохранить офлайн: ' + e.message)
-    } finally {
       offBtn.disabled = false
+      // AuthRequiredError сам поднимает баннер перелогина — не дублируем алертом.
+      if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
+      else toast('Не удалось сохранить офлайн: ' + e.message, 'err')
+    }
+  })
+  $('#bp-offline-rm')?.addEventListener('click', async () => {
+    await removeBook(w.id)
+    renderBookPage(w)
+  })
+  // Проверка обновлений прямо со страницы книги: раньше кнопка ↻ жила только в
+  // тулбаре читалки, то есть узнать о новых главах можно было лишь открыв книгу.
+  const chkBtn = $('#bp-check')
+  if (chkBtn) chkBtn.addEventListener('click', async () => {
+    chkBtn.disabled = true
+    chkBtn.textContent = '↻ Проверяю…'
+    try {
+      const res = await api.post(`/api/monitored/check/${w.id}`)
+      if (res.error) { toast(`Ошибка: ${res.error}`, 'err'); return }
+      const full = await api.get(`/api/library/${w.id}`).catch(() => null)
+      if (full) { curWork = { ...w, ...full }; w = curWork }
+      if (res.downloaded) {
+        toast(`Загружено — теперь ${res.chapters || w.chapters_have} гл.`, 'ok')
+        // Офлайн-копия обязана догнать: иначе cache-first отдаст старый файл.
+        if (isOffline(w.id)) {
+          try { await refreshBook(w.id, null, Number(w.chapters_have) || 0) } catch { /* копия осталась старой */ }
+        }
+      } else if (res.has_update) {
+        toast('Обновление есть, но скачать не удалось', 'err')
+      } else {
+        toast('Новых глав нет — книга актуальна', 'info')
+      }
+      renderBookPage(w)
+    } catch (e) {
+      if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
+      else toast('Не удалось проверить: ' + e.message, 'err')
+    } finally {
+      chkBtn.disabled = false
+      chkBtn.textContent = '↻ Проверить обновления'
     }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {

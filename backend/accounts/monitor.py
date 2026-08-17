@@ -46,15 +46,52 @@ def add_monitor(
         if work_id and not mon.work_id:
             mon.work_id = work_id
         if chapters:
-            mon.last_seen_chapters = max(mon.last_seen_chapters, chapters)
+            _set_seen(mon, chapters, source_url)
     else:
         mon = Monitored(
-            source_url=source_url, work_id=work_id, last_seen_chapters=chapters
+            source_url=source_url,
+            work_id=work_id,
+            last_seen_chapters=chapters,
+            last_seen_source=_host(source_url) if chapters else "",
         )
         session.add(mon)
     session.commit()
     session.refresh(mon)
     return mon
+
+
+def _metric_kind(url: str) -> str:
+    """В каких единицах данный источник меряет «главы».
+
+    readli отдаёт число СТРАНИЦ читалки, все остальные — число ГЛАВ. Величины
+    несопоставимы, и путать их нельзя ни при сравнении, ни при взятии max.
+    """
+    return "pages" if _host(url).lower().endswith("readli.net") else "chapters"
+
+
+def _seen_for(mon: Monitored, url: str) -> int:
+    """`last_seen_chapters`, ПРИГОДНЫЙ для сравнения со счётом глав из `url`.
+
+    Если сохранённое число посчитано источником другого класса (подписку
+    перенацелили на зеркало), оно бессмысленно: 84 страницы readli «больше»
+    любого числа глав author.today, и подписка навсегда считается актуальной
+    при недокачанной книге. В этом случае базы сравнения нет — возвращаем 0,
+    докачка пройдёт заново и запишет число уже в правильных единицах.
+    """
+    known = mon.last_seen_source or ""
+    if known and _metric_kind(known) != _metric_kind(url):
+        return 0
+    return mon.last_seen_chapters or 0
+
+
+def _set_seen(mon: Monitored, value: int, url: str) -> None:
+    """Записать last_seen ВМЕСТЕ с единицами, в которых он посчитан.
+
+    max берётся только от сопоставимой базы (см. _seen_for), иначе смена
+    источника навсегда запирала бы счётчик на большем «чужом» числе.
+    """
+    mon.last_seen_chapters = max(_seen_for(mon, url), value or 0)
+    mon.last_seen_source = _host(url)
 
 
 def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
@@ -279,28 +316,36 @@ def _download_and_write(
     # всю пагинацию. Без этой поправки полностью скачанная книга вечно числится
     # недокачанной: fail_count растёт и через _MAX_FAILS подписка выпадает
     # из авторетрая (живой случай: «Вечно голодный студент 9», 21 гл. из 80 стр.).
-    _page_metric = _host(best_url).lower().endswith("readli.net")
+    _page_metric = _metric_kind(best_url) == "pages"
     got_all = (materialized == 0) or _page_metric or (materialized >= best_cur)
     mon.last_checked = utcnow()
     if got_all:
         mon.has_update = False
         mon.fail_count = 0
         mon.last_error = None
-        mon.last_seen_chapters = max(mon.last_seen_chapters, best_cur)
+        _set_seen(mon, best_cur, best_url)
     else:
         mon.has_update = True
         mon.fail_count = (mon.fail_count or 0) + 1
         mon.last_error = (
             f"докачано {materialized} гл., на сайте {best_cur} — глава недоступна?"
         )
-        mon.last_seen_chapters = max(mon.last_seen_chapters, materialized)
+        # materialized — ГЛАВЫ из файла; сюда попадаем только при chapters-метрике
+        # (страничные источники отсечены _page_metric выше), так что единицы сходятся.
+        _set_seen(mon, materialized, best_url)
     session.add(mon)
     # Синхронизируем все дубликаты monitored для того же work_id
     for dup in session.exec(
         select(Monitored).where(Monitored.work_id == work.id, Monitored.id != mon_id)
     ).all():
         dup.has_update = mon.has_update
-        dup.last_seen_chapters = max(dup.last_seen_chapters, mon.last_seen_chapters)
+        # Счётчик переносится только между источниками ОДНОГО класса: дубли той
+        # же книги вполне могут смотреть на readli (страницы) и на AT (главы),
+        # и перенос числа между ними запер бы дубль ровно так же, как основную
+        # запись (см. _metric_kind).
+        if _metric_kind(dup.source_url) == _metric_kind(mon.last_seen_source or best_url):
+            dup.last_seen_chapters = max(dup.last_seen_chapters, mon.last_seen_chapters)
+            dup.last_seen_source = mon.last_seen_source
         session.add(dup)
     session.commit()  # один быстрый commit: cover_path + mon + дубликаты
 
@@ -419,15 +464,15 @@ def check_all(
                 continue
             # Known update от notifications — докачиваем без счёта глав
             best_url = mon.source_url
-            best_cur = mon.last_seen_chapters
+            best_cur = _seen_for(mon, best_url)
             if at_info:
                 at_url, at_cnt = at_info
                 best_url = at_url
-                best_cur = max(best_cur, at_cnt)
+                best_cur = max(_seen_for(mon, at_url), at_cnt)
             updated += 1
             detail: dict = {
                 "url": best_url,
-                "from": mon.last_seen_chapters,
+                "from": _seen_for(mon, best_url),
                 "source": "notifications",
             }
             if at_info and best_url != mon.source_url:
@@ -459,7 +504,10 @@ def check_all(
                 best_url = at_url
                 best_cur = at_cnt
         needs_initial = not mon.work_id and best_cur > 0
-        if mon.has_update and best_cur and best_cur <= mon.last_seen_chapters:
+        # Сравниваем ТОЛЬКО с сопоставимой базой: если last_seen посчитан
+        # источником другого класса, он не «уже видели», а чужая величина.
+        seen = _seen_for(mon, best_url)
+        if mon.has_update and best_cur and best_cur <= seen:
             # Ложный флаг (лента метит любую активность автора): на сайте глав
             # не больше, чем уже видели — снимаем без перекачки.
             mon.has_update = False
@@ -467,7 +515,7 @@ def check_all(
             mon.last_error = None
             session.add(mon)
         if (
-            best_cur > mon.last_seen_chapters
+            best_cur > seen
             or needs_initial
             or (mon.has_update and auto_download and (mon.fail_count or 0) < _MAX_FAILS)
         ):
@@ -475,7 +523,7 @@ def check_all(
             updated += 1
             if update_cb:
                 update_cb(updated)
-            detail = {"url": best_url, "from": mon.last_seen_chapters, "to": best_cur}
+            detail = {"url": best_url, "from": seen, "to": best_cur}
             if at_info and best_url != mon.source_url:
                 detail["alt_source"] = best_url
             if auto_download:
@@ -499,7 +547,8 @@ def check_all(
         if mon is None:  # мог быть удалён параллельным дедупом
             continue
         if not mon.has_update:
-            mon.last_seen_chapters = max(mon.last_seen_chapters, cur or 0)
+            # cur посчитан по mon.source_url — в его единицах и записываем.
+            _set_seen(mon, cur or 0, mon.source_url)
         mon.last_checked = utcnow()
         session.add(mon)
         session.commit()
@@ -554,14 +603,13 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
             best_cur = at_cnt
 
     mon = session.get(Monitored, mon.id)  # re-fetch после commit
+    seen = _seen_for(mon, best_url)  # только сопоставимая база, см. _metric_kind
     has_new = (
-        (best_cur > mon.last_seen_chapters)
-        or (not mon.work_id and best_cur > 0)
-        or mon.has_update
+        (best_cur > seen) or (not mon.work_id and best_cur > 0) or mon.has_update
     )
     detail: dict = {
         "has_update": has_new,
-        "chapters_seen": mon.last_seen_chapters,
+        "chapters_seen": seen,
         "chapters_found": best_cur,
     }
 
@@ -579,7 +627,8 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     if has_new:
         mon.has_update = True
     else:
-        mon.last_seen_chapters = max(mon.last_seen_chapters, cur or 0)
+        # cur посчитан по mon.source_url — в его единицах и записываем.
+        _set_seen(mon, cur or 0, mon.source_url)
     mon.last_checked = utcnow()
     session.add(mon)
     session.commit()

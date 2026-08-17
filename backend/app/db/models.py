@@ -104,6 +104,14 @@ class Monitored(SQLModel, table=True):
     work_id: Optional[int] = Field(default=None, foreign_key="work.id", index=True)
     source_url: str = ""
     last_seen_chapters: int = 0
+    # Хост источника, В ЕДИНИЦАХ КОТОРОГО посчитан last_seen_chapters. Разные
+    # сайты меряют разное: readli отдаёт СТРАНИЦЫ пагинации, остальные — ГЛАВЫ.
+    # Пока подписка не меняет источник, это неважно; но стоит перенацелить её
+    # на зеркало другого класса (живой случай: 84 страницы readli против 25
+    # глав author.today), и сравнение «на сайте больше, чем видели» становится
+    # ложным навсегда — книга замирает недокачанной, не показывая ошибки.
+    # Пустая строка = историческая запись, единицы неизвестны.
+    last_seen_source: str = ""
     has_update: bool = False
     last_checked: Optional[datetime] = None
     # Ошибки автодокачки: счётчик подряд неудач (для backoff) и текст последней.

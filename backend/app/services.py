@@ -37,8 +37,18 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
     work.file_path = str(dest)
     work.file_format = result.file_format
     work.sha1 = sha1
-    if result.num_chapters:
-        work.chapters_count = result.num_chapters
+    # Число глав считаем ПО ФАЙЛУ, а не по тому, что сказал загрузчик: адаптеры
+    # рапортуют по-разному (fb2 приходит одним куском с num_chapters=0), и в
+    # результате поле оставалось от предыдущей, менее полной версии книги —
+    # «21 глава» у файла, в котором их уже 25. count_sections — та же метрика,
+    # которой монитор меряет полноту докачки (см. спеку update-pipeline).
+    counted = 0
+    try:
+        counted = count_sections(dest, result.file_format, book_title=result.title or "")
+    except Exception:  # noqa: BLE001 — битый файл не должен ронять регистрацию
+        counted = 0
+    if counted or result.num_chapters:
+        work.chapters_count = counted or result.num_chapters
     work.calibre_id = calibre.add_book(dest) or work.calibre_id
     cover = covers.extract_cover(dest, result.file_format, sha1)
     cover_src = "embedded" if cover else ""

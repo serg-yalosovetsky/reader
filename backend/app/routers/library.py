@@ -14,7 +14,6 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
-from ..services import _norm
 from ..storage import detect_format, import_file, sha1_of_file
 
 router = APIRouter(prefix="/api/library", tags=["library"])

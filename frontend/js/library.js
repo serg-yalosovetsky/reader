@@ -148,19 +148,38 @@ export async function loadLibrary() {
   api.get('/api/calibre/books').then(books => { setLibCalibre(books || []) }).catch(() => {})
   // Сохраняем активный фильтр (клик по автору/серии, ручной ввод) при перезагрузке
   // библиотеки — иначе возврат со страницы книги (popstate→loadLibrary) сбрасывал бы его.
-  applyLibFilter((($('#lib-filter') || {}).value || '').trim())
+  applyLibFilter((($('#lib-q') || {}).value || '').trim())
+}
+
+// Ссылка, а не поисковый запрос. Фильтровать по ней бессмысленно: в названиях
+// URL не встречается, и список схлопнулся бы в пустоту у человека, который
+// просто вставил ссылку на скачивание.
+export function isUrlQuery(s) { return /^https?:\/\//i.test((s || '').trim()) }
+
+const _norm = (s) => (s || '').toLowerCase()
+const _hit = (s, q) => _norm(s).includes(_norm(q))
+
+// Единый критерий «подходит под запрос» — один и тот же для отрисовки списка и
+// для проверки «книга уже есть». Разъедься они, список показывал бы книгу, а
+// Enter всё равно лез бы качать её из сети.
+export function findLibMatches(q) {
+  const s = (q || '').trim()
+  if (!s) return { works: [], calibre: [] }
+  const works = libWorks.filter(w => _hit(w.title, s) || _hit(w.author, s) || _hit(w.series, s))
+  const importedIds = new Set(libWorks.map(w => w.calibre_id).filter(Boolean))
+  const calibre = libCalibre.filter(
+    b => !importedIds.has(b.calibre_id) && (_hit(b.title, s) || _hit(b.authors, s))
+  )
+  return { works, calibre }
 }
 
 export function applyLibFilter(q) {
-  const norm = (s) => (s || '').toLowerCase()
-  const match = (s) => norm(s).includes(norm(q))
+  const hits = findLibMatches(q)
   const grid = $('#book-grid')
   grid.innerHTML = ''
   resetCoverObserver()  // сбрасываем наблюдатель под новый набор карточек
   // Свои книги: показываем всегда (с фильтром если есть)
-  let filtered = q
-    ? libWorks.filter(w => match(w.title) || match(w.author) || match(w.series))
-    : libWorks
+  let filtered = q ? hits.works : libWorks
   // Офлайн: сохранённые книги — наверх. Остальные не прячем (видно, что есть в
   // библиотеке), но они уедут вниз и погаснут — см. .no-offline-copy в CSS.
   if (document.body.classList.contains('is-offline')) {
@@ -170,21 +189,29 @@ export function applyLibFilter(q) {
     grid.append(bookCard(w, libProgress[w.id] || 0, libUpdated.has(w.id)))
   }
   // Calibre: показываем только при активном фильтре (и только не импортированные)
-  if (q && libCalibre.length) {
-    const importedIds = new Set(libWorks.map(w => w.calibre_id).filter(Boolean))
-    const calFiltered = libCalibre.filter(
-      b => !importedIds.has(b.calibre_id) && (match(b.title) || match(b.authors))
-    )
-    for (const b of calFiltered) grid.append(calibreCard(b))
-  }
+  if (q) for (const b of hits.calibre) grid.append(calibreCard(b))
   $('#lib-empty').hidden = grid.children.length > 0
   observeCovers(grid)  // подгрузим обложки только для видимых карточек
+  lastFilterApplied = q
+}
+
+// Что уже отрисовано. Перерисовка грида — это полторы тысячи карточек, и
+// повторять её для того же запроса незачем: при наборе ссылки, например,
+// фильтр остаётся пустым на каждом символе.
+let lastFilterApplied = null
+let filterTimer = null
+
+// Применить фильтр немедленно, отменив отложенный.
+function applyFilterNow(q) {
+  clearTimeout(filterTimer)
+  filterTimer = null
+  if (q !== lastFilterApplied) applyLibFilter(q)
 }
 
 // Программно применить фильтр (клик по автору/серии). Значение кладём в поле
 // фильтра — оно же служит индикатором и «сбросом» (очистить поле → весь список).
 export function filterBy(value) {
-  const inp = $('#lib-filter')
+  const inp = $('#lib-q')
   if (inp) inp.value = value || ''
   applyLibFilter((value || '').trim())
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -371,28 +398,70 @@ function setIngestStatus(msg, { error = false } = {}) {
   status.textContent = msg
 }
 
-// Добавление по ссылке или названию (/api/ingest): URL → адаптеры/FanFicFare,
-// название → поиск в бесплатных агрегаторах (searchfloor/readli).
+// Тело ошибки приходит как {"detail": "…"} — показывать пользователю сырой JSON
+// незачем, ему адресован только текст.
+function errText(err) {
+  const d = err && err.data && err.data.detail
+  const s = d ? String(d) : ((err && err.message) || String(err))
+  return s.length > 300 ? s.slice(0, 300) + '…' : s
+}
+
+// Запрос, по которому мы уже ответили «это у тебя есть». Повторный Enter по
+// нему означает «всё равно скачай»: иначе книгу, чьё название совпадает с
+// уже имеющейся (соседний том, тёзка), нельзя было бы добавить вообще.
+let dupQuery = ''
+
+// Единый вход: ввод фильтрует библиотеку, Enter решает — показать своё или качать.
+// URL → адаптеры/FanFicFare, название → searchfloor/readli.
 $('#ingest-form').addEventListener('submit', async (e) => {
   e.preventDefault()
-  const q = $('#ingest-input').value.trim()
+  const input = $('#lib-q')
+  const q = input.value.trim()
   if (!q) return
   // Несколько ссылок разом — это не «скачай фанфик», а «собери из них книгу».
   const many = q.split(/\s+/).filter((u) => /^https?:\/\//i.test(u))
   if (many.length > 1) {
     openWebModal(many)
-    $('#ingest-input').value = ''
+    input.value = ''
+    applyFilterNow('')
     return
   }
-  const isUrl = /^https?:\/\//i.test(q)
+  const isUrl = isUrlQuery(q)
+  applyFilterNow(isUrl ? '' : q)
+  // Книга уже своя — показываем её, а не качаем повторно. Список под полем уже
+  // отфильтрован тем же запросом, поэтому «показать» = оставить как есть;
+  // единственное совпадение открываем сразу.
+  if (!isUrl && q !== dupQuery) {
+    const { works, calibre } = findLibMatches(q)
+    if (works.length === 1 && !calibre.length) {
+      setIngestStatus('Уже в библиотеке — открываю: ' + works[0].title)
+      openBookPage(works[0])
+      return
+    }
+    if (works.length || calibre.length) {
+      dupQuery = q
+      const parts = []
+      if (works.length) parts.push(`в библиотеке: ${works.length}`)
+      if (calibre.length) parts.push(`в Calibre: ${calibre.length}`)
+      setIngestStatus(
+        `Уже есть (${parts.join(', ')}) — показано ниже. `
+        + 'Уточните запрос, чтобы открыть книгу, или нажмите Enter ещё раз — скачаю.'
+      )
+      return
+    }
+  }
   setIngestStatus(isUrl ? 'Скачиваю…' : 'Ищу по названию…')
   try {
     const work = await api.post('/api/ingest', { query: q })
     setIngestStatus('Готово: ' + (work.title || 'книга добавлена'))
-    $('#ingest-input').value = ''
+    dupQuery = ''
+    // Поле не чистим: это фильтр, и по нему скачанная книга сразу видна в списке
+    // (loadLibrary применит текущее значение поля сам). Для ссылки фильтровать
+    // нечем — там поле освобождаем.
+    if (isUrl) input.value = ''
     await loadLibrary()
   } catch (err) {
-    setIngestStatus('Не удалось добавить: ' + err.message.slice(0, 200), { error: true })
+    setIngestStatus('Не удалось добавить: ' + errText(err), { error: true })
   }
 })
 
@@ -429,8 +498,16 @@ $('#readera-sync').addEventListener('click', async () => {
   }
 })
 
-$('#lib-filter').addEventListener('input', (e) => {
-  applyLibFilter(e.target.value.trim())
+$('#lib-q').addEventListener('input', (e) => {
+  const v = e.target.value.trim()
+  // Пауза в 120 мс: при быстром наборе грид перерисовывается один раз, а не
+  // на каждое нажатие (полный список — ~300 мс на перерисовку).
+  clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => applyFilterNow(isUrlQuery(v) ? '' : v), 120)
+  // Прошлый вердикт относился к прошлому запросу — иначе поверх нового ввода
+  // висит красная ошибка от предыдущей попытки.
+  $('#ingest-status').hidden = true
+  dupQuery = ''
 })
 
 // ===================== Тема в библиотеке =====================

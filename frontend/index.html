@@ -46,9 +46,10 @@
     <header class="lib-header">
       <h1 class="lib-title">Моя библиотека <span id="pending-pill" class="pending-pill" hidden></span></h1>
       <div class="lib-actions">
-        <form id="ingest-form" class="ingest" autocomplete="off">
-          <input id="ingest-input" type="text" placeholder="Ссылка или название фанфика…" />
-          <button type="submit" class="btn-primary" title="Скачать и открыть">Добавить</button>
+        <form id="ingest-form" class="ingest" role="search" autocomplete="off">
+          <input id="lib-q" type="search" placeholder="Поиск, ссылка или название…" autocomplete="off" />
+          <button type="submit" class="btn-primary"
+                  title="Enter: открыть свою книгу, а если такой нет — скачать">Добавить</button>
         </form>
         <button id="more-actions-btn" type="button" class="btn-ghost more-toggle" aria-expanded="false" title="Ещё действия">··· Ещё</button>
         <label class="btn-ghost lib-secondary" for="upload-input">Загрузить файл</label>
@@ -61,7 +62,6 @@
       </div>
     </header>
     <div id="ingest-status" class="ingest-status" hidden></div>
-    <div class="lib-filter-bar"><input id="lib-filter" type="search" placeholder="Фильтр по названию, автору…" autocomplete="off" /></div>
     <div id="book-grid" class="book-grid"></div>
     <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
 

@@ -62,7 +62,7 @@ body.reader-open { height: 100%; overflow: hidden; }
 
 .ingest { display: flex; gap: 8px; }
 .ingest input {
-  width: min(46vw, 380px);
+  width: min(52vw, 460px);
   padding: 10px 14px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--card); color: var(--fg);
   font-size: 14px; outline: none;
@@ -293,17 +293,7 @@ html.restoring-book #library { display: none; }
 .icon-btn.tts-active { color: var(--accent); }
 
 
-/* ===================== Lib filter + Calibre ===================== */
-.lib-filter-bar {
-  padding: 8px 20px 0;
-}
-#lib-filter {
-  width: 100%; max-width: 480px;
-  padding: 7px 12px; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--bg-soft);
-  color: var(--fg); font-size: 14px; outline: none;
-}
-#lib-filter:focus { border-color: var(--accent); }
+/* ===================== Calibre ===================== */
 .calibre-badge {
   /* Сплошной тёмно-синий чип вместо полупрозрачной заливки поверх текущей темы:
      старый вариант (#5c7cfa22 фон + #5c7cfa текст) давал ~3.7:1 на светлых
@@ -369,14 +359,14 @@ html.restoring-book #library { display: none; }
     background: transparent; border-color: var(--line); color: var(--fg-dim);
   }
 
-  /* «Добавить фанфик» (поле + кнопка) — на отдельной строке, только под «Ещё» */
-  .ingest { order: 4; width: 100%; display: none; }
+  /* Поиск-и-добавление (поле + кнопка) — своя строка, видна всегда:
+     это единственный вход и в фильтр библиотеки, и в скачивание. */
+  .ingest { order: 0; width: 100%; display: flex; }
   .ingest input {
     width: auto; flex: 1 1 auto; min-width: 0;
     font-size: 16px;             /* 16px — иначе iOS/Android зумит при фокусе */
   }
   .btn-primary { flex: 0 0 auto; white-space: nowrap; }
-  .lib-actions.more-open .ingest { display: flex; }
 
   /* Загрузить файл / Аккаунты — тоже под «Ещё» */
   .lib-secondary { display: none; order: 5; }
@@ -388,10 +378,6 @@ html.restoring-book #library { display: none; }
     background: transparent; border-color: var(--line); color: var(--fg-dim);
   }
   .lib-actions.more-open .lib-secondary:active { background: var(--bg-soft); }
-
-  /* Фильтр — во всю ширину под шапкой */
-  .lib-filter-bar { padding: 10px 14px 2px; }
-  #lib-filter { max-width: none; font-size: 16px; padding: 10px 14px; }
 
   /* Книги — компактная сетка 2 колонки вместо одной гигантской обложки */
   .book-grid {

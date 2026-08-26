@@ -159,8 +159,22 @@ $('#view-host').addEventListener('wheel', (e) => {
 }, { passive: false })
 
 // Переприменять раскладку при изменении размера окна (особенно ширину «ленты»).
+//
+// ТОЛЬКО при смене ШИРИНЫ, и это не микрооптимизация. На телефоне Chrome прячет и
+// показывает адресную строку прямо во время скролла — прилетает resize с той же
+// шириной, applyViewStyles() выставляет атрибуты рендерера, foliate дёргает
+// render(), а render() заканчивается scrollToAnchor(старый якорь) и возвращает
+// читателя назад (vendor/foliate-js/paginator.js). Снаружи это выглядит так:
+// «скроллится вниз, а потом будто пружинкой выстреливает назад» — главная жалоба
+// по чтению с телефона. Раскладка зависит от ширины (max-inline-size считается из
+// clientWidth), высота адресной строки на неё не влияет — значит и пересобирать
+// нечего.
 let resizeTimer = null
+let lastViewWidth = null
 window.addEventListener('resize', () => {
+  const w = $('#view-host')?.clientWidth || 0
+  if (w === lastViewWidth) return
+  lastViewWidth = w
   clearTimeout(resizeTimer)
   resizeTimer = setTimeout(() => { if (!$('#reader').hidden && view) applyViewStyles() }, 200)
 })

@@ -173,9 +173,18 @@ export function applyViewStyles() {
     r.setAttribute('max-column-count', '1')
     r.setAttribute('max-inline-size', String(w))
   } else {
-    // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей.
-    r.setAttribute('max-column-count', String(prefs.columns || 1))
-    r.setAttribute('max-inline-size', String(MARGIN_INLINE[prefs.marginLevel]))
+    // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей,
+    // НО не шире самой области чтения. MARGIN_INLINE (760/620/480) — десктопные
+    // константы: на телефоне с вьюпортом ~360-540 колонка выходила шире экрана,
+    // и правый край текста уезжал за границу — слова пропадали целиком, без
+    // переноса и без горизонтального скролла. Для «Ленты» это уже чинили выше
+    // (был floor 600), в «Страницах» дефект остался незамеченным, потому что на
+    // широком мониторе его не видно.
+    const cols = Math.max(1, Number(prefs.columns || 1))
+    const host = Math.max(280, ($('#view-host')?.clientWidth || 600))
+    const wanted = MARGIN_INLINE[prefs.marginLevel]
+    r.setAttribute('max-column-count', String(cols))
+    r.setAttribute('max-inline-size', String(Math.min(wanted, Math.floor(host / cols))))
   }
   const _sidePad = { 0: 0, 1: 5, 2: 12 }[prefs.marginLevel] ?? 5
   // «Лента»: боковые поля даёт паддинг body -> gap 0 (иначе удваивается).

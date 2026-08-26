@@ -167,21 +167,52 @@ def maintenance(session: Session = Depends(get_session)) -> dict:
     }
 
 
+# Поля, которые реально рисует список библиотеки (frontend/js/library.js).
+# Всё остальное страница книги дотягивает через GET /api/library/{id}.
+_LIST_COLUMNS = (
+    Work.id,
+    Work.title,
+    Work.author,
+    Work.calibre_id,
+    Work.chapters_count,
+    Work.series,
+    Work.series_index,
+    Work.updated_at,
+    Work.cover_path,  # только ради cover_v ниже, наружу не отдаётся
+)
+
+
 @router.get("")
 def list_works(session: Session = Depends(get_session)) -> list[dict]:
-    """Все произведения, новые сверху."""
+    """Все произведения, новые сверху — узким набором полей.
+
+    Раньше здесь материализовался весь Work: 27 колонок × ~1400 записей, потом из
+    словаря выбрасывалось description — то есть длинные аннотации ехали из БД
+    только чтобы быть выкинутыми в Python. Сам Postgres в этом не виноват (6 мс
+    из ~104), горит сериализация: ORM-материализация ~45%, json.dumps ~16%,
+    model_dump ~13%.
+    """
     result = []
-    for w in session.exec(select(Work).order_by(Work.updated_at.desc())).all():
-        d = w.model_dump()
-        # description в списке не нужен (может быть длинным ×308) — страница книги
-        # дотягивает его через GET /api/library/{id}.
-        d.pop("description", None)
-        if w.cover_path:
-            p = Path(w.cover_path)
-            d["cover_v"] = int(p.stat().st_mtime) if p.exists() else 0
-        else:
-            d["cover_v"] = 0
-        result.append(d)
+    rows = session.exec(select(*_LIST_COLUMNS).order_by(Work.updated_at.desc())).all()
+    for r in rows:
+        cover_path = r.cover_path
+        cover_v = 0
+        if cover_path:
+            p = Path(cover_path)
+            cover_v = int(p.stat().st_mtime) if p.exists() else 0
+        result.append(
+            {
+                "id": r.id,
+                "title": r.title,
+                "author": r.author,
+                "calibre_id": r.calibre_id,
+                "chapters_count": r.chapters_count,
+                "series": r.series,
+                "series_index": r.series_index,
+                "updated_at": r.updated_at,
+                "cover_v": cover_v,
+            }
+        )
     return result
 
 

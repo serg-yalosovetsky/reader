@@ -38,15 +38,31 @@ const _restore = (() => {
 if (_restore) {
   // Прячем библиотеку до первого рендера сетки — читалка откроется поверх.
   $('#library').hidden = true
-  // Библиотеку грузим в фоне: наполнит libMonitored/прогресс и будет готова к «назад».
-  loadLibrary().catch(() => {})
   ;(async () => {
     const work = await api.get(`/api/library/${_restore.id}`).catch(() => null)
     // Сбрасываем hash к «библиотеке», чтобы «назад» из книги вёл в неё, а не
     // застревал на #read/<id>; запись самой книги добавит openReader.
     if (_restore.fromHash) history.replaceState(null, '', location.pathname + location.search)
-    if (work) openReader(work)
-    else $('#library').hidden = false  // книги нет — показываем библиотеку
+    if (!work) {
+      $('#library').hidden = false  // книги нет — показываем библиотеку
+      loadLibrary().catch(() => {})
+      return
+    }
+    await openReader(work)
+    // Библиотеку грузим ПОСЛЕ того, как книга открылась, и только в простое.
+    // Раньше loadLibrary() стартовал первым «в фоне» — но фон тут условный:
+    // список тянется секунды, а рендер ~1400 карточек занимает главный поток,
+    // и открытие книги вставало в очередь за ним (замер: первые байты книги на
+    // 1592-й мс). Читателю, пришедшему по ссылке на книгу, библиотека нужна
+    // только для «назад», то есть заведомо позже.
+    // ОБЯЗАТЕЛЬНО с timeout: без него requestIdleCallback может не сработать
+    // вовсе (в неактивной вкладке он не вызывается), и библиотека осталась бы
+    // незагруженной — «назад» показал бы пустой экран. Проверено: 61 секунда
+    // без единого запроса списка.
+    const idle = window.requestIdleCallback
+      ? (f) => window.requestIdleCallback(f, { timeout: 1500 })
+      : (f) => setTimeout(f, 400)
+    idle(() => loadLibrary().catch(() => {}))
   })()
 } else {
   loadLibrary()

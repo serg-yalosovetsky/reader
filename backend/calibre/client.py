@@ -16,6 +16,8 @@ import hashlib
 import re
 import sqlite3
 import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
@@ -287,14 +289,48 @@ def _list_books_local() -> list[dict]:
     return out
 
 
-def list_books() -> list[dict]:
-    """Список книг: HTTP-режим — через OPDS; иначе — локальный metadata.db."""
-    if http_mode():
+# Обход каталога — это ~1400 книг двадцатью с лишним последовательными
+# OPDS-запросами (60 записей на страницу), около 9 секунд. Фронт просит
+# каталог при каждой загрузке библиотеки, поэтому держим результат в памяти:
+# книги в Calibre появляются извне и редко, а промах по конкретному id
+# обновляет кэш принудительно (см. force).
+CATALOG_TTL = 300.0  # секунд
+_catalog: list[dict] | None = None
+_catalog_at = 0.0
+# Лок, а не просто проверка времени: синхронные ручки FastAPI выполняются в
+# threadpool, и без него пять одновременных запросов дали бы пять полных
+# обходов каталога вместо одного.
+_catalog_lock = threading.Lock()
+
+
+def invalidate_catalog() -> None:
+    """Забыть закэшированный каталог (следующий вызов сходит в Calibre)."""
+    global _catalog, _catalog_at
+    with _catalog_lock:
+        _catalog, _catalog_at = None, 0.0
+
+
+def list_books(force: bool = False) -> list[dict]:
+    """Список книг: HTTP-режим — через OPDS; иначе — локальный metadata.db.
+
+    force=True обходит кэш — нужно там, где свежесть важнее скорости
+    (книгу только что добавили в Calibre, а мы её не видим).
+    """
+    if not http_mode():
+        return _list_books_local()
+    global _catalog, _catalog_at
+    with _catalog_lock:
+        fresh = _catalog is not None and (time.monotonic() - _catalog_at) < CATALOG_TTL
+        if fresh and not force:
+            return _catalog
         try:
-            return list(iter_opds_books())
-        except Exception:
-            return []
-    return _list_books_local()
+            _catalog = list(iter_opds_books())
+            _catalog_at = time.monotonic()
+        except Exception:  # noqa: BLE001
+            # Каталог недоступен — отдаём прошлый, если он есть: показать
+            # устаревший список полезнее, чем пустой.
+            return _catalog or []
+        return _catalog
 
 
 def book_file_path(calibre_id: int, prefer=PREFER) -> Path | None:

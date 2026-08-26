@@ -144,8 +144,6 @@ export async function loadLibrary() {
   // событие вверху (раньше has_update принудительно поднимались над недавно
   // читанными, из-за чего порядок по времени ломался — убрано).
   libWorks.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
-  // Загружаем Calibre один раз (фоном, не блокируем рендер)
-  api.get('/api/calibre/books').then(books => { setLibCalibre(books || []) }).catch(() => {})
   // Сохраняем активный фильтр (клик по автору/серии, ручной ввод) при перезагрузке
   // библиотеки — иначе возврат со страницы книги (popstate→loadLibrary) сбрасывал бы его.
   applyLibFilter((($('#lib-q') || {}).value || '').trim())
@@ -173,7 +171,25 @@ export function findLibMatches(q) {
   return { works, calibre }
 }
 
+// Каталог Calibre нужен только при активном фильтре: без фильтра чужие книги
+// в списке не показываются вообще. Поэтому грузим его при первом поиске, а не
+// на открытии библиотеки — иначе 214 КБ и (на холодном кэше сервера) до десяти
+// секунд тратятся всегда, даже когда человек просто пришёл читать своё.
+let calibreReq = null
+function ensureCalibre() {
+  if (calibreReq || libCalibre.length) return
+  calibreReq = api.get('/api/calibre/books')
+    .then((books) => {
+      setLibCalibre(books || [])
+      // Каталог пришёл уже после отрисовки — дорисуем, если запрос тот же.
+      const q = (($('#lib-q') || {}).value || '').trim()
+      if (q && !isUrlQuery(q)) applyLibFilter(q)
+    })
+    .catch(() => {})
+}
+
 export function applyLibFilter(q) {
+  if (q) ensureCalibre()
   const hits = findLibMatches(q)
   const grid = $('#book-grid')
   grid.innerHTML = ''
@@ -283,15 +299,6 @@ function showHover(card, w) {
   el.style.top = `${Math.round(top)}px`
 }
 
-function attachHover(card, w) {
-  if (!CAN_HOVER) return
-  let enterT = null
-  card.addEventListener('mouseenter', () => {
-    hideHoverNow()                       // мгновенно убрать панель прошлой карточки
-    enterT = setTimeout(() => showHover(card, w), 350)
-  })
-  card.addEventListener('mouseleave', () => { clearTimeout(enterT); hideHover() })
-}
 
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
@@ -335,31 +342,9 @@ function bookCard(w, ratio, hasUpdate) {
   card.setAttribute('role', 'button')
   card.setAttribute('aria-label',
     `${w.title || 'Книга'}${w.author ? ', ' + w.author : ''}`)
-  const openThis = () => { hideHoverNow(); openBookPage(w) }
-  card.addEventListener('click', openThis)
-  card.addEventListener('keydown', (e) => {
-    // Не перехватываем активацию вложенной кнопки удаления.
-    if (e.target !== card) return
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openThis() }
-  })
-  attachHover(card, w)
-  card.querySelectorAll('[data-flt]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      const val = el.dataset.flt === 'series' ? w.series : w.author
-      if (!val) return
-      e.stopPropagation(); hideHoverNow(); filterBy(val)
-    })
-  })
-  card.querySelector('.book-del-btn').addEventListener('click', async (e) => {
-    e.stopPropagation()
-    if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return
-    card.style.opacity = '0.4'; card.style.pointerEvents = 'none'
-    try {
-      const r = await fetch(`/api/library/${w.id}`, { method: 'DELETE' })
-      if (r.ok) card.remove()
-      else { card.style.opacity = ''; card.style.pointerEvents = ''; alert('Ошибка удаления') }
-    } catch { card.style.opacity = ''; card.style.pointerEvents = '' }
-  })
+  // Данные книги держим на самом элементе: обработчики висят на гриде и
+  // достают их отсюда, не создавая замыкание на каждую карточку.
+  card._w = w
   return card
 }
 
@@ -376,19 +361,88 @@ function calibreCard(b) {
       <div class="b-author">${escapeHtml(b.authors || '')}</div>
     </div>
     <div class="book-progress"><i style="width:0%"></i></div>`
-  card.addEventListener('click', async () => {
-    card.style.opacity = '0.5'; card.style.pointerEvents = 'none'
-    try {
-      const work = await api.post(`/api/calibre/import/${b.calibre_id}`, {})
-      await loadLibrary()
-      openReader(work)
-    } catch (err) {
-      card.style.opacity = ''; card.style.pointerEvents = ''
-      alert('Не удалось открыть книгу из Calibre: ' + err.message)
-    }
-  })
+  card._cal = b
   return card
 }
+
+// ===================== Делегирование событий грида =====================
+// Один слушатель на весь список вместо шести на каждую карточку: на полутора
+// тысячах книг это была половина времени отрисовки и тысячи живых обработчиков.
+
+async function removeCard(card, w) {
+  if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return
+  card.style.opacity = '0.4'; card.style.pointerEvents = 'none'
+  try {
+    const r = await fetch(`/api/library/${w.id}`, { method: 'DELETE' })
+    if (r.ok) card.remove()
+    else { card.style.opacity = ''; card.style.pointerEvents = ''; alert('Ошибка удаления') }
+  } catch { card.style.opacity = ''; card.style.pointerEvents = '' }
+}
+
+async function importCalibre(card, b) {
+  card.style.opacity = '0.5'; card.style.pointerEvents = 'none'
+  try {
+    const work = await api.post(`/api/calibre/import/${b.calibre_id}`, {})
+    await loadLibrary()
+    openReader(work)
+  } catch (err) {
+    card.style.opacity = ''; card.style.pointerEvents = ''
+    alert('Не удалось открыть книгу из Calibre: ' + err.message)
+  }
+}
+
+const bookGrid = $('#book-grid')
+
+bookGrid.addEventListener('click', (e) => {
+  const card = e.target.closest('.book-card')
+  if (!card) return
+  const w = card._w
+  if (w && e.target.closest('.book-del-btn')) { e.stopPropagation(); removeCard(card, w); return }
+  const flt = w && e.target.closest('[data-flt]')
+  if (flt) {
+    const val = flt.dataset.flt === 'series' ? w.series : w.author
+    if (val) { e.stopPropagation(); hideHoverNow(); filterBy(val); return }
+  }
+  if (w) { hideHoverNow(); openBookPage(w); return }
+  if (card._cal) importCalibre(card, card._cal)
+})
+
+bookGrid.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  // Только когда фокус на самой карточке: активацию кнопки удаления внутри
+  // неё перехватывать нельзя.
+  const card = e.target
+  if (!card.classList || !card.classList.contains('book-card')) return
+  e.preventDefault()
+  if (card._w) { hideHoverNow(); openBookPage(card._w) }
+  else if (card._cal) importCalibre(card, card._cal)
+})
+
+// mouseenter/mouseleave не всплывают — делегируем через mouseover/mouseout,
+// отсеивая переходы между потрохами одной и той же карточки.
+let hoverCard = null
+let hoverEnterT = null
+
+bookGrid.addEventListener('mouseover', (e) => {
+  if (!CAN_HOVER) return
+  const card = e.target.closest('.book-card')
+  if (!card || card === hoverCard) return
+  hoverCard = card
+  hideHoverNow()                       // мгновенно убрать панель прошлой карточки
+  clearTimeout(hoverEnterT)
+  if (card._w) hoverEnterT = setTimeout(() => showHover(card, card._w), 350)
+})
+
+bookGrid.addEventListener('mouseout', (e) => {
+  if (!CAN_HOVER) return
+  const card = e.target.closest('.book-card')
+  if (!card || card !== hoverCard) return
+  const to = e.relatedTarget
+  if (to && to.closest && to.closest('.book-card') === card) return   // всё ещё внутри
+  hoverCard = null
+  clearTimeout(hoverEnterT)
+  hideHover()
+})
 
 // Общий статус-строки внизу формы добавления: показать сообщение (или ошибку).
 function setIngestStatus(msg, { error = false } = {}) {

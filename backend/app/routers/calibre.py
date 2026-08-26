@@ -29,10 +29,18 @@ def status() -> dict:
     }
 
 
+# Фронту от каталога нужны только эти поля (заголовок карточки, автор,
+# обложка, импорт по id). Полная запись тянет ещё и description — на 1400
+# книг это больше мегабайта, который никто не читает.
+_LIST_FIELDS = ("calibre_id", "title", "authors", "has_cover", "updated")
+
+
 @router.get("/books")
 def books() -> list[dict]:
     """Список книг Calibre (OPDS в боевом режиме, metadata.db — локально)."""
-    return calibre.list_books()
+    return [
+        {k: b.get(k) for k in _LIST_FIELDS} for b in calibre.list_books()
+    ]
 
 
 @router.get("/{calibre_id}/cover")
@@ -70,9 +78,15 @@ def import_book(calibre_id: int, session: Session = Depends(get_session)) -> Wor
     if existing:
         return existing
 
-    meta = next(
-        (b for b in calibre.list_books() if b["calibre_id"] == calibre_id), None
-    )
+    def _find(force: bool = False):
+        return next(
+            (b for b in calibre.list_books(force=force) if b["calibre_id"] == calibre_id),
+            None,
+        )
+
+    # Промах может означать не «книги нет», а «кэш каталога устарел» —
+    # книгу добавили в Calibre только что. Перепроверяем по свежему каталогу.
+    meta = _find() or _find(force=True)
     if not meta:
         raise HTTPException(404, "книга в Calibre не найдена")
     fmt = calibre.best_format(meta["formats"])

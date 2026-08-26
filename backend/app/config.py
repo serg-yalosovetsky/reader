@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # Корень проекта: .../reader
@@ -24,11 +25,34 @@ EBOOK_CONVERT_BIN = os.getenv("READER_EBOOK_CONVERT_BIN", "ebook-convert")
 # Потолок времени одной конвертации (сек): толстый PDF со сканами долгий.
 CONVERT_TIMEOUT_SEC = int(os.getenv("READER_CONVERT_TIMEOUT_SEC", "900"))
 
-# БД: боевой — mesh-postgres через READER_DB_URL
-# (postgresql+psycopg://reader:…@127.0.0.1:5433/reader); по умолчанию — локальный
-# SQLite-файл (dev/тесты). SQLite-путь остаётся для бэкапа/офлайн-режима.
+# БД: только Postgres (mesh-postgres через READER_DB_URL,
+# postgresql+psycopg://reader:…@127.0.0.1:5433/reader).
+#
+# Раньше здесь стоял ТИХИЙ фолбэк на локальный SQLite, и это дорого стоило:
+# systemd читает .env через EnvironmentFile, а прямой запуск .venv/bin/python по
+# ssh — нет. Без переменной код молча уходил в пустой файл, живой сервис писал в
+# Postgres, а отладочный SELECT возвращал пусто — час ложной диагностики «запись
+# не доходит до БД». Хуже с cleanup-скриптами: удаляешь из SQLite, а строки
+# остаются в проде. Теперь отсутствие READER_DB_URL — ошибка, а не догадка.
+#
+# SQLite остаётся ровно для тестов: tests/conftest.py снимает READER_DB_URL и
+# задаёт READER_DB_PATH во временном каталоге. Поэтому фолбэк разрешён только
+# под pytest или при явном READER_ALLOW_SQLITE=1 — то есть когда его попросили,
+# а не когда забыли окружение.
 DB_PATH = Path(os.getenv("READER_DB_PATH", DATA_DIR / "reader.db"))
-DB_URL = os.getenv("READER_DB_URL") or f"sqlite:///{DB_PATH.as_posix()}"
+
+_DB_URL = os.getenv("READER_DB_URL")
+if not _DB_URL:
+    if "pytest" in sys.modules or os.getenv("READER_ALLOW_SQLITE") == "1":
+        _DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
+    else:
+        raise RuntimeError(
+            "READER_DB_URL не задан — боевая БД это Postgres, а не SQLite. "
+            "systemd берёт переменную из /root/reader/.env; для прямого запуска: "
+            "cd /root/reader && set -a; . ./.env; set +a && .venv/bin/python ... "
+            "(для тестов на SQLite: READER_ALLOW_SQLITE=1)"
+        )
+DB_URL = _DB_URL
 
 # Ключ Fernet для шифрования кредов аккаунтов (этап 4). Файл вне репо.
 SECRET_KEY_PATH = Path(os.getenv("READER_SECRET_KEY_PATH", DATA_DIR / "secret.key"))

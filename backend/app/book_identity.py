@@ -67,6 +67,22 @@ def title_sim(a: str, b: str) -> float:
     return _ratio(ba, bb)
 
 
+def title_matches(a: str, b: str, gate: float = 0.90) -> bool:
+    """Названия — одной и той же книги: похожесть выше gate И тот же номер тома.
+
+    Это заголовочный гейт, стоящий первым в same_book, вынесенный отдельно: он
+    единственный сигнал, доступный при поиске по ОДНОМУ названию, когда автора,
+    аннотации и файла для сверки ещё нет.
+    """
+    if title_sim(a, b) < gate:
+        return False
+    _, na = _title_key(a)
+    _, nb = _title_key(b)
+    if na is None and nb is None:
+        return True
+    return (na or 1) == (nb or 1)
+
+
 def _tokens(s: str) -> set[str]:
     return {w for w in _norm(s).split() if len(w) >= 3}
 
@@ -165,14 +181,9 @@ def same_book(
     ann_medium: float = 0.50,
 ) -> bool:
     """Одно ли это произведение. См. модульную docstring про политику сигналов."""
-    if title_sim(a.get("title", ""), b.get("title", "")) < title_gate:
-        return False
-
-    # Разные тома в самом названии — разные книги. Отсутствие номера трактуем как
-    # том 1 («Оракул» = 1-й ⇒ отличается от «Оракул 2»).
-    _, na_num = _title_key(a.get("title", ""))
-    _, nb_num = _title_key(b.get("title", ""))
-    if (na_num is not None or nb_num is not None) and (na_num or 1) != (nb_num or 1):
+    # Заголовочный гейт: похожесть названия + тот же номер тома. Отсутствие
+    # номера трактуем как том 1 («Оракул» = 1-й ⇒ отличается от «Оракул 2»).
+    if not title_matches(a.get("title", ""), b.get("title", ""), gate=title_gate):
         return False
 
     auth = author_relation(a.get("author", ""), b.get("author", ""))

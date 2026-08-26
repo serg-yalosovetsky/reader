@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from backend.app.book_identity import CONFLICT, MATCH, author_relation, same_book
+from backend.app.book_identity import (
+    CONFLICT,
+    MATCH,
+    author_relation,
+    same_book,
+    title_matches,
+)
 
 _LOREM_A = (
     "Молодой человек внезапно оказывается в теле пса и вынужден выживать "
@@ -97,3 +103,31 @@ def test_text_fallback_unknown_author():
     a = {"title": "Книга", "author": ""}  # автор неизвестен
     b = {"title": "Книга", "author": "Некто"}
     assert same_book(a, b, get_text_a=lambda: _TXT_A, get_text_b=lambda: _TXT_B_SAME) is True
+
+
+# --- поиск по ОДНОМУ названию: автора/аннотации/файла ещё нет ---
+# Живой баг: «Крушение сурка. Том 2» readli находил, а _search_free отбрасывал
+# КАЖДОЕ зеркало — same_book при пустом авторе не имеет ни одного сигнала-опоры
+# и консервативно отвечает «разные». Опора при таком запросе — только название.
+
+
+def test_title_matches_same_volume():
+    assert title_matches("Крушение сурка. Том 2", "Крушение сурка. Том 2") is True
+
+
+def test_title_matches_rejects_other_volume():
+    # Ради чего гейт и стоит: запросили 9-й том, зеркало отдаёт 5-й.
+    assert title_matches("Вечно голодный студент 9", "Вечно голодный студент 5") is False
+    assert title_matches("Оракул", "Оракул 2") is False
+
+
+def test_title_matches_rejects_other_book():
+    assert title_matches("Крушение сурка. Том 2", "Собачья жизнь") is False
+
+
+def test_same_book_still_conservative_without_author():
+    # title_matches — гейт, а не замена same_book: сама same_book без опоры
+    # по-прежнему отвечает «разные».
+    a = {"title": "Крушение сурка. Том 2", "author": ""}
+    b = {"title": "Крушение сурка. Том 2", "author": 'Абрамов Владимир "noslnosl"'}
+    assert same_book(a, b) is False

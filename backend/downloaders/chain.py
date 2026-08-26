@@ -262,12 +262,21 @@ def _search_free(title: str, author: str = "") -> DownloadResult | None:
     # возвращает соседний том (живой случай: запрос «Вечно голодный студент 9»
     # → readli отдавал том 5), а вызывающий код подменял книге файл и переводил
     # на неё подписку. same_book сравнивает и номер тома в названии.
-    from ..app.book_identity import same_book
+    from ..app.book_identity import same_book, title_matches
 
     want = {"title": title, "author": author}
     kept = []
     for _c in cands:
-        if same_book(want, {"title": _c.title, "author": _c.author or ""}):
+        cand = {"title": _c.title, "author": _c.author or ""}
+        # Автора в запросе нет (искали по одному названию) — сверять его не с чем:
+        # author_relation отдаёт UNKNOWN, аннотации и файла у запроса тоже нет, и
+        # same_book консервативно отвечает «разные», отбрасывая КАЖДОЕ зеркало.
+        # Единственный доступный сигнал — название, и он уже проверен: похожесть
+        # + номер тома (том 5 вместо запрошенного 9 отсекается по-прежнему).
+        ok = same_book(want, cand) or (
+            not (author or "").strip() and title_matches(title, _c.title)
+        )
+        if ok:
             kept.append(_c)
         else:
             log.info(

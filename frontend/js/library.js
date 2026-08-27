@@ -24,6 +24,9 @@ function resetCoverObserver() {
       if (!e.isIntersecting) continue
       const img = e.target
       obs.unobserve(img)
+      // srcset ДО src: иначе браузер успевает начать грузить src, а потом
+      // передумывает и тянет второй файл — двойной трафик на ровном месте.
+      if (img.dataset.srcset) { img.srcset = img.dataset.srcset; delete img.dataset.srcset }
       if (img.dataset.src) { img.src = img.dataset.src; delete img.dataset.src }
     }
   }, { rootMargin: '400px 0px' })  // подгружаем чуть раньше появления
@@ -32,7 +35,10 @@ function resetCoverObserver() {
 function observeCovers(grid) {
   const imgs = grid.querySelectorAll('img[data-src]')
   if (!_coverIO) {  // нет IntersectionObserver — грузим сразу (деградация)
-    for (const img of imgs) { img.src = img.dataset.src; delete img.dataset.src }
+    for (const img of imgs) {
+      if (img.dataset.srcset) { img.srcset = img.dataset.srcset; delete img.dataset.srcset }
+      img.src = img.dataset.src; delete img.dataset.src
+    }
     return
   }
   for (const img of imgs) _coverIO.observe(img)
@@ -45,8 +51,9 @@ function coverFallback(title) {
 
 // <img> обложки с ленивой подгрузкой (data-src ставится при подходе к вьюпорту)
 // и текстовым фолбэком под ним.
-function coverImg(src, title) {
-  return `<img data-src="${src}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />${coverFallback(title)}`
+function coverImg(src, title, srcset = '', sizes = '') {
+  const responsive = srcset ? ` data-srcset="${srcset}" sizes="${sizes}"` : ''
+  return `<img data-src="${src}"${responsive} alt="" loading="lazy" decoding="async" onerror="this.remove()" />${coverFallback(title)}`
 }
 
 // ===================== БИБЛИОТЕКА =====================
@@ -321,7 +328,16 @@ function bookCard(w, ratio, hasUpdate) {
   const pct = Math.round((ratio || 0) * 100)
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
   // ИИ и вернёт картинку. Пока грузится/если не вышло — виден текстовый фолбэк.
-  const cover = coverImg(`/api/reader/${w.id}/cover?v=${w.cover_v||0}`, w.title)
+  // Просим превью под размер ячейки, а не оригинал: обложки весят в среднем
+  // 169 КБ (максимум 3.5 МБ) и составляли 95.7% веса страницы библиотеки, хотя
+  // рисуются в ~160×240 px. Сервер отдаёт кэшированный WEBP (?w=320|640),
+  // оригинал остаётся доступен без параметра — он нужен на странице книги.
+  const _cov = `/api/reader/${w.id}/cover?v=${w.cover_v||0}`
+  const cover = coverImg(
+    `${_cov}&w=320`, w.title,
+    `${_cov}&w=320 320w, ${_cov}&w=640 640w`,
+    '(max-width: 700px) 160px, 240px',
+  )
   const badge = showUpdate ? '<span class="upd-badge" title="Есть новые главы">обновление</span>' : ''
   const offBadge = isOffline(w.id) ? '<span class="offline-badge" title="Доступна офлайн">офлайн</span>' : ''
   // Явное состояние чтения: ✓ у дочитанной, процент у начатой — 5px-полосы

@@ -216,6 +216,50 @@ def _serve(path: Path, sha1: str) -> FileResponse:
     return resp
 
 
+# Превью обложек. Оригиналы весят в среднем 169 КБ (максимум 3.5 МБ, 1920×2880),
+# а рисуются в ячейку ~160×240 px — на библиотеку это давало 95.7% веса страницы
+# и мобильный LCP 7.1 с. Отдаём уменьшенный WEBP, оригинал остаётся нетронутым.
+_THUMB_WIDTHS = (320, 640)  # 1x/2x для мобильной и десктопной сетки
+_THUMB_DIR_NAME = "_thumbs"
+
+
+def _thumb(src: Path, width: int) -> Path | None:
+    """Кэшированное превью ширины `width` или None — тогда отдаётся оригинал.
+
+    Ширина берётся только из белого списка: иначе произвольный ?w= позволил бы
+    забить диск бесконечными вариантами одной картинки. Имя кэша включает mtime
+    оригинала, поэтому обновлённая обложка сама получает новый файл, а старые
+    варианты того же размера подчищаются.
+    """
+    if width not in _THUMB_WIDTHS:
+        return None
+    try:
+        mtime = int(src.stat().st_mtime)
+        out_dir = src.parent / _THUMB_DIR_NAME
+        out = out_dir / f"{src.stem}_{width}_{mtime}.webp"
+        if out.exists():
+            return out
+
+        from PIL import Image
+
+        with Image.open(src) as im:
+            if im.width <= width:
+                return None  # оригинал и так не больше запрошенного
+            height = round(im.height * width / im.width)
+            im = im.convert("RGB").resize((width, height), Image.LANCZOS)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_suffix(".tmp")
+            im.save(tmp, "WEBP", quality=82, method=4)
+            tmp.replace(out)  # атомарно: параллельный запрос не увидит огрызок
+
+        for stale in out_dir.glob(f"{src.stem}_{width}_*.webp"):
+            if stale != out:
+                stale.unlink(missing_ok=True)
+        return out
+    except Exception:  # noqa: BLE001 — превью не должно ронять отдачу обложки
+        return None
+
+
 @router.get("/{work_id}/file")
 def get_book_file(work_id: int, original: bool = False) -> FileResponse:
     """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте.
@@ -272,7 +316,7 @@ def get_book_file(work_id: int, original: bool = False) -> FileResponse:
 
 @router.get("/{work_id}/cover")
 @router.head("/{work_id}/cover")
-def get_cover(work_id: int) -> FileResponse:
+def get_cover(work_id: int, w: int = 0) -> FileResponse:
     """Обложка книги. Если её нет — пробуем сгенерировать ИИ (лениво, 1 раз).
     Иначе 404 → фронт рисует текстовую заглушку.
 
@@ -286,7 +330,7 @@ def get_cover(work_id: int) -> FileResponse:
             raise HTTPException(404, "книги нет")
         path = _usable_cover(work)
         if path:
-            return _serve(path, work.sha1)
+            return _serve(_thumb(path, w) or path, work.sha1)
         is_calibre = work.site == "calibre" and bool(work.calibre_id)
         sha_fallback = work.sha1 or (f"cal{work.calibre_id}" if work.calibre_id else "")
 

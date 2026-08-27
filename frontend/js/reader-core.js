@@ -2,7 +2,7 @@
 import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
-import { prefs, MARGIN_INLINE, FONT_STACKS, GFONTS } from './core/prefs.js'
+import { prefs, MARGIN_INLINE, FONT_STACKS, gfontsFor } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx } from './core/state.js'
 import { restorePosition, captureAnchor } from './core/position.js'
@@ -51,6 +51,10 @@ export async function openReader(work, opts = {}) {
   // Загружаем файл как Blob → File с корректным именем (для детекта FB2).
   // Cache-first: если книга сохранена офлайн — читаем из кэша (без сети),
   // иначе тянем с сервера. Помогает на телефоне при плохом коннекте.
+  // Прогресс не зависит от файла книги, а раньше запрашивался ПОСЛЕ его
+  // открытия — лишний круг по сети посреди пути к первому кадру. Запускаем
+  // сразу, ждём ниже, там где он реально нужен.
+  const progP = api.get(`/api/progress/${work.id}`).catch(() => null)
   let resp = await cachedBook(work.id)
   // PDF читаем как EPUB (перетекающий текст). Первое открытие ждёт конвертацию
   // (секунды–минуты на толстой книге), дальше файл готов и отдаётся сразу.
@@ -82,7 +86,7 @@ export async function openReader(work, opts = {}) {
 
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
-  const prog = await api.get(`/api/progress/${work.id}`).catch(() => null)
+  const prog = await progP
   await restorePosition(view, prog)
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
@@ -143,7 +147,11 @@ function bookCSS() {
        body { padding: 0 ${sidePad}% !important; }
        img, svg, video, figure { max-width: 100% !important; }`
     : ''
-  return `@import url('${GFONTS}');
+  // Шрифт грузим только тот, которым читают. Пустая строка для системных
+  // семейств: тогда в документе книги вообще нет обращения к сети за шрифтом,
+  // и рендер не ждёт ответа стороннего хоста.
+  const gf = gfontsFor(prefs.fontFamily)
+  return `${gf ? `@import url('${gf}');` : ''}
     html, body { color-scheme: ${colorScheme}; background: ${bg} !important; color: ${fg} !important; }
     html { font-size: ${Math.round(prefs.fontScale * 100)}%; }
     body { font-family: ${fam}; }

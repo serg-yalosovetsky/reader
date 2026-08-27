@@ -7,8 +7,8 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Request, APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse, Response
 from sqlmodel import Session
 
 from .. import config, covers, imagegen
@@ -208,6 +208,39 @@ def _generate_and_persist(
         return path
 
 
+def _file_etag(path: Path) -> str:
+    """ETag ровно по формуле Starlette (md5 от "mtime-size").
+
+    Свой вариант вычисления был бы хуже совместимого: ответ 200 объявляет ETag,
+    посчитанный Starlette, и если 304 отдавать по другому правилу, браузер начнёт
+    получать противоречивые валидаторы на один и тот же файл.
+    """
+    import hashlib
+
+    st = path.stat()
+    base = f"{st.st_mtime}-{st.st_size}"
+    return f'"{hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
+
+
+def _not_modified(request, path: Path, fmt: str) -> Response | None:
+    """304 без тела, если у клиента уже лежит эта же версия файла.
+
+    Книга — самый тяжёлый ответ сервиса (до 39 МБ), и при открытии она ехала
+    заново каждый раз. Здесь же решается свежесть: дорос фанфик новыми главами —
+    поменялись mtime/size, ETag другой, совпадения нет, приедет новая версия.
+    """
+    inm = request.headers.get("if-none-match")
+    if not inm:
+        return None
+    etag = _file_etag(path)
+    if etag not in {t.strip() for t in inm.split(",")}:
+        return None
+    return Response(
+        status_code=304,
+        headers={"ETag": etag, "Cache-Control": "no-cache", "X-Book-Format": fmt or ""},
+    )
+
+
 def _serve(path: Path, sha1: str) -> FileResponse:
     mtime = int(path.stat().st_mtime)
     resp = FileResponse(path)
@@ -261,7 +294,9 @@ def _thumb(src: Path, width: int) -> Path | None:
 
 
 @router.get("/{work_id}/file")
-def get_book_file(work_id: int, original: bool = False) -> FileResponse:
+def get_book_file(
+    request: Request, work_id: int, original: bool = False
+) -> Response:
     """Бинарь книги (EPUB/FB2). foliate-js грузит и рендерит его на клиенте.
 
     У PDF есть EPUB-версия (convert.py) — отдаём её: перетекающий текст вместо
@@ -287,10 +322,14 @@ def get_book_file(work_id: int, original: bool = False) -> FileResponse:
     if converted and not original:
         cpath = Path(converted)
         if cpath.exists():
+            fresh = _not_modified(request, cpath, "epub")
+            if fresh is not None:
+                return fresh
             resp = FileResponse(
                 cpath, media_type=_MEDIA["epub"], filename=cpath.name
             )
-            resp.headers["Cache-Control"] = "no-store"
+            # См. комментарий ниже: no-cache = «храни, но валидируй», а не «не храни».
+            resp.headers["Cache-Control"] = "no-cache"
             resp.headers["X-Book-Format"] = "epub"
             return resp
 
@@ -308,8 +347,17 @@ def get_book_file(work_id: int, original: bool = False) -> FileResponse:
         if not path.exists():
             raise HTTPException(410, "файл книги отсутствует на диске")
     media = _MEDIA.get(file_format, "application/octet-stream")
+    fresh = _not_modified(request, path, file_format or "")
+    if fresh is not None:
+        return fresh
     resp = FileResponse(path, media_type=media, filename=path.name)
-    resp.headers["Cache-Control"] = "no-store"
+    # Раньше здесь стоял no-store, и книга ехала по сети при КАЖДОМ открытии —
+    # на замерах это давало 86% времени до появления текста. no-cache позволяет
+    # браузеру хранить файл, но обязывает проверить его перед использованием:
+    # FileResponse отдаёт ETag/Last-Modified, значит повторное открытие стоит
+    # одного условного запроса и 304 без тела. Книга дорастает новыми главами —
+    # меняется файл, меняется ETag, устаревшая версия не отдаётся.
+    resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Book-Format"] = file_format or ""
     return resp
 

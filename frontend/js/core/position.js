@@ -128,6 +128,10 @@ async function settleAndReanchor(view, target) {
     if (doc.fonts?.ready) waits.push(doc.fonts.ready.catch(() => {}))
     for (const im of [...doc.images]) {
       if (im.complete) continue
+      // Ленивые картинки за пределами экрана не начинают грузиться вообще, и их
+      // события не наступают никогда — ожидание таких всегда упиралось в таймаут
+      // ниже и стоило 2.5 с на ровном месте. Ждём только те, что реально грузятся.
+      if (im.loading === 'lazy') continue
       waits.push(new Promise((res) => {
         im.addEventListener('load', res, { once: true })
         im.addEventListener('error', res, { once: true })

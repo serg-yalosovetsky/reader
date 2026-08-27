@@ -44,6 +44,14 @@ REQUIRED_FIELDS = {
     "cover_v",
 }
 
+# Панель по наведению рисуется из детали книги (frontend/js/library.js →
+# showHover → bookPageMeta): бейджи статуса и источника, чипсы жанров, объём.
+# В СПИСКЕ этих полей нет намеренно — одни genres весят под 70 КБ на всю
+# библиотеку, а показываются для одной книги, на которую навели. Поэтому деталь
+# обязана их нести: срежут её — панель молча опустеет, как уже было после
+# урезания списка (33d38ce), и заметит это только человек, наведя мышь.
+HOVER_FIELDS = {"genres", "rating", "status", "words", "source_url", "site"}
+
 _UPLOAD = {"file": ("contract.epub", b"library-contract-test", "application/epub+zip")}
 
 
@@ -96,3 +104,28 @@ def test_library_detail_stays_full(client):
     detail = client.get(f"/api/library/{work['id']}").json()
     for field in ("description", "file_format", "source_url"):
         assert field in detail, f"деталь книги потеряла поле {field}"
+
+
+def test_detail_carries_fields_the_hover_panel_needs(client):
+    work = _one_book(client)
+    detail = client.get(f"/api/library/{work['id']}").json()
+    missing = HOVER_FIELDS - set(detail)
+    assert not missing, (
+        f"деталь книги потеряла поля, из которых строится панель наведения: "
+        f"{sorted(missing)}. Панель не упадёт — она просто перестанет их показывать."
+    )
+
+
+def test_hover_fields_are_absent_from_the_list(client):
+    """Обратная сторона того же решения: эти поля НЕ должны вернуться в список.
+
+    Если кто-то починит опустевшую панель, вернув поля в список, тест напомнит,
+    что чинить надо дозагрузкой детали: список отдаётся целиком на 1400+ книг.
+    """
+    _one_book(client)
+    items = client.get("/api/library").json()
+    leaked = HOVER_FIELDS & set(items[0])
+    assert not leaked, (
+        f"в списке снова появились поля панели: {sorted(leaked)}. "
+        "Панель дозагружает деталь по одной книге — раздувать список для этого не нужно."
+    )

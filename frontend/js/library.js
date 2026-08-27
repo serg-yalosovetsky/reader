@@ -267,7 +267,32 @@ function hideHoverNow() {
   if (hoverEl) hoverEl.hidden = true
 }
 
-function showHover(card, w) {
+// Деталь книги для панели по наведению. Список намеренно узкий (9 полей), а
+// панель показывает жанры, рейтинг, статус, источник и объём — их там нет.
+// Ключ — id книги, значение — ответ /api/library/{id}; null означает «запрос
+// уже летит», чтобы одно наведение не порождало пачку одинаковых запросов.
+const hoverDetail = new Map()
+
+function prefetchDetail(id) {
+  if (!id || hoverDetail.has(id)) return
+  hoverDetail.set(id, null)
+  api.get(`/api/library/${id}`)
+    .then((full) => {
+      hoverDetail.set(id, full)
+      // Пока летел запрос, панель могла уже открыться на этой же книге — тогда
+      // перерисуем её с фактами. Если навели на другую, трогать нечего.
+      if (hoverEl && !hoverEl.hidden && hoverCard && hoverCard._w && hoverCard._w.id === id) {
+        showHover(hoverCard, hoverCard._w)
+      }
+    })
+    // Не смогли — забываем, чтобы следующее наведение попробовало снова.
+    .catch(() => { hoverDetail.delete(id) })
+}
+
+function showHover(card, base) {
+  // Списочные поля дополняем деталью, если она уже пришла. Пока не пришла —
+  // панель показывается сразу с названием и автором, а факты дорисуются.
+  const w = Object.assign({}, base, hoverDetail.get(base && base.id) || {})
   // Библиотека не на экране (открыта книга/читалка) — панель не показываем.
   if ($('#library').hidden || !card.isConnected) return
   clearTimeout(hoverHideT)
@@ -446,7 +471,12 @@ bookGrid.addEventListener('mouseover', (e) => {
   hoverCard = card
   hideHoverNow()                       // мгновенно убрать панель прошлой карточки
   clearTimeout(hoverEnterT)
-  if (card._w) hoverEnterT = setTimeout(() => showHover(card, card._w), 350)
+  if (card._w) {
+    // Запрос уходит сразу, а панель ждёт свои 350 мс — за это время деталь
+    // обычно успевает прийти, и панель открывается уже полной.
+    prefetchDetail(card._w.id)
+    hoverEnterT = setTimeout(() => showHover(card, card._w), 350)
+  }
 })
 
 bookGrid.addEventListener('mouseout', (e) => {

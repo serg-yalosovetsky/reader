@@ -316,6 +316,26 @@ html.restoring-book #library { display: none; }
 .book-card:hover .book-del-btn { display: flex; }
 .book-del-btn:hover { background: var(--danger); }
 
+/* Кнопка «Читать» на обложке — открывает читалку сразу, минуя страницу книги.
+   Видна ВСЕГДА, а не по наведению: на телефоне наведения нет, а именно там она
+   нужнее всего. Левый нижний угол свободен — справа внизу процент прочитанного,
+   сверху отметка «дочитано» и удаление. */
+.book-read-btn {
+  position: absolute; left: 6px; bottom: 6px; z-index: 4;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 9px; border: none; border-radius: 999px;
+  background: rgba(0,0,0,.62); color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: .01em;
+  cursor: pointer; backdrop-filter: blur(2px);
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  transition: background .15s ease;
+}
+.book-read-btn:hover { background: var(--accent); color: var(--accent-text); }
+.book-read-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Книга без офлайн-копии в режиме «нет сети» не откроется — там низ обложки
+   занимает плашка «нет копии», и кнопка только вводила бы в заблуждение. */
+body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
+
 /* ===================== Мобильная адаптация библиотеки =====================
    Активируется только на узких экранах (телефон / touch). Desktop-вид
    (ширина > 560px) полностью сохраняется — ниже только переопределения. */
@@ -387,6 +407,8 @@ html.restoring-book #library { display: none; }
     padding-bottom: max(20px, env(safe-area-inset-bottom));
   }
   .book-meta { font-size: 12px; }
+  /* Обложка вдвое уже — кнопке хватает иконки с коротким словом. */
+  .book-read-btn { padding: 4px 8px; font-size: 10.5px; gap: 3px; }
 
   /* Статус-сообщения — под общий мобильный padding */
   .ingest-status { margin: 8px 14px 0; }
@@ -555,7 +577,8 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 
 /* Офлайн-книги: бейдж на карточке библиотеки */
 .offline-badge {
-  position: absolute; left: 6px; bottom: 6px; z-index: 2;
+  /* Поднят над кнопкой «Читать»: она заняла левый нижний угол. */
+  position: absolute; left: 6px; bottom: 36px; z-index: 2;
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 6px;
   background: rgba(30,120,70,.92); color: #fff; letter-spacing: .02em;
   box-shadow: 0 1px 4px rgba(0,0,0,.3);

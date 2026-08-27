@@ -370,7 +370,7 @@ function bookCard(w, ratio, hasUpdate) {
   const readBadge = done ? '<span class="read-badge" title="Прочитано">✓</span>' : ''
   const pctBadge = readState === 'partial' ? `<span class="pct-badge">${pct}%</span>` : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}${badge}${offBadge}${readBadge}${pctBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button></div>
+    <div class="book-cover">${cover}${badge}${offBadge}${readBadge}${pctBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button><button class="book-read-btn" title="Читать" aria-label="Читать ${escapeHtml(w.title || 'книгу')}"><span aria-hidden="true">▶</span> Читать</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author${w.author ? ' b-link' : ''}" data-flt="author">${escapeHtml(w.author || '')}</div>
@@ -438,6 +438,7 @@ bookGrid.addEventListener('click', (e) => {
   const card = e.target.closest('.book-card')
   if (!card) return
   const w = card._w
+  if (w && e.target.closest('.book-read-btn')) { e.stopPropagation(); hideHoverNow(); openReader(w); return }
   if (w && e.target.closest('.book-del-btn')) { e.stopPropagation(); removeCard(card, w); return }
   const flt = w && e.target.closest('[data-flt]')
   if (flt) {

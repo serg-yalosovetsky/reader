@@ -6,7 +6,10 @@
   <title>Читалка</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- use-credentials обязателен: манифест за SSO, а без него браузер
+       запрашивает файл без cookie и ловит редирект на sso.ibotz.fun,
+       который для манифеста запрещён как кросс-ориджин. -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
   <meta name="theme-color" content="#f4ecd8" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />

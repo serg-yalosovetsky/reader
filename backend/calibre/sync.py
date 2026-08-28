@@ -160,8 +160,11 @@ def migrate_local_to_refs(session: Session, dry_run: bool = True) -> dict:
         if not dry_run:
             w.calibre_id = cid
             w.site = "calibre"
-            w.file_format = client.best_format(b["formats"]) or w.file_format
-            w.file_path = ""
+            # Формат берём из Calibre только когда своего файла нет: у локальной
+            # копии формат уже известен и менять его на «лучший по каталогу»
+            # значит соврать про файл, который лежит на диске.
+            if not w.file_path:
+                w.file_format = client.best_format(b["formats"]) or w.file_format
             if not w.description:
                 w.description = b.get("description") or ""
             if not w.genres and b.get("tags"):
@@ -169,11 +172,11 @@ def migrate_local_to_refs(session: Session, dry_run: bool = True) -> dict:
             w.meta_synced = True
             session.add(w)
             assigned[cid] = w
-            if old_file and os.path.exists(old_file):
-                try:
-                    os.remove(old_file)
-                except OSError:
-                    pass
+            # Локальный файл НЕ удаляем. Раньше он стирался «ради экономии», после
+            # чего книга открывалась только докачкой с Calibre — на замерах это
+            # давало основную часть времени открытия, а при забитом кэше ещё и
+            # повторялось каждый раз. Диск дешевле ожидания: вся локальная
+            # библиотека занимала 700 МБ против 2 ГБ кэша временных копий.
         else:
             assigned[cid] = w
 
@@ -311,12 +314,63 @@ def sync_catalog(session: Session) -> dict:
 # ----------------------- fetch-on-open (evictable кэш) -----------------------
 
 
+def drop_converted_sources() -> int:
+    """Выбросить из кэша исходники, у которых готова EPUB-версия.
+
+    PDF читается через сконвертированный EPUB (перетекающий текст), сам исходник
+    после конвертации не нужен — а весит он десятки мегабайт и вытесняет из кэша
+    книги, которые читают. Возвращает освобождённые байты.
+
+    Безопасно: это КЭШ, оригинал остаётся в Calibre. Понадобится снова —
+    скачается заново.
+    """
+    from ..app.db.session import engine
+
+    if not CALIBRE_CACHE_DIR.exists():
+        return 0
+    freed = 0
+    with Session(engine) as s:
+        for path in list(CALIBRE_CACHE_DIR.iterdir()):
+            if not path.is_file() or path.suffix.lower() != ".pdf":
+                continue
+            try:
+                calibre_id = int(path.stem)
+            except ValueError:
+                continue
+            work = s.exec(
+                select(Work).where(Work.calibre_id == calibre_id)
+            ).first()
+            if not work or work.converted_status != "ready":
+                continue
+            conv = work.converted_path
+            if not conv or not Path(conv).exists():
+                continue   # EPUB обещан, но его нет — исходник ещё нужен
+            try:
+                size = path.stat().st_size
+                path.unlink()
+                freed += size
+            except OSError:
+                continue
+    if freed:
+        log.info("Кэш Calibre: освобождено %.1f МБ PDF-исходников", freed / 1048576)
+    return freed
+
+
 def _evict_cache() -> None:
     """LRU-подрезка кэша: если суммарный размер > лимита — удаляем самые старые
-    (по mtime) файлы, пока не влезем. Прогресс/закладки не трогаются (они в БД)."""
+    (по mtime) файлы, пока не влезем. Прогресс/закладки не трогаются (они в БД).
+
+    Перед вытеснением освобождаем место за счёт исходников, у которых уже есть
+    EPUB-версия: иначе несколько PDF по 60 МБ выдавливают из кэша десятки книг,
+    которые действительно читают.
+    """
     cap = CALIBRE_CACHE_MAX_MB * 1024 * 1024
     if not CALIBRE_CACHE_DIR.exists():
         return
+    try:
+        drop_converted_sources()
+    except Exception:  # noqa: BLE001 — освобождение места не должно ронять докачку
+        log.warning("Не удалось прибрать PDF-исходники из кэша", exc_info=True)
     files = [
         p
         for p in CALIBRE_CACHE_DIR.iterdir()

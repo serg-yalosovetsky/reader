@@ -314,63 +314,65 @@ def sync_catalog(session: Session) -> dict:
 # ----------------------- fetch-on-open (evictable кэш) -----------------------
 
 
-def drop_converted_sources() -> int:
-    """Выбросить из кэша исходники, у которых готова EPUB-версия.
+def _eviction_priority() -> dict[Path, int]:
+    """Очередь на вылет для файлов кэша: чем меньше число, тем раньше уходит.
 
-    PDF читается через сконвертированный EPUB (перетекающий текст), сам исходник
-    после конвертации не нужен — а весит он десятки мегабайт и вытесняет из кэша
-    книги, которые читают. Возвращает освобождённые байты.
+    0 — сирота: книги с таким calibre_id в БД нет, файл не нужен никому.
+    1 — книгу ни разу не открывали: кэш держит её зря, а место нужно тем,
+        кого читают.
+    2 — исходник, у которого уже есть EPUB-версия: для обычного чтения не
+        нужен, но остаётся доступен по original=1 (перекачается при запросе) —
+        у части книг вёрстка PDF читается лучше перетекающего текста.
+    3 — книга, которую читают: вытесняется последней.
 
-    Безопасно: это КЭШ, оригинал остаётся в Calibre. Понадобится снова —
-    скачается заново.
+    Внутри одной группы порядок обычный, по возрасту.
     """
     from ..app.db.session import engine
+    from ..app.db.models import Progress
 
+    prio: dict[Path, int] = {}
     if not CALIBRE_CACHE_DIR.exists():
-        return 0
-    freed = 0
+        return prio
     with Session(engine) as s:
-        for path in list(CALIBRE_CACHE_DIR.iterdir()):
-            if not path.is_file() or path.suffix.lower() != ".pdf":
+        for path in CALIBRE_CACHE_DIR.iterdir():
+            if not path.is_file() or path.name.endswith(".part"):
                 continue
             try:
                 calibre_id = int(path.stem)
             except ValueError:
+                prio[path] = 0
                 continue
             work = s.exec(
                 select(Work).where(Work.calibre_id == calibre_id)
             ).first()
-            if not work or work.converted_status != "ready":
+            if not work:
+                prio[path] = 0
+                continue
+            read = s.exec(
+                select(Progress).where(Progress.work_id == work.id)
+            ).first()
+            if not read:
+                prio[path] = 1
                 continue
             conv = work.converted_path
-            if not conv or not Path(conv).exists():
-                continue   # EPUB обещан, но его нет — исходник ещё нужен
-            try:
-                size = path.stat().st_size
-                path.unlink()
-                freed += size
-            except OSError:
+            if work.converted_status == "ready" and conv and Path(conv).exists():
+                prio[path] = 2
                 continue
-    if freed:
-        log.info("Кэш Calibre: освобождено %.1f МБ PDF-исходников", freed / 1048576)
-    return freed
+            prio[path] = 3
+    return prio
 
 
 def _evict_cache() -> None:
-    """LRU-подрезка кэша: если суммарный размер > лимита — удаляем самые старые
-    (по mtime) файлы, пока не влезем. Прогресс/закладки не трогаются (они в БД).
+    """LRU-подрезка кэша: пока суммарный размер > лимита, удаляем файлы.
+    Прогресс/закладки не трогаются (они в БД).
 
-    Перед вытеснением освобождаем место за счёт исходников, у которых уже есть
-    EPUB-версия: иначе несколько PDF по 60 МБ выдавливают из кэша десятки книг,
-    которые действительно читают.
+    Пока лимит НЕ превышен, не удаляется ничего. При переполнении порядок
+    задаёт _eviction_priority: сперва сироты и книги, которые ни разу не
+    открывали, и только в последнюю очередь — то, что читают.
     """
     cap = CALIBRE_CACHE_MAX_MB * 1024 * 1024
     if not CALIBRE_CACHE_DIR.exists():
         return
-    try:
-        drop_converted_sources()
-    except Exception:  # noqa: BLE001 — освобождение места не должно ронять докачку
-        log.warning("Не удалось прибрать PDF-исходники из кэша", exc_info=True)
     files = [
         p
         for p in CALIBRE_CACHE_DIR.iterdir()
@@ -379,7 +381,12 @@ def _evict_cache() -> None:
     total = sum(p.stat().st_size for p in files)
     if total <= cap:
         return
-    for p in sorted(files, key=lambda x: x.stat().st_mtime):
+    try:
+        prio = _eviction_priority()
+    except Exception:  # noqa: BLE001 — приоритет не должен ронять саму уборку
+        log.warning("Не удалось вычислить приоритет вытеснения", exc_info=True)
+        prio = {}
+    for p in sorted(files, key=lambda x: (prio.get(x, 3), x.stat().st_mtime)):
         try:
             total -= p.stat().st_size
             p.unlink()

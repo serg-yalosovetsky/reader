@@ -244,7 +244,16 @@ def fetch_meta(url: str) -> dict | None:
             title, author, annotation, extra = _parse_work_meta(r.text)
         except Exception:  # noqa: BLE001
             return None
-    meta = {"title": title, "author": author, "annotation": annotation}
+    # Платность видна на той же странице, что мы уже скачали (_is_free). Без
+    # этого флага монитор предлагал платное зеркало AT как «более полный
+    # источник», уводил подписку с бесплатного ficbook и потом вечно падал
+    # на PaidContentError (живой случай: work 58 «Сломанный Меч», 123 провала).
+    meta = {
+        "title": title,
+        "author": author,
+        "annotation": annotation,
+        "paid": not _is_free(r.text),
+    }
     if extra.get("series"):
         meta["series"] = extra["series"]
     if extra.get("series_index"):

@@ -132,10 +132,15 @@ def _host(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-def _at_eligible(host: str, work_id: int | None, title: str) -> bool:
-    """Стоит ли искать альтернативу на author.today (AT — быстрый рус.источник)."""
-    if not any(h in host for h in ("ficbook", "fanfics.me", "fanfiction.net")):
-        return False
+def _mirror_eligible(host: str, work_id: int | None, title: str) -> bool:
+    """Стоит ли искать альтернативные источники книги.
+
+    Раньше здесь стоял белый список исходных хостов (ficbook / fanfics.me /
+    fanfiction.net) — то есть книга, подписанная на author.today, зеркал не
+    искала никогда. Живой случай: две платные на AT книги (work 46 и 1662)
+    годами падали на каждом тике, так и не спросив бесплатные агрегаторы.
+    Нужны только опознаваемая книга (work_id) и название, по которому искать.
+    """
     return bool(work_id) and bool(title)
 
 
@@ -150,7 +155,17 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
     """Ищем ТУ ЖЕ книгу на author.today и ВЕРИФИЦИРУЕМ идентичность (не тёзку!)
     через book_identity.same_book. Раньше матч шёл по названию — и тянулась чужая
     книга-однофамилица с чужой обложкой, плодя дубли и перецепляя монитор.
-    (at_url, at_chapters) или None. Чистая сеть, без БД (вызывается из потоков)."""
+    (at_url, at_chapters) или None. Чистая сеть, без БД (вызывается из потоков).
+
+    ПЛАТНАЯ на AT книга зеркалом НЕ СЧИТАЕТСЯ никогда: скачать её нельзя,
+    а обход платного доступа явно вне scope (spec.reader.best-source). Наличие
+    учётки AT ответом не является: аккаунт ≠ купленная книга — залогиненному
+    пользователю без покупки AT отвечает `Paid` (spec.reader.update-pipeline v4),
+    и анонимный fetch_meta купленное от некупленного всё равно не отличает.
+    Прямая AT-подписка этим не затронута: её собственный URL скачивается
+    адаптером с учёткой как и раньше — здесь речь только о ПОИСКЕ ЗЕРКАЛА.
+    Живой случай: work 58 «Сломанный Меч» — подписка ушла на платный AT и
+    набрала fail_count=123 при бесплатном ficbook под рукой."""
     from ..downloaders import authortoday as _at
     from ..app import book_identity as _bi
 
@@ -158,6 +173,8 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
     if not at_url:
         return None
     at_meta = _at.fetch_meta(at_url)
+    if at_meta and at_meta.get("paid"):
+        return None  # платная — скачать нечего, это не зеркало
     # Аннотации может не быть — тогда идентичность сверяем по тексту (первая глава).
     gta = (
         (lambda: _bi.extract_text_sample(our.get("file_path"), our.get("file_format")))
@@ -172,6 +189,61 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
     if not at_cnt:
         return None
     return (at_url, at_cnt)
+
+
+def _check_searchfloor_source(our: dict) -> tuple[str, int] | None:
+    """То же для searchfloor — бесплатного агрегатора с дешёвым поиском
+    и дешёвым счётом глав (плашка «Последняя глава» на /b/<id>).
+
+    Его поиск сырой («берём первый id», без фильтра по автору), поэтому
+    идентичность сверяется обязательно: без этого подписку легко увести
+    на тёзку или соседний том (spec.reader.best-source v3).
+    readli сюда НЕ входит: его поиск умеет только СКАЧАТЬ книгу целиком,
+    а его «главы» — страницы пагинации, несравнимые с главами (_metric_kind).
+    На шаге докачки readli участвует наравне со всеми (chain.fetch_fullest)."""
+    from ..downloaders import searchfloor as _sf
+    from ..app import book_identity as _bi
+
+    title = our.get("title", "")
+    if not title:
+        return None
+    bid = _sf.search_book(title, our.get("author", "") or "")
+    if not bid:
+        return None
+    sf_url = f"https://searchfloor.org/b/{bid}"
+    sf_title, sf_author = _sf._book_meta(bid)
+    if not _bi.same_book(our, {"title": sf_title, "author": sf_author}):
+        return None  # тёзка/чужой том
+    cnt = _sf.count_chapters(sf_url)
+    if not cnt:
+        return None  # завершённая книга без плашки — счётчика нет
+    return (sf_url, cnt)
+
+
+# Зонды зеркал, которые можно опросить ДЕШЁВО (поиск + счёт глав, без
+# скачивания книги) и чьи единицы — ГЛАВЫ, то есть сравнимы между собой
+# и с исходным источником (см. _metric_kind).
+_MIRROR_PROBES = (_check_at_source, _check_searchfloor_source)
+
+
+def _check_mirrors(our: dict) -> tuple[str, int] | None:
+    """Опросить ВСЕ дешые зеркала и вернуть САМОЕ ПОЛНОЕ из ПРИГОДНЫХ.
+
+    Пригодное = та же книга (same_book) И с неё реально можно скачать.
+    Большее число глав само по себе не делает источник лучше: у платной
+    книги на author.today глав всегда больше, а текста не даётся ни одной.
+    Чистая сеть, без БД — вызывается из потоков."""
+    cands: list[tuple[str, int]] = []
+    for probe in _MIRROR_PROBES:
+        try:
+            r = probe(our)
+        except Exception:  # noqa: BLE001 — одно лежачее зеркало не валит остальные
+            r = None
+        if r:
+            cands.append(r)
+    if not cands:
+        return None
+    return max(cands, key=lambda c: c[1])
 
 
 # Конкурентность поиска на author.today (анонимные httpx-запросы, безопасно).
@@ -193,10 +265,10 @@ def _count_chapters_task(task: dict) -> int | None:
 
 
 def _at_task(task: dict) -> tuple[str, int] | None:
-    if not _at_eligible(task["host"], task["work_id"], task["title"]):
+    if not _mirror_eligible(task["host"], task["work_id"], task["title"]):
         return None
     try:
-        return _check_at_source(task["our"])
+        return _check_mirrors(task["our"])
     except Exception:  # noqa: BLE001
         return None
 
@@ -526,7 +598,17 @@ def check_all(
             detail = {"url": best_url, "from": seen, "to": best_cur}
             if at_info and best_url != mon.source_url:
                 detail["alt_source"] = best_url
-            if auto_download:
+            # Backoff действует НА ВСЕХ ветках, а не только там, где причина —
+            # залипший has_update. Рост числа глав на сайте (best_cur > seen) сам по
+            # себе не делает источник скачиваемым: у платной книги на author.today
+            # глав всегда больше, чем у нас, и без этого гейта подписка качалась и
+            # падала каждый тик: живые fail_count 1341 / 581 / 123 при _MAX_FAILS=5.
+            # Флаг has_update остаётся — обновление есть, просто не берётся;
+            # ручная проверка снимает backoff (reset_fail_counters).
+            _backed_off = (mon.fail_count or 0) >= _MAX_FAILS
+            if _backed_off:
+                detail["skipped"] = f"backoff: {mon.fail_count} неудач подряд"
+            if auto_download and not _backed_off:
                 try:
                     dl = _download_and_write(session, mon, _w, best_url, best_cur)
                     detail.update(dl)
@@ -588,9 +670,9 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     cur = _chapter_count(mon.source_url, host, creds)
 
     at_info = None
-    if _at_eligible(host, work_id, _w.title if _w else ""):
+    if _mirror_eligible(host, work_id, _w.title if _w else ""):
         try:
-            at_info = _check_at_source(_descriptor(_w))
+            at_info = _check_mirrors(_descriptor(_w))
         except Exception:
             pass
 

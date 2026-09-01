@@ -268,12 +268,42 @@ def register_download(result: DownloadResult, session: Session) -> Work:
                 else 0
             )
             new_ch = _real_chapters(str(src), result.file_format)
+            # Сколько ГЛАВ в каждом файле — без суждений о качестве их названий
+            # (count_sections, а не _real_chapters: на ficbook «Часть N» — настоящие
+            # авторские названия, см. spec.reader.update-pipeline v5). 0 = посчитать не
+            # удалось (цельный fb2) — тогда этот сигнал просто не участвует.
+            cur_sec = (
+                count_sections(
+                    existing.file_path,
+                    existing.file_format,
+                    book_title=existing.title or "",
+                )
+                if existing.file_path and Path(existing.file_path).exists()
+                else 0
+            )
+            new_sec = count_sections(
+                str(src), result.file_format, book_title=result.title or ""
+            )
             # Заменяем если: (а) новый полнее по тексту, ИЛИ (б) у нового ЕСТЬ реальная
             # разбивка на главы, а у текущего заметно меньше, при почти равном объёме
-            # (не короче 90%) — структурный апгрейд page-blob → реальные главы.
+            # (не короче 90%) — структурный апгрейд page-blob → реальные главы,
+            # ИЛИ (в) в новом ПРОСТО БОЛЬШЕ ГЛАВ при сопоставимом объёме.
+            #
+            # (в) добавлено в v8. Без него растущая книга застревала навсегда, если
+            # лежащая копия пришла с более «толстого» зеркала: объём текста может
+            # УМЕНЬШАТЬСЯ при РОСТЕ числа глав. Живой случай: work 58 «Сломанный
+            # Меч» — свежий ficbook давал 78 глав и richness 4 471 769, а старый файл —
+            # 77 глав и 4 537 924; ни fuller, ни better_structure не срабатывали, и
+            # 78-я глава не могла доехать ни при какой докачке.
             fuller = cur_rich == 0 or new_rich > cur_rich
             better_structure = new_ch > cur_ch and new_rich >= cur_rich * 0.9
-            if fuller or better_structure:
+            more_chapters = (
+                bool(cur_sec)
+                and bool(new_sec)
+                and new_sec > cur_sec
+                and new_rich >= cur_rich * 0.9
+            )
+            if fuller or better_structure or more_chapters:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
                 # Файл реально заменён — только это событие бампает updated_at.

@@ -280,13 +280,34 @@ def _count_chapters_task(task: dict) -> int | None:
         return None
 
 
+# Зонд зеркал ходит на ЧУЖИЕ сервисы по ВСЕМ подпискам. На тике в 20 минут и
+# 70 подписках это тысячи запросов в сутки на каждый агрегатор — а трафик к
+# author.today идёт через резидентный egress (домашняя нода), то есть бан прилетит
+# на домашний IP. Наличие книги на зеркале меняется редко, поэтому результат
+# кэшируется. Детект обновлений от этого не страдает: число глав СВОЕГО
+# источника считается каждый тик, зеркало — дополнение.
+_MIRROR_TTL_SEC = 6 * 3600
+_mirror_cache: dict[int, tuple[float, tuple[str, int] | None]] = {}
+
+
 def _at_task(task: dict) -> tuple[str, int] | None:
     if not _mirror_eligible(task["host"], task["work_id"], task["title"]):
         return None
+    wid = task["work_id"]
+    hit = _mirror_cache.get(wid)
+    if hit and (time.time() - hit[0]) < _MIRROR_TTL_SEC:
+        return hit[1]
     try:
-        return _check_mirrors(task["our"], task.get("at_creds"))
+        res = _check_mirrors(task["our"], task.get("at_creds"))
     except Exception:  # noqa: BLE001
-        return None
+        return None  # неудачу НЕ кэшируем: следующий тик попробует снова
+    _mirror_cache[wid] = (time.time(), res)
+    return res
+
+
+def reset_mirror_cache() -> None:
+    """Сбросить кэш зонда зеркал (ручная проверка = «посмотри заново»)."""
+    _mirror_cache.clear()
 
 
 _AT_COVER_ELIGIBLE = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
@@ -516,6 +537,7 @@ def check_all(
     #     Пропускаем если обновление уже известно (has_update=True).
     cur_by: dict[int, int | None] = {}
     total_tasks = len(tasks)
+    _t0 = time.time()
     for i, t in enumerate(tasks):
         if progress_cb:
             progress_cb(i + 1, total_tasks, t["title"] or t["url"], t["host"])
@@ -527,12 +549,26 @@ def check_all(
             # метит любую активность автора, и без сверки ложный флаг гонял
             # полную перекачку каждый тик.
             cur_by[t["mon_id"]] = _count_chapters_task(t)
-    # 1b) Поиск на author.today — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
+    _t_count = time.time() - _t0
+    # 1b) Поиск зеркал — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
+    _t1 = time.time()
     at_by: dict[int, tuple[str, int] | None] = {}
     if tasks:
         with ThreadPoolExecutor(max_workers=_AT_WORKERS) as ex:
             for t, at_info in zip(tasks, ex.map(_at_task, tasks)):
                 at_by[t["mon_id"]] = at_info
+    # Длительность фаз — в лог. Без неё регрессия тика (залипший агрегатор,
+    # выросшее число подписок) невидима: тик просто начинает налезать на
+    # следующий, и ни одна ошибка нигде не появляется.
+    _cached = sum(
+        1
+        for t in tasks
+        if (_h := _mirror_cache.get(t["work_id"])) and _h[0] < _t1
+    )
+    _log.info(
+        "check_all: подписок=%d счёт_глав=%.1fс зеркала=%.1fс (из кэша %d)",
+        len(tasks), _t_count, time.time() - _t1, _cached,
+    )
     counts: dict[int, tuple[int | None, tuple[str, int] | None]] = {
         t["mon_id"]: (cur_by.get(t["mon_id"]), at_by.get(t["mon_id"])) for t in tasks
     }
@@ -741,6 +777,7 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
 
 def reset_fail_counters(session: Session) -> int:
     """Снять backoff со всех подписок (ручной запуск проверки = новая попытка)."""
+    reset_mirror_cache()  # человек просит проверить заново — значит и зеркала тоже
     n = 0
     for mon in session.exec(select(Monitored).where(Monitored.fail_count > 0)).all():
         mon.fail_count = 0

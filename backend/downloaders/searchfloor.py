@@ -51,8 +51,16 @@ def supports(url: str) -> bool:
     return (urlparse(url).hostname or "").lower().endswith("searchfloor.org")
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(timeout=90, follow_redirects=True,
+# Скачивание книги терпеливое (большой fb2), а МОНИТОРИНГ — нет: его зонды
+# идут по ВСЕМ подпискам каждый тик, и одним залипшим хостом 90-секундный
+# таймаут растягивает фазу за пределы самого интервала мониторинга:
+# 3 последовательных запроса × 90 с × 70 подписок / 5 воркеров ≈ 63 минуты
+# при тике в 20 минут.
+_PROBE_TIMEOUT = 15
+
+
+def _client(timeout: int = 90) -> httpx.Client:
+    return httpx.Client(timeout=timeout, follow_redirects=True,
                         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"})
 
 
@@ -104,7 +112,7 @@ def _download_book(book_id: str, src_url: str) -> DownloadResult:
 def _book_meta(book_id: str) -> tuple[str, str]:
     """Заголовок/автор со страницы /b/<id> (title: 'Название / Автор')."""
     try:
-        with _client() as c:
+        with _client(_PROBE_TIMEOUT) as c:
             r = c.get(f"{_BASE}/b/{book_id}")
         soup = BeautifulSoup(r.text, "lxml")
         h1s = [h.get_text(strip=True) for h in soup.find_all(["h1", "h2"])]
@@ -157,9 +165,11 @@ def _download_boosty(url: str) -> DownloadResult:
 
 
 def search_book(title: str, author: str = "") -> str | None:
-    """Поиск книги по названию → id (для фоллбэка). Возвращает book_id или None."""
+    """Поиск книги по названию → id (для фоллбэка). Возвращает book_id или None.
+
+    Короткий таймаут: вызывается из пер-тикового зонда по всем подпискам."""
     q = quote(title)
-    with _client() as c:
+    with _client(_PROBE_TIMEOUT) as c:
         r = c.get(f"{_BASE}/search?q={q}")
     ids = re.findall(r"/b/(\d+)", r.text)
     # Доп. фильтрация по автору, если задан и встречается рядом — упрощённо берём первый.
@@ -210,7 +220,7 @@ def count_chapters(url: str) -> int | None:
     if not m:
         return None
     try:
-        with _client() as c:
+        with _client(_PROBE_TIMEOUT) as c:
             r = c.get(f"{_BASE}/b/{m.group(1)}")
         if r.status_code != 200:
             return None

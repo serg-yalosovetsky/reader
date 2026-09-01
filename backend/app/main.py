@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,8 +18,28 @@ from .db.session import init_db
 from .routers import article, accounts, bookmarks, calibre, convert, highlights, ingest, library, progress, reader, readera, tts
 
 
+def _setup_logging() -> None:
+    """Привязать логгеры приложения к stdout — иначе их не видно НИГДЕ.
+
+    uvicorn настраивает ТОЛЬКО свои логгеры; root остаётся без хендлеров, и всё,
+    что пишет `logging.getLogger("reader.*")`, уходит в никуда (INFO — точно;
+    WARNING попадал в lastResort без имени логгера и времени). Проверено
+    2026-09-01: за три дня в journal ноль записей от reader.monitor / reader.chain,
+    включая ошибки докачки. См. spec.reader.update-pipeline: отказ обязан быть виден.
+    """
+    log = logging.getLogger("reader")
+    if log.handlers:  # идемпотентность: --reload и тесты зовут lifespan повторно
+        return
+    h = logging.StreamHandler(sys.stdout)
+    h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    log.addHandler(h)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _setup_logging()
     init_db()
     scheduler.start()
     yield

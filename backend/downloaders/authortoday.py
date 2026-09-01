@@ -261,15 +261,26 @@ def fetch_meta(url: str) -> dict | None:
     return meta
 
 
-def fetch_text_sample(url: str, max_chars: int = 4000) -> str:
-    """Первые ~max_chars символов текста книги AT (первая глава) — для сверки
-    идентичности по содержимому, когда аннотаций нет. Аноним; '' при неудаче."""
+def fetch_text_sample(
+    url: str, max_chars: int = 4000, creds: tuple[str, str] | None = None
+) -> str:
+    """Первые ~max_chars символов текста книги AT (первая глава).
+
+    Две роли: сверка идентичности по содержимому и ПРОВЕРКА ДЕЙСТВИЕМ, что сюда
+    вообще отдают текст: пустой ответ значит «скачать нельзя», какая бы ни
+    была причина (18+, частичная платность, снятие с публикации). creds
+    пробрасываются, иначе проверка врёт про любую 18+ книгу. '' при неудаче."""
     work_id = _work_id(url)
     with egress.at_client(
         timeout=30,
         follow_redirects=True,
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
+        if creds:
+            try:
+                _login(c, creds[0], creds[1])
+            except Exception:  # noqa: BLE001 — неудачный вход не валит пробу
+                pass
         try:
             rr = _get(c, f"{_BASE}/reader/{work_id}")
             chapters = _parse_chapters(rr.text)
@@ -334,7 +345,7 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
 
         # Без входа — платная/18+ недоступна; если залогинились, пробуем скачать.
         if not _is_free(wr.text) and not creds:
-            raise PaidContentError(title=title, author=author)
+            raise PaidContentError(title=title, author=author, reason="paid")
 
         # 2) Страница ридера — список глав (+ cookies сессии для запросов глав).
         rr = _get(c, f"{_BASE}/reader/{work_id}")
@@ -370,13 +381,17 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
             # нашёл полный текст в бесплатных зеркалах (searchfloor/readli).
             msg = str(e).lower()
             if "18+" in msg or "unadulted" in msg or "возраст" in msg:
-                raise PaidContentError(title=title, author=author) from e
+                # НЕ платность: книга может быть совершенно бесплатной, просто AT
+                # требует входа для 18+. Лечится рабочей учёткой, а не покупкой.
+                raise PaidContentError(
+                    title=title, author=author, reason="adult"
+                ) from e
             raise
 
         # Ни одной бесплатной главы — книга целиком платная. Отдаём как
         # PaidContent, чтобы chain искал полный текст в бесплатных зеркалах.
         if not chapter_htmls:
-            raise PaidContentError(title=title, author=author)
+            raise PaidContentError(title=title, author=author, reason="paid")
 
     # 4) Сборка EPUB (со встроенной обложкой).
     cover = None
@@ -481,13 +496,42 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
     return _decrypt(text, secret, user_id)
 
 
+# Кнопка чтения в левой колонке страницы книги — ЕДИНСТВЕННЫЙ надёжный признак
+# того, отдаёт ли AT текст целиком: «Читать книгу» (btn-success) у бесплатной,
+# «Читать фрагмент» (btn-primary) — у платной.
+_READ_BTN_RE = re.compile(r"<a\b[^>]*\bbtn-read-book\b[^>]*>(.*?)</a>", re.S | re.I)
+
+
 def _is_free(html: str) -> bool:
-    """Книга бесплатна, если на странице есть «Свободный доступ» и нет покупки."""
+    """Отдаёт ли author.today ТЕКСТ КНИГИ целиком (а не ознакомительный фрагмент).
+
+    Судим по КНОПКЕ ЧТЕНИЯ этой книги, а не по подстрокам со всей страницы.
+    Прежняя эвристика («есть где-то слово Купить → платная») ошибалась В ОБЕ
+    СТОРОНЫ — замер по 31 книге библиотеки (2026-09-01, serg/tasks#319):
+      • ложно-платные: кнопка «Купить цикл» (btn-buy-series) относится к СЕРИИ,
+        а не к этой книге — «Вечно голодный студент 10» и work/475012
+        числились платными при кнопке «Читать книгу»;
+      • ложно-бесплатные: «Крушение сурка. Том 1» отдаёт только фрагмент, но
+        слова «Купить» на странице нет, и старый детектор считал её бесплатной.
+    ВАЖНО: «бесплатная» ≠ «скачается». Книга 18+ бесплатна, но анониму AT
+    отвечает `unadulted` на каждую главу — это другая причина и другое лечение
+    (вход в аккаунт), см. PaidContentError.reason.
+    """
+    m = _READ_BTN_RE.search(html)
+    if m:
+        txt = re.sub(r"<[^>]+>", " ", m.group(1)).lower()
+        if "фрагмент" in txt or "ознакомительн" in txt:
+            return False
+        if "читать" in txt:
+            return True
+    # Кнопки нет (редизайн/неожиданная разметка) — старая эвристика как фоллбэк,
+    # но без покупки ЦИКЛА: она ничего не говорит об этой книге.
     if "Свободный доступ" in html:
         return True
-    # Признаки платной: ценник/кнопка покупки.
-    paid_markers = ("icon-2-cart", "Купить", "add-to-cart", 'class="price"', "руб.")
-    return not any(m in html for m in paid_markers)
+    rest = re.sub(r"<a\b[^>]*\bbtn-buy-series\b[^>]*>.*?</a>", " ", html, flags=re.S)
+    rest = rest.replace("Купить цикл", " ")
+    paid_markers = ("icon-2-cart", "Купить", "add-to-cart", 'class="price"')
+    return not any(m in rest for m in paid_markers)
 
 
 def _parse_work_meta(html: str) -> tuple[str, str, str, dict]:

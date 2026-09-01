@@ -151,7 +151,9 @@ def _descriptor(w) -> dict:
     return _bi.work_descriptor(w) if w else {"title": "", "author": ""}
 
 
-def _check_at_source(our: dict) -> tuple[str, int] | None:
+def _check_at_source(
+    our: dict, at_creds: tuple[str, str] | None = None
+) -> tuple[str, int] | None:
     """Ищем ТУ ЖЕ книгу на author.today и ВЕРИФИЦИРУЕМ идентичность (не тёзку!)
     через book_identity.same_book. Раньше матч шёл по названию — и тянулась чужая
     книга-однофамилица с чужой обложкой, плодя дубли и перецепляя монитор.
@@ -174,7 +176,15 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
         return None
     at_meta = _at.fetch_meta(at_url)
     if at_meta and at_meta.get("paid"):
-        return None  # платная — скачать нечего, это не зеркало
+        return None  # отдаёт только фрагмент — скачать нечего, это не зеркало
+    # ПРОВЕРКА ДЕЙСТВИЕМ: тянем первую главу. Признаки на странице говорят
+    # лишь о ЦЕНЕ, а не о ДОСТУПЕ: книга 18+ бесплатна, но без рабочего входа
+    # AT отвечает `unadulted` на каждую главу (serg/tasks#319). Пустой сэмпл =
+    # зеркало непригодно, какая бы ни была причина. Сэмпл переиспользуется
+    # ниже в same_book — лишнего запроса это не стоит.
+    sample = _at.fetch_text_sample(at_url, creds=at_creds)
+    if not sample.strip():
+        return None
     # Аннотации может не быть — тогда идентичность сверяем по тексту (первая глава).
     gta = (
         (lambda: _bi.extract_text_sample(our.get("file_path"), our.get("file_format")))
@@ -182,7 +192,7 @@ def _check_at_source(our: dict) -> tuple[str, int] | None:
         else None
     )
     if not at_meta or not _bi.same_book(
-        our, at_meta, get_text_a=gta, get_text_b=lambda: _at.fetch_text_sample(at_url)
+        our, at_meta, get_text_a=gta, get_text_b=lambda: sample
     ):
         return None  # тёзка/другая книга — не берём как «зеркало»
     at_cnt = at_meta.get("chapters") or _at.count_chapters(at_url)
@@ -226,7 +236,9 @@ def _check_searchfloor_source(our: dict) -> tuple[str, int] | None:
 _MIRROR_PROBES = (_check_at_source, _check_searchfloor_source)
 
 
-def _check_mirrors(our: dict) -> tuple[str, int] | None:
+def _check_mirrors(
+    our: dict, at_creds: tuple[str, str] | None = None
+) -> tuple[str, int] | None:
     """Опросить ВСЕ дешые зеркала и вернуть САМОЕ ПОЛНОЕ из ПРИГОДНЫХ.
 
     Пригодное = та же книга (same_book) И с неё реально можно скачать.
@@ -236,7 +248,11 @@ def _check_mirrors(our: dict) -> tuple[str, int] | None:
     cands: list[tuple[str, int]] = []
     for probe in _MIRROR_PROBES:
         try:
-            r = probe(our)
+            r = (
+                probe(our, at_creds)
+                if probe is _check_at_source
+                else probe(our)
+            )
         except Exception:  # noqa: BLE001 — одно лежачее зеркало не валит остальные
             r = None
         if r:
@@ -268,7 +284,7 @@ def _at_task(task: dict) -> tuple[str, int] | None:
     if not _mirror_eligible(task["host"], task["work_id"], task["title"]):
         return None
     try:
-        return _check_mirrors(task["our"])
+        return _check_mirrors(task["our"], task.get("at_creds"))
     except Exception:  # noqa: BLE001
         return None
 
@@ -472,6 +488,9 @@ def check_all(
 
     # --- ФАЗА 1: read-only сбор (число глав + альтернатива на AT) ---
     creds_cache: dict[str, tuple[str, str] | None] = {}
+    # Учётка AT нужна ЛЮБОЙ подписке, а не только AT-шной: без неё проба
+    # главы объявит непригодным любое 18+ зеркало.
+    at_creds = store.creds_for_host(session, "author.today")
     tasks = []
     for mon, _w in survivors:
         host = _host(mon.source_url).lower()
@@ -487,6 +506,7 @@ def check_all(
                 "title": _w.title if _w else "",
                 "author": (_w.author if _w else "") or "",
                 "our": _descriptor(_w),
+                "at_creds": at_creds,
                 "has_update": mon.has_update,
                 "last_seen": mon.last_seen_chapters,
             }
@@ -672,7 +692,9 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     at_info = None
     if _mirror_eligible(host, work_id, _w.title if _w else ""):
         try:
-            at_info = _check_mirrors(_descriptor(_w))
+            at_info = _check_mirrors(
+                _descriptor(_w), store.creds_for_host(session, "author.today")
+            )
         except Exception:
             pass
 

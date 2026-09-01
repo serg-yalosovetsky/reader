@@ -104,9 +104,12 @@ def test_dedup_falls_back_to_max_count_when_work_url_is_unknown(session: Session
 # --- Дефект 2: платная книга на AT предлагалась как «более полный источник» ---
 
 
-def _stub_at(monkeypatch, *, paid: bool, chapters: int = 78):
+def _stub_at(monkeypatch, *, paid: bool, chapters: int = 78, sample: str = "текст первой главы"):
     from backend.downloaders import authortoday as at
 
+    # Зеркало проверяется ДЕЙСТВИЕМ — пробой первой главы; пустой sample
+    # означает «текст не отдают» (18+ без входа, снятие с публикации и т.п.).
+    monkeypatch.setattr(at, "fetch_text_sample", lambda url, *a, **kw: sample)
     monkeypatch.setattr(at, "search_work", lambda t, a: AT_PAID)
     monkeypatch.setattr(
         at,
@@ -143,6 +146,36 @@ def test_free_at_page_is_still_a_mirror(monkeypatch):
     """Бесплатная на AT книга остаётся кандидатом (регрессия v3)."""
     _stub_at(monkeypatch, paid=False)
     assert monitor._check_at_source(OUR) == (AT_PAID, 78)
+
+
+def test_free_page_that_gives_no_text_is_not_a_mirror(monkeypatch):
+    """Страница говорит «бесплатно», а текст не отдают — это не зеркало.
+
+    Живой случай: work 46 и work 58 на author.today открываются кнопкой
+    «Читать книгу» (бесплатны), но при неработающем входе AT отвечает
+    `unadulted` на КАЖДУЮ главу. Признаки на странице говорят о ЦЕНЕ,
+    а не о ДОСТУПЕ — поэтому решает проба главы, а не разметка."""
+    _stub_at(monkeypatch, paid=False, chapters=78, sample="")
+    assert monitor._check_at_source(OUR) is None
+
+
+def test_mirror_probe_passes_at_credentials(monkeypatch):
+    """Учётка доезжает до пробы главы — иначе любая 18+ книга считалась бы
+    непригодной даже при рабочем входе."""
+    from backend.downloaders import authortoday as at
+
+    seen = {}
+
+    def _sample(url, *a, **kw):
+        seen["creds"] = kw.get("creds")
+        return "текст"
+
+    _stub_at(monkeypatch, paid=False, chapters=78)
+    monkeypatch.setattr(at, "fetch_text_sample", _sample)
+    monkeypatch.setattr(monitor, "_check_searchfloor_source", lambda our: None)
+
+    monitor._check_mirrors(OUR, ("user", "pass"))
+    assert seen["creds"] == ("user", "pass")
 
 
 # --- Запрос Сержа: искать ВСЕ источники и брать самый полный ---

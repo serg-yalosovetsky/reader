@@ -51,8 +51,10 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         try:
             res = authortoday.download(url, creds=creds)
         except PaidContentError as e:
-            # Целиком платная на AT — ищем полную книгу в бесплатных источниках.
-            return _fallback_free(e.title, e.author)
+            # Текст на AT недоступен (за деньги ЛИБО 18+ без входа) — ищем
+            # полную книгу в бесплатных источниках. Причину несём дальше: от неё
+            # зависит, что делать человеку, если зеркал тоже нет.
+            return _fallback_free(e.title, e.author, getattr(e, "reason", "paid"))
         # Частично-платная (пролог бесплатно, хвост за деньги): AT отдал только
         # доступные главы. Ищем более полную бесплатную версию на зеркалах и
         # берём вариант с бо́льшим объёмом текста.
@@ -93,11 +95,23 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         return webarticle.download(url)
 
 
-def _fallback_free(title: str, author: str) -> DownloadResult:
-    """Платная книга на AT → пробуем найти полную в бесплатных источниках."""
+def _fallback_free(title: str, author: str, reason: str = "paid") -> DownloadResult:
+    """Текст на AT недоступен → пробуем найти полную книгу на бесплатных зеркалах.
+
+    Если зеркал нет, ошибка обязана назвать НАСТОЯЩУЮ причину. Раньше оба
+    случая — «за деньги» и «18+ без входа» — печатались как «Книга платная», и
+    это уводило в сторону покупки книг, которые бесплатны (serg/tasks#319:
+    work 46 и work 58 — «Читать книгу» на сайте, но `unadulted` в каждой главе
+    при неработающем входе)."""
     r = _search_free(title, author) if title else None
     if r:
         return r
+    if reason == "adult":
+        raise DownloaderError(
+            f"На author.today книга помечена 18+ и без входа в аккаунт не отдаётся "
+            f"(проверьте учётку author.today), а в бесплатных источниках "
+            f"(searchfloor/readli) не найдена: «{title}»."
+        )
     raise DownloaderError(
         f"Книга платная на author.today, а в бесплатных источниках "
         f"(searchfloor/readli) не найдена: «{title}»."

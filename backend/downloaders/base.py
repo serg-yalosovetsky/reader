@@ -29,10 +29,32 @@ class UnsupportedURL(DownloaderError):
 
 
 class PaidContentError(DownloaderError):
-    """Книга платная/неполная на этом источнике — нужен фоллбэк на бесплатный.
-    Несёт title/author для поиска на других сайтах."""
+    """Текст на этом источнике недоступен — нужен фоллбэк на бесплатные зеркала.
+    Несёт title/author для поиска на других сайтах и ПРИЧИНУ недоступности.
 
-    def __init__(self, title: str = "", author: str = "", message: str = ""):
-        super().__init__(message or f"Платный контент: {title}")
+    reason:
+      "paid"  — текст за деньги (кнопка «Читать фрагмент» / глава Paid);
+      "adult" — возрастной гейт 18+ (ответ `unadulted`): книга может быть
+                бесплатной, но требует входа в аккаунт.
+
+    Разница не косметическая: «платно» чинится покупкой или зеркалом, а «18+» —
+    рабочим входом в author.today. Один текст на обе причины уводил диагностику
+    в сторону покупки книг, которые бесплатны (serg/tasks#319).
+    """
+
+    def __init__(
+        self,
+        title: str = "",
+        author: str = "",
+        message: str = "",
+        reason: str = "paid",
+    ):
+        default = (
+            f"Контент 18+, требуется вход: {title}"
+            if reason == "adult"
+            else f"Платный контент: {title}"
+        )
+        super().__init__(message or default)
         self.title = title
         self.author = author
+        self.reason = reason

@@ -433,7 +433,15 @@ export class Paginator extends HTMLElement {
         'max-inline-size', 'max-block-size', 'max-column-count',
     ]
     #root = this.attachShadow({ mode: 'closed' })
-    #observer = new ResizeObserver(() => this.render())
+    // ПАТЧ (не апстрим). Было: `new ResizeObserver(() => this.render())`.
+    // Android при входе и выходе из полноэкранного режима меняет высоту
+    // вьюпорта пачкой событий (адресная строка + анимация перехода), и каждое
+    // дёргало полную раскладку секции — переход занимал секунды. В «ленте»
+    // раскладка зависит только от ширины, поэтому изменение одной высоты
+    // пропускаем; остальные события схлопываем дебаунсом в один render.
+    #resizeTimer
+    #lastObservedWidth = -1
+    #observer = new ResizeObserver((entries) => this.#onContainerResize(entries))
     #top
     #background
     #container
@@ -777,6 +785,18 @@ export class Paginator extends HTMLElement {
         this.#footer.replaceChildren(...feet)
 
         return { height, width, margin, gap, columnWidth }
+    }
+    #onContainerResize(entries) {
+        const w = entries?.[0]?.contentRect?.width
+        const first = this.#lastObservedWidth < 0
+        const sameWidth = !first && typeof w === 'number'
+            && Math.abs(w - this.#lastObservedWidth) < 1
+        if (typeof w === 'number') this.#lastObservedWidth = w
+        // Первая раскладка — сразу, без задержки: её ждёт открытие книги.
+        if (first) { this.render(); return }
+        if (this.scrolled && sameWidth) return
+        clearTimeout(this.#resizeTimer)
+        this.#resizeTimer = setTimeout(() => this.render(), 80)
     }
     render() {
         if (!this.#view) return

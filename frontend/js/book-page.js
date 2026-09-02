@@ -98,7 +98,10 @@ export function bookPageMeta(w) {
   const facts = []
   if (w.chapters_count) facts.push(`${w.chapters_count} гл.`)
   if (w.words) facts.push(`${fmtNum(w.words)} сл.`)
-  const upd = fmtDate(w.updated_at)
+  // «Обновлено» — про НОВЫЕ ГЛАВЫ, а не про наше чтение. updated_at двигает
+  // любое сохранение прогресса (PUT /api/progress), и на странице книги это
+  // читалось как «вчера вышли главы», хотя вчера её просто открывали.
+  const upd = fmtDate(w.content_updated_at || w.updated_at)
   if (upd) facts.push(`обновлено ${upd}`)
   return { chipsHtml: chips, badgesHtml: badges.join(''), factsText: facts.join(' · ') }
 }

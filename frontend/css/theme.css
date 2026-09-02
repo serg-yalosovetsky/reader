@@ -98,7 +98,13 @@ body.reader-open { height: 100%; overflow: hidden; }
 }
 .lib-empty { text-align: center; color: var(--fg-dim); margin-top: 18vh; }
 
-.book-card { cursor: pointer; display: flex; flex-direction: column; gap: 8px; }
+/* Карточка тянется на всю высоту ячейки грида, мета занимает остаток, полоса
+   прижата книзу — иначе она «плавала» по ряду: у части книг есть строка серии,
+   у части нет, и линия прогресса вставала на разной высоте. */
+.book-card { cursor: pointer; display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.book-card .book-cover { flex: 0 0 auto; }
+.book-card .book-meta { flex: 1 1 auto; }
+.book-card .book-progress { margin-top: auto; }
 .book-cover {
   aspect-ratio: 2 / 3; border-radius: var(--radius);
   background: linear-gradient(135deg, var(--bg-soft), var(--card));

@@ -332,13 +332,24 @@ function showHover(card, base) {
 }
 
 
+// Дочитана ли книга. Плоский порог 0.98 годился для коротких книг и врал на
+// длинных: у фанфика в 197 глав это ещё две непрочитанные главы, а карточка уже
+// рисовала 100% и зелёную галочку. Поэтому меряем не долей, а тем, сколько
+// осталось: меньше одной главы — дочитано. Для книг без счётчика глав остаётся
+// прежний порог.
+function isFinished(ratio, chaptersCount) {
+  const chapters = Number(chaptersCount) || 0
+  if (chapters >= 1) return (1 - (ratio || 0)) * chapters < 1
+  return (ratio || 0) >= 0.98
+}
+
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
-  const readState = ratio >= 0.98 ? 'read' : ratio > 0 ? 'partial' : 'unread'
+  const readState = isFinished(ratio, w.chapters_count) ? 'read' : ratio > 0 ? 'partial' : 'unread'
   // Дочитано (read) — полоса всегда 100%. foliate почти никогда не даёт ровно
-  // 1.0 на последней странице (типично 0.9999…/0.98), поэтому «дочитано» —
-  // это порог readState (>=0.98), а не строгое ratio>=1, иначе дочитанная книга
-  // застревала на визуальном максимуме недочитанной (93%).
+  // 1.0 на последней странице (типично 0.9999…), поэтому «дочитано» — это не
+  // строгое ratio>=1, иначе дочитанная книга застревала на визуальном максимуме
+  // недочитанной. Насколько «почти» — считает isFinished по объёму книги.
   const done = readState === 'read'
   // Плашку «обновление» не показываем на дочитанной книге: ficbook-лента метит
   // has_update при любой активности автора (не только новые главы), и дочитанная
@@ -376,7 +387,7 @@ function bookCard(w, ratio, hasUpdate) {
       <div class="b-author${w.author ? ' b-link' : ''}" data-flt="author">${escapeHtml(w.author || '')}</div>
       ${w.series ? `<div class="b-series b-link" data-flt="series" title="Показать всю серию">📚 ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>` : ''}
     </div>
-    <div class="book-progress"><i style="width:${done ? 100 : (ratio > 0 ? Math.min(pct, 93) : 0)}%"></i></div>`
+    <div class="book-progress"><i style="width:${done ? 100 : (ratio > 0 ? Math.min(pct, 99) : 0)}%"></i></div>`
   // Доступность: карточка — это кнопка «открыть книгу». Делаем её достижимой с
   // клавиатуры (Tab) и активируемой Enter/Space (focus-visible уже стилизован).
   card.tabIndex = 0

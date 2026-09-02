@@ -53,6 +53,7 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     _migrate_add_columns()
+    _backfill_content_updated_at()
 
 
 def _migrate_add_columns() -> None:
@@ -88,6 +89,43 @@ def _migrate_add_columns() -> None:
                         f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}{default}'
                     )
                 )
+
+
+def _backfill_content_updated_at() -> None:
+    """Заполнить content_updated_at там, где его ещё нет.
+
+    Поле появилось позже книг, поэтому у старых записей оно пустое. Честный
+    источник даты изменения содержимого — mtime самого файла книги: его пишет
+    та же докачка. Где файла нет — берём created_at, чтобы карточка не осталась
+    вовсе без даты. Разово: следующий старт уже никого не найдёт.
+    """
+    from pathlib import Path
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                'SELECT id, file_path, created_at FROM work '
+                "WHERE content_updated_at IS NULL"
+            )
+        ).fetchall()
+        for work_id, file_path, created_at in rows:
+            stamp = None
+            try:
+                if file_path:
+                    p = Path(file_path)
+                    if p.exists():
+                        stamp = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+            except OSError:
+                stamp = None
+            stamp = stamp or created_at
+            if stamp is None:
+                continue
+            conn.execute(
+                text("UPDATE work SET content_updated_at = :ts WHERE id = :id"),
+                {"ts": stamp, "id": work_id},
+            )
 
 
 def get_session() -> Iterator[Session]:

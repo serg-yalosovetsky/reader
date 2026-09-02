@@ -178,6 +178,7 @@ _LIST_COLUMNS = (
     Work.series,
     Work.series_index,
     Work.updated_at,
+    Work.content_updated_at,  # «обновлено» для карточки — про главы, не про чтение
     Work.cover_path,  # только ради cover_v ниже, наружу не отдаётся
 )
 
@@ -210,6 +211,7 @@ def list_works(session: Session = Depends(get_session)) -> list[dict]:
                 "series": r.series,
                 "series_index": r.series_index,
                 "updated_at": r.updated_at,
+                "content_updated_at": r.content_updated_at,
                 "cover_v": cover_v,
             }
         )
@@ -361,8 +363,11 @@ def _completeness(work: Work, session: Session) -> dict:
             )
         except Exception:  # noqa: BLE001
             have = 0
-        if have:
+        if have and have != (work.chapters_count or 0):
+            # Пересчёт по файлу разошёлся с сохранённым — значит контент менялся
+            # мимо обычного пути (ручная замена файла, сбой при докачке).
             work.chapters_count = have
+            work.content_updated_at = utcnow()
             session.add(work)
             session.commit()
 

@@ -60,7 +60,18 @@ class Work(SQLModel, table=True):
     converted_status: str = ""
     converted_error: str = ""  # последняя ошибка конвертации (видна в UI)
     created_at: datetime = Field(default_factory=utcnow)
+    # ВНИМАНИЕ: updated_at — «последняя активность», его двигает и сохранение
+    # прогресса чтения (см. PUT /api/progress). Как «дата выхода новых глав»
+    # он НЕ годится: страница книги показывала им дату собственного чтения.
     updated_at: datetime = Field(default_factory=utcnow)
+    # Когда менялось СОДЕРЖИМОЕ: докачаны главы, заменён файл. Это и есть
+    # «обновлено» для человека. Значение по умолчанию ставится здесь, а не в
+    # пяти местах создания Work (upload, calibre, drive, docker-загрузка,
+    # регистрация): раскладывать его руками — тот же способ однажды забыть
+    # строку. Обновляют дату только настоящие смены контента (_apply_file и
+    # пересчёт глав по файлу). None остаётся у записей, созданных до появления
+    # поля, — их заполняет бэкфилл по mtime файла (см. db/session.py).
+    content_updated_at: Optional[datetime] = Field(default_factory=utcnow)
 
 
 class Progress(SQLModel, table=True):
@@ -78,6 +89,11 @@ class Progress(SQLModel, table=True):
     text_anchor: str = ""
     # Время последнего чтения (для last-write-wins при sync с ReadEra).
     last_read_time: datetime = Field(default_factory=utcnow)
+    # Сколько глав было в книге, когда эту позицию сохранили. Нужен, чтобы
+    # понять, что книга с тех пор выросла: доля 0.99 от 190 глав — это уже не
+    # 0.99 от 197, и «дочитано» становится враньём. 0 — старая запись, до
+    # появления поля.
+    chapters_at_read: int = 0
     # Откуда пришло обновление: web | readera
     source: str = "web"
 

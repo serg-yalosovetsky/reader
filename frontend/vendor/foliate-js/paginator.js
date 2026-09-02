@@ -794,8 +794,16 @@ export class Paginator extends HTMLElement {
         if (typeof w === 'number') this.#lastObservedWidth = w
         // Первая раскладка — сразу, без задержки: её ждёт открытие книги.
         if (first) { this.render(); return }
-        if (this.scrolled && sameWidth) return
         clearTimeout(this.#resizeTimer)
+        if (this.scrolled && sameWidth) {
+            // Раскладка от высоты не зависит, но вернуть взгляд на прежнее
+            // место надо: у конца книги меньшая область подрезает scrollTop, и
+            // после выхода из полноэкранного режима текст уезжал вверх.
+            // Якорь — видимый range, его держит #afterScroll, так что это
+            // прокрутка на место, а не переверстка.
+            this.#resizeTimer = setTimeout(() => this.#scrollToAnchor(this.#anchor), 80)
+            return
+        }
         this.#resizeTimer = setTimeout(() => this.render(), 80)
     }
     render() {

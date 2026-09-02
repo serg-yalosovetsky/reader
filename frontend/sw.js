@@ -13,16 +13,17 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v4'
+const SHELL_CACHE = 'reader-shell-v5'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
 const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE])
 
-// Минимум для первого офлайн-старта. Остальное осядет в кэш по мере обхода.
-// Минимум для первого офлайн-старта — теперь весь граф модулей, а не только
-// app.js: он их импортирует, и без сети недостающий модуль ронял загрузку
-// оболочки целиком (белый экран вместо библиотеки).
-const PRECACHE = [
+// Запасной список на случай, если /api/shell-assets недоступен при установке.
+// Основной список отдаёт сервер обходом каталога (см. FALLBACK ниже и
+// collectAssets): руками этот перечень уже разъезжался — новый модуль
+// появлялся, строку сюда дописать забывали, и без сети недостающий импорт
+// ронял загрузку оболочки целиком.
+const FALLBACK_PRECACHE = [
   '/', '/index.html', '/css/theme.css',
   '/favicon.svg', '/manifest.webmanifest',
   '/js/app.js', '/js/library.js', '/js/reader-core.js', '/js/book-page.js',
@@ -34,12 +35,30 @@ const PRECACHE = [
   '/js/core/locator.js', '/js/core/convert.js', '/js/core/inline-images.js',
 ]
 
+// Что класть в офлайн-кэш оболочки. Сервер считает список сам (все .js, стили,
+// иконки, манифест) — включая vendor/foliate-js, без которого `js/app.js` не
+// выполняется вовсе: он импортирует `vendor/foliate-js/view.js` первой строкой,
+// и офлайн-старт падал ещё до библиотеки.
+async function collectAssets() {
+  try {
+    const resp = await fetch('/api/shell-assets', { cache: 'no-store' })
+    if (resp.ok) {
+      const data = await resp.json()
+      if (Array.isArray(data?.assets) && data.assets.length) return data.assets
+    }
+  } catch { /* нет сети или старый бэкенд — берём запасной список */ }
+  return FALLBACK_PRECACHE
+}
+
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     try {
       const c = await caches.open(SHELL_CACHE)
-      await c.addAll(PRECACHE)
-    } catch { /* один недоступный ресурс не должен валить установку */ }
+      const assets = await collectAssets()
+      // Поштучно, а не addAll: тот атомарен — один 404 оставлял кэш ПУСТЫМ,
+      // и офлайн-старта не было вообще, хотя установка «прошла».
+      await Promise.allSettled(assets.map((u) => c.add(u)))
+    } catch { /* установку не валим: оболочка доберёт своё сетевым путём */ }
     self.skipWaiting()
   })())
 })

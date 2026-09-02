@@ -440,7 +440,10 @@ export class Paginator extends HTMLElement {
     // раскладка зависит только от ширины, поэтому изменение одной высоты
     // пропускаем; остальные события схлопываем дебаунсом в один render.
     #resizeTimer
-    #lastObservedWidth = -1
+    // Ширина, при которой раскладывали в последний раз. Сравнивать с шириной
+    // предыдущего СОБЫТИЯ нельзя: восемь шагов по 0.5 px — каждый раз «та же
+    // ширина», ни одной перерисовки, а суммарно уехали на 4 px.
+    #lastRenderedWidth = -1
     #observer = new ResizeObserver((entries) => this.#onContainerResize(entries))
     #top
     #background
@@ -788,14 +791,19 @@ export class Paginator extends HTMLElement {
     }
     #onContainerResize(entries) {
         const w = entries?.[0]?.contentRect?.width
-        const first = this.#lastObservedWidth < 0
-        const sameWidth = !first && typeof w === 'number'
-            && Math.abs(w - this.#lastObservedWidth) < 1
-        if (typeof w === 'number') this.#lastObservedWidth = w
         // Первая раскладка — сразу, без задержки: её ждёт открытие книги.
-        if (first) { this.render(); return }
+        if (this.#lastRenderedWidth < 0) {
+            if (typeof w === 'number') this.#lastRenderedWidth = w
+            this.render()
+            return
+        }
+        const sameWidth = typeof w === 'number'
+            && Math.abs(w - this.#lastRenderedWidth) < 1
         clearTimeout(this.#resizeTimer)
-        if (this.scrolled && sameWidth) {
+        // Пропускаем раскладку только там, где она от высоты не зависит:
+        // горизонтальная «лента» (одна колонка во всю ширину). При вертикальном
+        // письме прокрутка идёт вбок, и раскладку задаёт как раз высота.
+        if (this.scrolled && !this.#vertical && sameWidth) {
             // Раскладка от высоты не зависит, но вернуть взгляд на прежнее
             // место надо: у конца книги меньшая область подрезает scrollTop, и
             // после выхода из полноэкранного режима текст уезжал вверх.
@@ -804,7 +812,10 @@ export class Paginator extends HTMLElement {
             this.#resizeTimer = setTimeout(() => this.#scrollToAnchor(this.#anchor), 80)
             return
         }
-        this.#resizeTimer = setTimeout(() => this.render(), 80)
+        this.#resizeTimer = setTimeout(() => {
+            if (typeof w === 'number') this.#lastRenderedWidth = w
+            this.render()
+        }, 80)
     }
     render() {
         if (!this.#view) return

@@ -215,7 +215,8 @@ foliate-view { width: 100%; height: 100%; display: block; }
    риски глав поверх него и подсказка над пальцем. */
 .progress-wrap {
   flex: 1; position: relative; min-width: 0;
-  padding: 14px 9px; margin: 0; cursor: pointer;
+  /* 4px трек + 2×20px = тач-цель 44px по высоте (WCAG 2.5.5) */
+  padding: 20px 9px; margin: 0; cursor: pointer;
   /* все касания разбирает скрипт: браузерный скролл здесь не нужен, а
      «свайп вместо перемотки» отсеивается по смещению пальца */
   touch-action: none; -webkit-tap-highlight-color: transparent;
@@ -242,6 +243,8 @@ foliate-view { width: 100%; height: 100%; display: block; }
   background: var(--accent); box-shadow: 0 0 0 2px var(--bg);
   transition: width .15s ease, height .15s ease, margin-left .15s ease;
 }
+/* Идёт отсчёт удержания: трек темнеет — видно, что касание принято. */
+.progress-wrap.pending .progress-track { background: color-mix(in srgb, var(--fg) 30%, transparent); }
 /* Шкала проснулась после удержания: трек толще, ползунок крупнее. */
 .progress-wrap.armed .progress-track { height: 6px; }
 .progress-wrap.armed .progress-thumb { width: 20px; height: 20px; margin-left: -10px; }

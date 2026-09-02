@@ -69,7 +69,10 @@ function showBubble(f) {
   const half = b.offsetWidth / 2
   const x = r.left + clamp01(f) * r.width
   b.style.left = Math.min(window.innerWidth - half - 6, Math.max(half + 6, x)) + 'px'
-  b.style.bottom = Math.round(window.innerHeight - r.top + 10) + 'px'
+  // Вертикально тоже держим в экране: в альбомной ориентации панель близко к
+  // верху, и трёхстрочная подсказка иначе уезжает за кромку.
+  const bottom = window.innerHeight - r.top + 10
+  b.style.bottom = Math.round(Math.min(bottom, window.innerHeight - b.offsetHeight - 6)) + 'px'
 }
 function hideBubble() { const b = $('#progress-bubble'); if (b) b.hidden = true }
 
@@ -120,9 +123,16 @@ export function buildChapterMarks() {
   marks.sort((a, b) => a.fraction - b.fraction)
 
   if (!ticks) return
+  // Риски ближе 6 px друг к другу сливаются в сплошную серую полосу и перестают
+  // быть ориентирами — у длинных книг глав больше, чем пикселей на треке.
+  const trackW = $('#progress-track')?.getBoundingClientRect().width || 0
+  const minGap = trackW > 0 ? 6 / trackW : 0.02
   const frag = document.createDocumentFragment()
+  let lastDrawn = -1
   for (const m of marks) {
     if (m.fraction <= 0.001 || m.fraction >= 0.999) continue
+    if (lastDrawn >= 0 && m.fraction - lastDrawn < minGap) continue
+    lastDrawn = m.fraction
     const i = document.createElement('i')
     i.style.left = (m.fraction * 100) + '%'
     i.title = m.label
@@ -141,6 +151,7 @@ function fracFromX(clientX) {
 function arm(f) {
   armed = true
   dragFrac = f
+  $('#progress-wrap').classList.remove('pending')
   $('#progress-wrap').classList.add('armed')
   try { navigator.vibrate?.(12) } catch { /* вибро есть не везде */ }
   paint(f)
@@ -150,6 +161,7 @@ function arm(f) {
 function cancelHold() {
   clearTimeout(holdTimer); holdTimer = null
   activeId = null
+  $('#progress-wrap')?.classList.remove('pending')
   if (armed) {
     armed = false
     $('#progress-wrap').classList.remove('armed')
@@ -165,6 +177,9 @@ function onDown(e) {
   try { $('#progress-wrap').setPointerCapture(e.pointerId) } catch { /* ignore */ }
   // Мышью системного жеста нет — там ждать удержания незачем.
   if (e.pointerType === 'mouse') { arm(fracFromX(e.clientX)); return }
+  // Пока идёт отсчёт удержания — видимый отклик, иначе первые 320 мс шкала
+  // выглядит мёртвой и непонятно, что её вообще надо держать.
+  $('#progress-wrap').classList.add('pending')
   holdTimer = setTimeout(() => { holdTimer = null; arm(fracFromX(startX)) }, HOLD_MS)
 }
 

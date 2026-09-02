@@ -186,7 +186,18 @@
     <div id="reader-bottom" class="reader-bar reader-bottom">
       <span id="chapter-label" class="chapter-label"></span>
       <button id="prev-btn" class="icon-btn" title="Назад">‹</button>
-      <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" />
+      <!-- Шкала: перематывает только по зажатию (см. js/progress-bar.js).
+           Скрытый input остаётся хранилищем доли для закладок/подсветок. -->
+      <div id="progress-wrap" class="progress-wrap" role="slider" tabindex="0"
+           aria-label="Прогресс чтения" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-track" class="progress-track">
+          <div id="progress-fill" class="progress-fill"></div>
+          <div id="chapter-ticks" class="chapter-ticks"></div>
+          <div id="progress-thumb" class="progress-thumb"></div>
+        </div>
+        <div id="progress-bubble" class="progress-bubble" hidden></div>
+      </div>
+      <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" hidden />
       <span id="progress-label" class="progress-label">0%</span>
       <button id="next-btn" class="icon-btn" title="Вперёд">›</button>
     </div>

@@ -9,6 +9,7 @@ import { loadLibrary } from './library.js'
 import { openReader, applyViewStyles } from './reader-core.js'
 import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
+import { initProgressBar } from './progress-bar.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
@@ -67,7 +68,10 @@ function goPrev() { view?.prev(pageStep()) }
 
 $('#prev-btn').addEventListener('click', goPrev)
 $('#next-btn').addEventListener('click', goNext)
-$('#progress-slider').addEventListener('input', (e) => view?.goToFraction(parseFloat(e.target.value)))
+// Шкала прогресса: перемотка только по зажатию + метки глав (js/progress-bar.js).
+// Раньше здесь висел 'input' нативного range — он срабатывал от первого же
+// касания, и системный свайп «снизу вверх» уносил позицию чтения.
+initProgressBar()
 
 // Зоны клика по краям — перелистывание.
 $('#tap-prev').addEventListener('click', goPrev)

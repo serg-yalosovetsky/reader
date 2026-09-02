@@ -11,6 +11,7 @@ import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
 import { cachedBook } from './core/offline.js'
+import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 
 // ===================== ЧИТАЛКА =====================
@@ -83,6 +84,7 @@ export async function openReader(work, opts = {}) {
   view.addEventListener('draw-annotation', onDrawAnnotation)
   applyViewStyles()
   buildTOC()
+  buildChapterMarks()
 
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
@@ -101,9 +103,8 @@ function onRelocate(e) {
   // Текстовый якорь верха экрана — основа устойчивого восстановления позиции.
   const anchor = captureAnchor(range)
   if (anchor) setLastAnchor(anchor)
-  const pct = Math.round((fraction || 0) * 100)
-  $('#progress-slider').value = fraction || 0
-  $('#progress-label').textContent = pct + '%'
+  // Шкала (доля, «страница», текущая глава) — в progress-bar.js.
+  updateProgress(e.detail)
   // Название текущей главы (из оглавления книги) — в нижней панели у прогресса.
   const chapEl = $('#chapter-label')
   if (chapEl) chapEl.textContent = tocItem?.label ? tocItem.label.trim() : ''

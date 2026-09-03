@@ -268,7 +268,9 @@ async def translate(req: TranslateReq) -> dict:
             async def run(batch: list[tuple[str, str]]) -> None:
                 async with sem:
                     outs = await _translate_batch(client, [t for _, t in batch], target)
-                    for (k, _), out in zip(batch, outs):
+                    # strict: рассинхрон длин здесь означал бы сдвиг перевода
+                    # относительно абзацев — падать лучше, чем молча усечь.
+                    for (k, _), out in zip(batch, outs, strict=True):
                         fresh[k] = out
 
             results = await asyncio.gather(

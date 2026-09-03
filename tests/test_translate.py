@@ -278,32 +278,50 @@ def test_overlong_paragraph_passes_through(client, gw):
 
 
 # --------------------------------------------------------- гонка записи кэша
-def test_cache_put_survives_concurrent_insert(client):
+def test_cache_put_survives_concurrent_insert(client, monkeypatch):
     """Два экрана, переведённые одновременно, попадают на общий абзац.
 
     Проверка «нет ли такого ключа» перед вставкой от этого не спасает: между
-    SELECT и INSERT успевает вставить сосед. Раньше это роняло запрос уже ПОСЛЕ
-    оплаченного инференса, а вместе с трейсом текст книги уезжал в трекер
-    ошибок. Воспроизводим ровно этот порядок: строка появляется в БД между
-    вычислением и записью.
+    SELECT и INSERT успевает вставить сосед, и UNIQUE роняет запрос уже ПОСЛЕ
+    оплаченного инференса — а вместе с трейсом текст книги уезжает в трекер
+    ошибок.
+
+    Гонку воспроизводим детерминированно, а не потоками: сосед вставляет строку
+    РОВНО в промежутке между чтением и записью. Вставить её заранее
+    недостаточно — такую строку прежний код видел своим же SELECT и спокойно
+    пропускал, поэтому тест «до фикса» проходил и ничего не доказывал.
     """
     from backend.app.db.session import engine as db_engine
     from sqlmodel import Session as DbSession
 
     key = "other:ru:" + "c" * 64
-    # Сосед успел записать первым.
-    with DbSession(db_engine) as s:
-        s.add(tr.Translation(key=key, text="перевод соседа"))
-        s.commit()
+    state = {"raced": False}
 
-    # Наша запись тем же ключом не должна ни падать, ни плодить дубли.
+    class RacingSession(DbSession):
+        """Настоящая сессия, но первый же SELECT будит «соседа»."""
+
+        def exec(self, stmt, *a, **kw):
+            result = super().exec(stmt, *a, **kw)
+            if not state["raced"]:
+                state["raced"] = True
+                with DbSession(db_engine) as other:
+                    other.add(tr.Translation(key=key, text="перевод соседа"))
+                    other.commit()
+            return result
+
+    monkeypatch.setattr(tr, "Session", RacingSession)
+    # Не должно бросить: конфликт разрешает СУБД, а не проверка перед вставкой.
     tr._cache_put([(key, "наш перевод"), ("other:ru:" + "d" * 64, "другой абзац")])
 
     with DbSession(db_engine) as s:
         rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
     assert len(rows) == 1, f"дубль в кэше: {len(rows)} строк"
-    # Побеждает тот, кто записал первым — перевод одного абзаца всё равно один.
-    assert rows[0].text == "перевод соседа"
+    # Второй абзац батча записан — падение на одном ключе не теряет остальные.
+    with DbSession(db_engine) as s:
+        other_rows = s.exec(
+            select(tr.Translation).where(tr.Translation.key == "other:ru:" + "d" * 64)
+        ).all()
+    assert len(other_rows) == 1
 
 
 def test_cache_put_handles_duplicate_within_one_batch(client):

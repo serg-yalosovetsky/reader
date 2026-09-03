@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import scheduler
 from .config import FRONTEND_DIR
 from .db.session import init_db
-from .routers import article, accounts, bookmarks, calibre, convert, highlights, ingest, library, progress, reader, readera, tts
+from .routers import article, accounts, bookmarks, calibre, convert, highlights, ingest, library, progress, reader, readera, translate, tts
 
 
 def _setup_logging() -> None:
@@ -72,6 +72,7 @@ app.include_router(readera.router)
 app.include_router(accounts.router)
 app.include_router(tts.router)
 app.include_router(article.router)
+app.include_router(translate.router)
 
 
 @app.get("/api/health")

@@ -13,6 +13,7 @@ import { attachKeysToDoc, closePanels } from './navigation.js'
 import { cachedBook } from './core/offline.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
+import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 
 // ===================== ЧИТАЛКА =====================
@@ -28,6 +29,7 @@ export async function openReader(work, opts = {}) {
   // Заголовок сверху: по умолчанию — название главы (ставится первым
   // relocate), по тапу переключается на книгу и автора.
   setBookMeta(work)
+  resetTranslate()
   const updBtn = $('#update-btn')
   updBtn.hidden = !libMonitored.has(work.id)
   updBtn.dataset.state = ''
@@ -112,6 +114,8 @@ function onRelocate(e) {
   updateProgress(e.detail)
   // Название текущей главы — в заголовке сверху (внизу больше не дублируется).
   setChapterTitle(tocItem?.label || '')
+  // Долистали до непереведённых абзацев — подтянуть их (дебаунс внутри).
+  onTranslateRelocate()
   // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {

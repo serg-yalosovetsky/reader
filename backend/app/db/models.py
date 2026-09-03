@@ -181,3 +181,20 @@ class Highlight(SQLModel, table=True):
     # Цвет подсветки (yellow|green|blue|pink…).
     color: str = "yellow"
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Translation(SQLModel, table=True):
+    """Кэш перевода одного абзаца.
+
+    Ключ — по СОДЕРЖИМОМУ абзаца (sha256) плюс пара языков, а не по книге и
+    позиции: возврат назад, перечитывание и повторяющиеся абзацы (в том числе в
+    разных книгах) тогда обслуживаются без сети. Привязка к work_id, наоборот,
+    заставляла бы переводить заново после каждой докачки новых глав, потому что
+    позиции в книге сдвигаются.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # "<src>:<dst>:<sha256 текста>"
+    key: str = Field(index=True, unique=True)
+    text: str = ""
+    created_at: datetime = Field(default_factory=utcnow)

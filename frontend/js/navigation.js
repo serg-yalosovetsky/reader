@@ -12,6 +12,7 @@ import { onSelectionChanged, hideSelPopup } from './highlights.js'
 import { initProgressBar } from './progress-bar.js'
 import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
          setMoreBadge } from './chrome.js'
+import { initTranslate, onTranslateDocLoaded } from './translate.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
@@ -75,6 +76,7 @@ $('#next-btn').addEventListener('click', goNext)
 // касания, и системный свайп «снизу вверх» уносил позицию чтения.
 initProgressBar()
 initChrome()
+initTranslate()
 
 // Зоны клика по краям — перелистывание.
 $('#tap-prev').addEventListener('click', goPrev)
@@ -139,6 +141,7 @@ export function attachKeysToDoc(e) {
     // Двойной тап по центру → полный экран (см. js/chrome.js: намерение
     // отличается от выделения слова по getSelection() после жеста).
     attachDoubleTapFullscreen(e.detail.doc)
+    onTranslateDocLoaded(e.detail.doc)
 
     let _sx = 0, _sy = 0, _st = 0, _lastTY = null
     e.detail.doc.addEventListener('touchstart', (ev) => {

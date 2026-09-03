@@ -28,7 +28,7 @@ const FALLBACK_PRECACHE = [
   '/favicon.svg', '/manifest.webmanifest',
   '/js/app.js', '/js/library.js', '/js/reader-core.js', '/js/book-page.js',
   '/js/navigation.js', '/js/bookmarks.js', '/js/highlights.js', '/js/search.js',
-  '/js/progress-bar.js', '/js/chrome.js',
+  '/js/progress-bar.js', '/js/chrome.js', '/js/translate.js',
   '/js/settings.js', '/js/tts.js', '/js/accounts.js',
   '/js/core/api.js', '/js/core/dom.js', '/js/core/state.js', '/js/core/prefs.js',
   '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',

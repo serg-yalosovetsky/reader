@@ -91,7 +91,9 @@ def test_translate_keeps_one_to_one(client, gw):
 
 
 def test_translate_uses_cache_on_second_call(client, gw):
-    items = [{"id": "0", "text": "The rain had not stopped."}]
+    # Строка уникальна для этого теста: кэш переводов живёт в общей на прогон
+    # БД, и текст из соседнего теста пришёл бы уже из кэша.
+    items = [{"id": "0", "text": "A cache probe line, unique to this test."}]
     first = client.post("/api/translate", json={"items": items}).json()
     assert first["translated"] == 1 and first["cached"] == 0
     calls_after_first = len(gw)

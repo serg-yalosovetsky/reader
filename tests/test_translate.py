@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.app.routers import translate as tr
@@ -306,7 +307,13 @@ def test_cache_put_survives_concurrent_insert(client, monkeypatch):
                 state["raced"] = True
                 with DbSession(db_engine) as other:
                     other.add(tr.Translation(key=key, text="перевод соседа"))
-                    other.commit()
+                    try:
+                        other.commit()
+                    except IntegrityError:
+                        # Код без SELECT перед вставкой успевает записать первым —
+                        # тогда «соседом» оказываемся мы. Это ровно тот случай,
+                        # который и должна гасить СУБД, а не ронять запрос.
+                        other.rollback()
             return result
 
     monkeypatch.setattr(tr, "Session", RacingSession)

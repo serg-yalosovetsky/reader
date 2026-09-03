@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlmodel import select
 
 from backend.app.routers import translate as tr
 
@@ -203,7 +204,10 @@ def test_prompt_payload_shape(monkeypatch):
     assert json.loads(v["items"]) == ["one", "two"]
     assert v["count"] == "2"
     assert v["target_lang"] == "ru"
-    assert captured["json"]["privacy_class"] == "public"
+    # Класс приватности в теле запроса НЕ шлём: он задаётся в шлюзе (дефолт
+    # проекта + метадата промпта), и прибитое здесь значение перебивало бы обе
+    # настройки — смена приватности в шлюзе стала бы бесполезной.
+    assert "privacy_class" not in captured["json"]
 
 
 # ----------------------------------------------------- лимиты и белый список
@@ -271,3 +275,76 @@ def test_overlong_paragraph_passes_through(client, gw):
     assert data["items"][1]["changed"] is True
     # Длинный абзац в движок не отправлялся.
     assert all(long_one not in t for batch in gw for t in batch)
+
+
+# --------------------------------------------------------- гонка записи кэша
+def test_cache_put_survives_concurrent_insert(client):
+    """Два экрана, переведённые одновременно, попадают на общий абзац.
+
+    Проверка «нет ли такого ключа» перед вставкой от этого не спасает: между
+    SELECT и INSERT успевает вставить сосед. Раньше это роняло запрос уже ПОСЛЕ
+    оплаченного инференса, а вместе с трейсом текст книги уезжал в трекер
+    ошибок. Воспроизводим ровно этот порядок: строка появляется в БД между
+    вычислением и записью.
+    """
+    from backend.app.db.session import engine as db_engine
+    from sqlmodel import Session as DbSession
+
+    key = "other:ru:" + "c" * 64
+    # Сосед успел записать первым.
+    with DbSession(db_engine) as s:
+        s.add(tr.Translation(key=key, text="перевод соседа"))
+        s.commit()
+
+    # Наша запись тем же ключом не должна ни падать, ни плодить дубли.
+    tr._cache_put([(key, "наш перевод"), ("other:ru:" + "d" * 64, "другой абзац")])
+
+    with DbSession(db_engine) as s:
+        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+    assert len(rows) == 1, f"дубль в кэше: {len(rows)} строк"
+    # Побеждает тот, кто записал первым — перевод одного абзаца всё равно один.
+    assert rows[0].text == "перевод соседа"
+
+
+def test_cache_put_handles_duplicate_within_one_batch(client):
+    """Один и тот же абзац дважды в одном экране (повтор реплики) не должен
+    ронять запись всего батча."""
+    from backend.app.db.session import engine as db_engine
+    from sqlmodel import Session as DbSession
+
+    key = "other:ru:" + "e" * 64
+    tr._cache_put([(key, "первый"), (key, "второй")])
+    with DbSession(db_engine) as s:
+        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+    assert len(rows) == 1
+
+
+def test_gateway_error_text_not_reflected(client, monkeypatch):
+    """Ответ чужого сервиса наружу не отражаем: он может нести и внутренние
+    детали шлюза, и эхо нашего запроса."""
+    monkeypatch.setattr(tr, "GATEWAY_TOKEN", "test-token")
+
+    class FakeResp:
+        status_code = 429
+        text = "rate limit for key sk-SECRET-LEAK exceeded; upstream=cerebras"
+
+        @staticmethod
+        def json():
+            return {}
+
+    class FakeClient:
+        async def post(self, url, json=None, headers=None, timeout=None):  # noqa: A002, RUF029
+            return FakeResp()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(tr.httpx, "AsyncClient", lambda *a, **k: FakeClient())
+    r = client.post("/api/translate", json={"items": [{"id": "0", "text": "English line here."}]})
+    assert r.status_code == 502
+    body = r.text
+    assert "sk-SECRET-LEAK" not in body
+    assert "cerebras" not in body

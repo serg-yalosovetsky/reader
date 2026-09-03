@@ -30,6 +30,8 @@ function resolveMode(want) {
 }
 
 const MODE_NAMES = { chapter: 'Глава', book: 'Книга', author: 'Автор' }
+// Винительный падеж для «Показать …»: из именительного он не собирается.
+const MODE_ACC = { chapter: 'главу', book: 'книгу', author: 'автора' }
 
 function renderTitle() {
   const el = $('#reader-title')
@@ -45,7 +47,7 @@ function renderTitle() {
   // зрячего остаётся невидимой кнопкой.
   el.setAttribute(
     'aria-label',
-    `${MODE_NAMES[m]}: ${meta[m] || '—'}. Показать ${MODE_NAMES[next].toLowerCase()}`,
+    `${MODE_NAMES[m]}: ${meta[m] || '—'}. Показать ${MODE_ACC[next]}`,
   )
 }
 

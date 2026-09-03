@@ -566,11 +566,18 @@ body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
      (глава/книга/автор), а место под него освободили редкие действия,
      ушедшие в меню «Ещё». */
   /* Зазор между соседними кнопками: без него пять целей идут вплотную и
-     промах по краю одной попадает в другую. По высоте он ничего не стоит. */
+     промах по краю одной попадает в другую. По высоте он бесплатен, но по
+     ширине конкурирует с заголовком — поэтому узкие экраны получают минимум,
+     а на 400px+ зазор нормальный. */
   .reader-top-actions { gap: 2px; }
   .reader-bar .icon-btn { font-size: 17px; padding: 0 2px; }
   .reader-top { padding: 0 4px; gap: 2px; }
   .reader-bottom { padding-left: 4px; padding-right: 4px; }
+}
+
+/* Экран пошире телефонного минимума: зазор между кнопками можно позволить. */
+@media (min-width: 400px) {
+  .reader-top-actions { gap: 6px; }
 }
 
 @media (max-width: 560px) {

@@ -8,9 +8,13 @@ POST /api/translate  {items: [{id, text}], target?: "ru"} -> {items: [{id, text}
 нет, и LLM на 12 ядрах EPYC давала бы 15-40 с на абзац — для листания
 непригодно.
 
-privacy_class=public: текст изданной книги не личные данные, и разрешение
-облачных провайдеров даёт широкий пул бесплатных (cerebras/groq/gemini/mistral/
-cloudflare/sambanova/nvidia) вместо одного-двух no-train.
+Класс приватности здесь НЕ задаётся: он живёт в шлюзе — дефолтом проекта
+`reader` и метадатой промпта (`privacy: public`), которую видно и можно менять в
+Langfuse без деплоя читалки. Пока это `public`: текст изданной книги не личные
+данные, а разрешение облачных провайдеров даёт широкий пул бесплатных
+(cerebras/groq/gemini/mistral/cloudflare/sambanova/nvidia) вместо одного-двух
+no-train. Прибитое в коде per-request значение перебивало бы обе эти настройки,
+и смена приватности в шлюзе ни на что бы не влияла.
 
 Кэш переводов — в БД, ключом по содержимому абзаца (sha256), а не по позиции в
 книге: возврат назад, перечитывание и одинаковые абзацы в разных книгах
@@ -30,6 +34,7 @@ import re
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field as PField
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from ..db.models import Translation
@@ -116,23 +121,34 @@ def _cache_get(keys: list[str]) -> dict[str, str]:
 
 
 def _cache_put(pairs: list[tuple[str, str]]) -> None:
+    """Записать переводы в кэш, не падая на гонке.
+
+    Два экрана, переведённые одновременно, попадают на общий абзац регулярно.
+    Проверка «нет ли уже такого ключа» перед вставкой от этого не спасает: между
+    SELECT и INSERT успевает вставить сосед, и UNIQUE на `key` роняет запрос —
+    причём ПОСЛЕ того, как инференс уже оплачен, а вместе с трейсом в трекер
+    ошибок уезжает текст книги. Поэтому конфликт разрешает сама СУБД.
+    """
     if not pairs:
         return
+    rows = [{"key": k, "text": t} for k, t in dict(pairs).items()]
+    table = Translation.__table__
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as _insert
+    else:  # незнакомый диалект: вставляем по одной, конфликт гасим откатом
+        with Session(engine) as s:
+            for row in rows:
+                try:
+                    s.add(Translation(**row))
+                    s.commit()
+                except IntegrityError:
+                    s.rollback()
+        return
     with Session(engine) as s:
-        # Гонка возможна: два экрана переводятся одновременно и попадают на один
-        # абзац. Дубль в кэше безобиден, поэтому проверяем наличие, а не ловим
-        # уникальное ограничение.
-        have = {
-            r.key
-            for r in s.exec(
-                select(Translation).where(Translation.key.in_([k for k, _ in pairs]))
-            ).all()
-        }
-        for key, text in pairs:
-            if key in have:
-                continue
-            s.add(Translation(key=key, text=text))
-            have.add(key)
+        s.exec(_insert(table).values(rows).on_conflict_do_nothing(index_elements=["key"]))
         s.commit()
 
 
@@ -152,7 +168,6 @@ async def _translate_batch(
             "items": json.dumps(texts, ensure_ascii=False),
             "count": str(len(texts)),
         },
-        "privacy_class": "public",
         "output": "json",
     }
     r = await client.post(
@@ -162,7 +177,10 @@ async def _translate_batch(
         timeout=TIMEOUT,
     )
     if r.status_code >= 400:
-        raise HTTPException(502, f"gateway {r.status_code}: {r.text[:200]}")
+        # Подробности — в лог, наружу нейтрально: ответ чужого сервиса может
+        # нести и его внутренние детали, и эхо нашего запроса.
+        log.warning("translate: gateway %s: %s", r.status_code, r.text[:400])
+        raise HTTPException(502, "движок перевода недоступен")
     data = r.json()
     raw = data.get("text") or data.get("content") or ""
     out = _parse_items(raw, len(texts))

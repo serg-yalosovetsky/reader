@@ -79,10 +79,15 @@ await page.close()
 // ---------- 2. Миграция сохранённых настроек ----------
 console.log('\n=== миграция старых настроек (v1 -> v2) ===')
 for (const [tag, before, wantMargin, wantFont] of [
-  ['старое «сред.» (1) + Merriweather', { marginLevel: 1, fontFamily: 'merriweather' }, 2, 'inter'],
-  ['старое «шир.» (2) + Lora', { marginLevel: 2, fontFamily: 'lora' }, 3, 'inter'],
-  ['старое «узк.» (0) + PT Serif', { marginLevel: 0, fontFamily: 'pt-serif' }, 0, 'inter'],
-  ['уже sans — не трогаем', { marginLevel: 1, fontFamily: 'pt-sans' }, 2, 'pt-sans'],
+  ['v1: «сред.» + Merriweather', { marginLevel: 1, fontFamily: 'merriweather' }, 2, 'pt-sans'],
+  ['v1: «шир.» + Lora', { marginLevel: 2, fontFamily: 'lora' }, 3, 'pt-sans'],
+  ['v1: «узк.» + PT Serif', { marginLevel: 0, fontFamily: 'pt-serif' }, 0, 'pt-sans'],
+  ['v1: уже sans — не трогаем', { marginLevel: 1, fontFamily: 'nunito' }, 2, 'nunito'],
+  // v2 -> v3: Inter, доставшийся прошлой миграцией, переводится на новый дефолт.
+  ['v2: доставшийся Inter', { v: 2, marginLevel: 2, fontFamily: 'inter' }, 2, 'pt-sans'],
+  // А осознанный выбор из списка не трогаем даже при смене дефолта.
+  ['v2: выбранный Rubik', { v: 2, marginLevel: 1, fontFamily: 'rubik' }, 1, 'rubik'],
+  ['v3: ничего не меняем', { v: 3, marginLevel: 3, fontFamily: 'mulish' }, 3, 'mulish'],
 ]) {
   const p2 = await browser.newPage()
   await p2.evaluateOnNewDocument((b) => {
@@ -97,7 +102,7 @@ for (const [tag, before, wantMargin, wantFont] of [
   const ok = got.marginLevel === wantMargin && got.fontFamily === wantFont
   console.log(`  ${ok ? 'ok  ' : 'ПРОВАЛ'} ${tag}: поля ${got.marginLevel} (ждали ${wantMargin}), шрифт ${got.fontFamily} (ждали ${wantFont})`)
   if (!ok) fails++
-  if (got.stored.v !== 2) fail(`  миграция не сохранена в localStorage (v=${got.stored.v})`)
+  if (got.stored.v !== 3) fail(`  миграция не сохранена в localStorage (v=${got.stored.v})`)
   await p2.close()
 }
 

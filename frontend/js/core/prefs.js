@@ -2,10 +2,14 @@
 const PREFS_KEY = 'reader.prefs'
 // Версия схемы настроек. Нужна ровно там, где ЗНАЧЕНИЕ меняет смысл: уровни
 // полей — числа, и вставка нового уровня в середину сдвигает все сохранённые.
-const PREFS_VERSION = 2
+const PREFS_VERSION = 3
+// Одно место на весь файл: дефолт и цель миграций не должны разъезжаться.
+const DEFAULT_FONT = 'pt-sans'
 const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+// Шрифт по умолчанию — PT Sans: сделан под русский и в длинном тексте теплее
+// нейтрального Inter, который для художественной прозы суховат.
 export const prefs = Object.assign(
-  { theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: 'inter', flow: 'paginated', columns: 1, v: PREFS_VERSION },
+  { theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
   saved,
 )
 if (prefs.fontFamily === 'sans') prefs.fontFamily = 'open-sans'
@@ -28,15 +32,31 @@ export const MARGIN_GAP = { 0: 0, 1: 8, 2: 16, 3: 34 }
 // Миграция сохранённых настроек на текущую схему.
 function migratePrefs() {
   if (saved.v === PREFS_VERSION) return
-  // v1 -> v2. Шкала полей была {0: нет, 1: сред., 2: шир.}, между 0 и 1
-  // вставлен новый уровень: без сдвига сохранённое «сред.» стало бы узким.
-  if (typeof saved.marginLevel === 'number') {
-    prefs.marginLevel = { 0: 0, 1: 2, 2: 3 }[saved.marginLevel] ?? 2
+  // Шаги строго по версиям, а не «всё подряд при любом несовпадении». Иначе
+  // сдвиг уровней применился бы к уже сдвинутым настройкам при следующей смене
+  // версии: у читателя на v2 «сред.» уехало бы в «шир.».
+  const from = saved.v || (Object.keys(saved).length ? 1 : PREFS_VERSION)
+  if (from < 2) {
+    // v1 -> v2. Шкала полей была {0: нет, 1: сред., 2: шир.}, между 0 и 1
+    // вставлен новый уровень: без сдвига сохранённое «сред.» стало бы узким.
+    if (typeof saved.marginLevel === 'number') {
+      prefs.marginLevel = { 0: 0, 1: 2, 2: 3 }[saved.marginLevel] ?? 2
+    }
+    // Шрифты с засечками убраны из читалки: старый выбор ведёт в никуда и
+    // книга открылась бы системным запасным шрифтом.
+    if (['merriweather', 'lora', 'pt-serif', 'georgia', 'serif'].includes(saved.fontFamily)) {
+      prefs.fontFamily = DEFAULT_FONT
+    }
   }
-  // Шрифты с засечками убраны из читалки: старый выбор ведёт в никуда и книга
-  // открылась бы системным запасным шрифтом.
-  if (['merriweather', 'lora', 'pt-serif', 'georgia', 'serif'].includes(saved.fontFamily)) {
-    prefs.fontFamily = 'inter'
+  // v2 -> v3, РАЗОВАЯ правка, а не общее правило. Предыдущая миграция записала
+  // 'inter' всем, у кого стоял шрифт с засечками, и сохранённое значение
+  // перебивает новый дефолт — читатель остался бы на Inter, хотя выбран PT
+  // Sans. Отличить «Inter достался автоматически» от «Inter выбран
+  // сознательно» нечем, но дефолтом он пробыл считанные часы, поэтому перевод
+  // безопасен. Появится следующая смена дефолта — так делать УЖЕ нельзя:
+  // к тому времени Inter у кого-то будет осознанным выбором.
+  if (from === 2 && saved.fontFamily === 'inter') {
+    prefs.fontFamily = DEFAULT_FONT
   }
   prefs.v = PREFS_VERSION
   savePrefs()

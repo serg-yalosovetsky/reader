@@ -2,7 +2,8 @@
 import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
-import { prefs, MARGIN_INLINE, FONT_STACKS, gfontsFor } from './core/prefs.js'
+import { prefs, MARGIN_INLINE, MARGIN_SIDE_PCT, MARGIN_GAP, FONT_STACKS,
+         gfontsFor } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx } from './core/state.js'
 import { restorePosition, captureAnchor } from './core/position.js'
@@ -141,10 +142,10 @@ function bookCSS() {
   const fg = resolvedColor('--fg'), bg = resolvedColor('--bg'), accent = resolvedColor('--accent')
   const isDark = ['dusk', 'night', 'terminal', 'black'].includes(prefs.theme)
   const colorScheme = isDark ? 'dark' : 'light'
-  const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['merriweather']
+  const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['inter']
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.
   // Поля задаём уровнем «Поля» (marginLevel → процент боковых отступов).
-  const sidePad = { 0: 0, 1: 5, 2: 12 }[prefs.marginLevel] ?? 5
+  const sidePad = MARGIN_SIDE_PCT[prefs.marginLevel] ?? MARGIN_SIDE_PCT[2]
   // Лента: распахиваем документ книги на всю ширину области (поля — паддингом body).
   // Корень узкой «ленты» был в shadow-гриде foliate (#top), пропатчен в paginator.js;
   // здесь — только распахивание самого документа и гашение возможных колонок.
@@ -191,7 +192,7 @@ export function applyViewStyles() {
     r.setAttribute('max-inline-size', String(w))
   } else {
     // Страницы: 1 или 2 колонки по выбору; ширина колонки — от уровня полей,
-    // НО не шире самой области чтения. MARGIN_INLINE (760/620/480) — десктопные
+    // НО не шире самой области чтения. MARGIN_INLINE (760/690/620/480) — десктопные
     // константы: на телефоне с вьюпортом ~360-540 колонка выходила шире экрана,
     // и правый край текста уезжал за границу — слова пропадали целиком, без
     // переноса и без горизонтального скролла. Для «Ленты» это уже чинили выше
@@ -203,12 +204,12 @@ export function applyViewStyles() {
     r.setAttribute('max-column-count', String(cols))
     r.setAttribute('max-inline-size', String(Math.min(wanted, Math.floor(host / cols))))
   }
-  const _sidePad = { 0: 0, 1: 5, 2: 12 }[prefs.marginLevel] ?? 5
+  const _sidePad = MARGIN_SIDE_PCT[prefs.marginLevel] ?? MARGIN_SIDE_PCT[2]
   // «Лента»: боковые поля даёт паддинг body -> gap 0 (иначе удваивается).
   // «Страницы»: gap = боковые поля.
   r.setAttribute('gap', (prefs.flow === 'scrolled' ? 0 : _sidePad) + '%')
   // Вертикальные поля страницы (foliate --_margin, дефолт 48px) — компактные, в ритме уровня полей.
-  r.setAttribute('margin', String({ 0: 0, 1: 16, 2: 34 }[prefs.marginLevel] ?? 16))
+  r.setAttribute('margin', String(MARGIN_GAP[prefs.marginLevel] ?? MARGIN_GAP[2]))
   r.setAttribute('flow', prefs.flow)
   r.setStyles?.(bookCSS())
 }

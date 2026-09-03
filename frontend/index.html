@@ -35,7 +35,11 @@
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" />
+  <!-- Шрифт ИНТЕРФЕЙСА (--font-sans в theme.css). Книжные семейства сюда не
+       входят: их грузит gfontsFor() по одному, только выбранное. Раньше здесь
+       висели все шесть семейств по четыре начертания — 24 файла со стороннего
+       хоста в оболочке ради шрифта, который читатель, может, и не выберет. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" />
   <script>
     // Восстановление вкладки: мгновенно прячем библиотеку, если URL указывает
     // на книгу (#read/<id>), — чтобы сетка не мелькала до открытия читалки.
@@ -276,18 +280,17 @@
       </div>
       <div class="setting-row">
         <span class="setting-label">Шрифт</span>
+        <!-- Только гротески. У каждого проверены кириллица и НАСТОЯЩИЙ курсив:
+             в прозе он на каждой странице, а синтетический наклон её портит. -->
         <select id="font-family" class="select">
-          <optgroup label="С засечками">
-            <option value="merriweather">Merriweather</option>
-            <option value="lora">Lora</option>
-            <option value="pt-serif">PT Serif</option>
-            <option value="georgia">Georgia</option>
-          </optgroup>
-          <optgroup label="Без засечек">
-            <option value="open-sans">Open Sans</option>
-            <option value="nunito">Nunito</option>
-            <option value="pt-sans">PT Sans</option>
-          </optgroup>
+          <option value="inter">Inter</option>
+          <option value="noto-sans">Noto Sans</option>
+          <option value="open-sans">Open Sans</option>
+          <option value="pt-sans">PT Sans</option>
+          <option value="ibm-plex-sans">IBM Plex Sans</option>
+          <option value="rubik">Rubik</option>
+          <option value="mulish">Mulish</option>
+          <option value="nunito">Nunito</option>
         </select>
       </div>
       <div class="setting-row">

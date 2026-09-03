@@ -77,7 +77,7 @@ if (!(lists.marginSide[1] > lists.marginSide[0] && lists.marginSide[1] < lists.m
 await page.close()
 
 // ---------- 2. Миграция сохранённых настроек ----------
-console.log('\n=== миграция старых настроек (v1 -> v2) ===')
+console.log('\n=== миграция сохранённых настроек ===')
 for (const [tag, before, wantMargin, wantFont] of [
   ['v1: «сред.» + Merriweather', { marginLevel: 1, fontFamily: 'merriweather' }, 2, 'pt-sans'],
   ['v1: «шир.» + Lora', { marginLevel: 2, fontFamily: 'lora' }, 3, 'pt-sans'],

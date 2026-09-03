@@ -169,9 +169,13 @@ body.reader-open { height: 100%; overflow: hidden; }
 .view-host { overscroll-behavior: contain; }
 .reader-bar {
   display: flex; align-items: center; gap: 6px;
-  /* Вертикальный отступ минимальный: высоту панели задаёт тач-цель кнопки,
-     которая набирается невидимым псевдоэлементом, а не паддингом панели. */
-  padding: 1px 10px; background: var(--bg); color: var(--fg-dim);
+  /* Вертикальных отступов нет: высота панели равна высоте самой цели (44px).
+     Раньше высоту добирал невидимый ::before со свесом наружу — приём отсюда
+     убран, он не работал: .reader-bar обязан быть overflow:hidden ради
+     анимации сворачивания и обрезал свес, соседний слой (.view-host,
+     .tap-zone) перехватывал остаток, а у верхней панели свес вверх уходит за
+     кромку экрана физически. Под пальцем получалось 34px вместо 44. */
+  padding: 0 10px; background: var(--bg); color: var(--fg-dim);
   flex: 0 0 auto;
   max-height: 120px; overflow: hidden;
   transition: max-height .25s ease, padding .22s ease, opacity .2s ease;
@@ -200,10 +204,19 @@ body.reader-open { height: 100%; overflow: hidden; }
    себя как кнопка; тач-цель добирается по вертикали псевдоэлементом. */
 .reader-title { flex: 1; min-width: 0; text-align: center; font-size: 13px;
   color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  background: transparent; border: none; padding: 4px 2px; margin: 0;
+  background: transparent; border: none; padding: 0 2px; margin: 0;
   font-family: inherit; cursor: pointer; position: relative;
+  /* Цель во всю высоту панели. Свесом её было не набрать вдвойне: собственный
+     overflow:hidden (он нужен ради ellipsis) резал бы ::before по своему же
+     боксу — заголовок давал 26px под пальцем при 44 у соседей, и это рядом с
+     кнопкой выхода из книги. */
+  min-height: 44px; align-self: stretch;
+  /* Подчёркивание точками — единственный признак того, что заголовок
+     нажимаем: фона и рамки у него нет, а всплывающей подсказки на телефоне не
+     существует. */
+  text-decoration: underline dotted color-mix(in srgb, var(--fg-dim) 55%, transparent);
+  text-underline-offset: 3px;
   -webkit-tap-highlight-color: transparent; }
-.reader-title::before { content: ''; position: absolute; inset: -10px 0; }
 .reader-title:empty { display: none; }
 .reader-title[data-mode="author"] { font-style: italic; }
 .reader-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px;
@@ -228,15 +241,15 @@ body.reader-open { height: 100%; overflow: hidden; }
 }
 .icon-btn:hover { background: var(--bg-soft); color: var(--fg); }
 
-/* Кнопки в панелях читалки: визуальный бокс 32×32, а тач-цель 44px набирается
-   невидимым псевдоэлементом — тот же идиом, что у .swatch::before. Расширяем
-   ТОЛЬКО по вертикали: по горизонтали зоны соседних кнопок в ряду перехватывали
-   бы друг друга. */
+/* Кнопки в панелях читалки: цель 44×44 — настоящая, а не набранная свесом.
+   Глиф остаётся мелким (16-17px), поэтому панель выглядит компактной, но палец
+   попадает по всей высоте панели. Ширину тоже держим 44: критерий задачи
+   говорит «не меньше 44», а не «44 по одной оси». */
 .reader-bar .icon-btn {
-  min-height: 32px; min-width: 32px; padding: 4px 6px;
-  position: relative; -webkit-tap-highlight-color: transparent;
+  min-height: 44px; min-width: 44px; padding: 0 4px;
+  align-self: stretch; position: relative;
+  -webkit-tap-highlight-color: transparent;
 }
-.reader-bar .icon-btn::before { content: ''; position: absolute; inset: -6px 0; }
 
 .view-host { position: relative; flex: 1 1 auto; min-height: 0; }
 foliate-view { width: 100%; height: 100%; display: block; }
@@ -253,14 +266,13 @@ foliate-view { width: 100%; height: 100%; display: block; }
    риски глав поверх него и подсказка над пальцем. */
 .progress-wrap {
   flex: 1; position: relative; min-width: 0;
-  /* Визуально шкала занимает ~14px, тач-цель 44px добирает ::before ниже —
-     иначе 2×20px паддинга съедали высоту панели ради пустоты. */
-  padding: 5px 9px; margin: 0; cursor: pointer;
+  /* Трек остаётся тонким (4px), а цель — во всю высоту панели: паддинг здесь
+     ничего не стоит, потому что высоту панели всё равно задают кнопки рядом. */
+  padding: 20px 9px; margin: 0; align-self: stretch; cursor: pointer;
   /* все касания разбирает скрипт: браузерный скролл здесь не нужен, а
      «свайп вместо перемотки» отсеивается по смещению пальца */
   touch-action: none; -webkit-tap-highlight-color: transparent;
 }
-.progress-wrap::before { content: ''; position: absolute; inset: -15px 0; }
 .progress-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
 .progress-track {
   position: relative; height: 4px; border-radius: 999px;
@@ -290,8 +302,10 @@ foliate-view { width: 100%; height: 100%; display: block; }
   background: var(--accent); box-shadow: 0 0 0 2px var(--bg);
   transition: width .15s ease, height .15s ease, margin-left .15s ease;
 }
-/* Идёт отсчёт удержания: трек темнеет — видно, что касание принято. */
-.progress-wrap.pending .progress-track { background: color-mix(in srgb, var(--fg) 30%, transparent); }
+/* Идёт отсчёт удержания: трек темнеет И утолщается сразу, с первого касания.
+   Раньше толщина менялась только после HOLD_MS, и первые 320 мс палец не
+   получал никакого ответа — касание выглядело проигнорированным. */
+.progress-wrap.pending .progress-track { background: color-mix(in srgb, var(--fg) 30%, transparent); height: 6px; }
 /* Шкала проснулась после удержания: трек толще, ползунок крупнее. */
 .progress-wrap.armed .progress-track { height: 6px; }
 .progress-wrap.armed .progress-thumb { width: 20px; height: 20px; margin-left: -10px; }
@@ -306,7 +320,7 @@ foliate-view { width: 100%; height: 100%; display: block; }
   background: var(--card); color: var(--fg); border: 1px solid var(--line);
   box-shadow: 0 6px 20px rgba(0,0,0,.22);
 }
-.progress-label { font-size: 11px; min-width: 34px; text-align: right; }
+.progress-label { font-size: 12px; min-width: 36px; text-align: right; }
 /* Название главы больше не дублируется внизу: оно в заголовке-переключателе
    сверху, а нижняя панель осталась одной строкой без переноса. */
 /* Восстановление вкладки: не мигать библиотекой до открытия книги. */
@@ -356,8 +370,10 @@ html.restoring-book #library { display: none; }
   content: ''; position: absolute; top: 2px; right: 2px;
   width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--bg);
 }
+/* Форма, а не только цвет: на тёмных темах (особенно terminal) оранжевый и
+   красный на глифе 7px различаются плохо, а состояния два разных. */
 #more-btn[data-badge="new"]::after { background: var(--progress-new); }
-#more-btn[data-badge="err"]::after { background: var(--danger); }
+#more-btn[data-badge="err"]::after { background: var(--danger); border-radius: 1px; }
 #more-btn[data-active="translate"] { color: var(--accent); }
 
 .toc-list { overflow-y: auto; }
@@ -549,10 +565,12 @@ body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
   /* Заголовок остаётся и на узком экране: теперь это главный ориентир
      (глава/книга/автор), а место под него освободили редкие действия,
      ушедшие в меню «Ещё». */
-  .reader-top-actions { gap: 0; }
-  .reader-bar .icon-btn { font-size: 17px; padding: 4px 5px; }
-  .reader-top { padding: 1px 6px; gap: 2px; }
-  .reader-bottom { padding-left: 6px; padding-right: 6px; }
+  /* Зазор между соседними кнопками: без него пять целей идут вплотную и
+     промах по краю одной попадает в другую. По высоте он ничего не стоит. */
+  .reader-top-actions { gap: 2px; }
+  .reader-bar .icon-btn { font-size: 17px; padding: 0 2px; }
+  .reader-top { padding: 0 4px; gap: 2px; }
+  .reader-bottom { padding-left: 4px; padding-right: 4px; }
 }
 
 @media (max-width: 560px) {

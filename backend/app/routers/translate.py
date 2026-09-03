@@ -56,6 +56,21 @@ BATCH = int(os.getenv("READER_TRANSLATE_BATCH", "24"))
 CONCURRENCY = int(os.getenv("READER_TRANSLATE_CONCURRENCY", "1"))
 TIMEOUT = float(os.getenv("READER_TRANSLATE_TIMEOUT", "60"))
 
+# Потолки на один запрос. Экран книги — это десятки абзацев и тысячи знаков;
+# всё, что заметно больше, приходит не от читалки, а от того, кто решил
+# погонять чужой платный движок за счёт этого эндпоинта. Без потолков сюда
+# принимались тело на 2 МБ и 5000 абзацев.
+MAX_ITEMS = int(os.getenv("READER_TRANSLATE_MAX_ITEMS", "80"))
+MAX_ITEM_CHARS = int(os.getenv("READER_TRANSLATE_MAX_ITEM_CHARS", "4000"))
+MAX_TOTAL_CHARS = int(os.getenv("READER_TRANSLATE_MAX_TOTAL_CHARS", "40000"))
+
+# Куда переводим. Whitelist, а не свободная строка: `target` подставляется в
+# промпт, и произвольный текст оттуда — это инструкция модели, а не язык.
+# Проверяющий уже получал через это поле ответ «verifier-pwned-7788» вместо
+# перевода. Список — языки, на которых Серж реально читает.
+ALLOWED_TARGETS = {"ru", "en", "uk", "de", "fr", "es", "pl", "it"}
+DEFAULT_TARGET = "ru"
+
 _CYR = re.compile(r"[Ѐ-ӿ]")
 _LAT = re.compile(r"[A-Za-z]")
 
@@ -76,8 +91,10 @@ def detect_lang(text: str) -> str:
 
 
 class Item(BaseModel):
-    id: str
-    text: str
+    # id — ярлык узла DOM на стороне фронта, в промпт он не попадает; длину
+    # всё равно ограничиваем, чтобы тело запроса не раздували им.
+    id: str = PField(max_length=64)
+    text: str = PField(max_length=100_000)
 
 
 class TranslateReq(BaseModel):
@@ -187,9 +204,16 @@ async def translate(req: TranslateReq) -> dict:
     Порядок и состав items сохраняются: фронт сопоставляет ответ с узлами DOM
     по id, поэтому пропуск элемента сдвинул бы текст в книге.
     """
-    target = (req.target or "ru").strip().lower() or "ru"
+    target = (req.target or DEFAULT_TARGET).strip().lower()
+    if target not in ALLOWED_TARGETS:
+        raise HTTPException(400, f"язык {target[:20]!r} не поддерживается")
     if not req.items:
         return {"items": [], "translated": 0, "cached": 0, "skipped": 0}
+    if len(req.items) > MAX_ITEMS:
+        raise HTTPException(413, f"слишком много абзацев: {len(req.items)} > {MAX_ITEMS}")
+    total = sum(len(it.text or "") for it in req.items)
+    if total > MAX_TOTAL_CHARS:
+        raise HTTPException(413, f"слишком много текста: {total} > {MAX_TOTAL_CHARS} знаков")
     if not GATEWAY_TOKEN:
         raise HTTPException(503, "перевод не настроен: нет READER_INFGW_TOKEN")
 
@@ -200,6 +224,12 @@ async def translate(req: TranslateReq) -> dict:
     for it in req.items:
         text = (it.text or "").strip()
         src = detect_lang(text)
+        # Абзац длиннее потолка — не наш случай: в книгах таких нет, а в один
+        # батч он утащил бы весь бюджет запроса.
+        if len(text) > MAX_ITEM_CHARS:
+            plan.append((it.id, None))
+            skipped += 1
+            continue
         if not text or src == "" or src == target:
             plan.append((it.id, None))
             skipped += 1

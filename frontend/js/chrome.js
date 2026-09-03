@@ -29,14 +29,24 @@ function resolveMode(want) {
   return want
 }
 
+const MODE_NAMES = { chapter: 'Глава', book: 'Книга', author: 'Автор' }
+
 function renderTitle() {
   const el = $('#reader-title')
   if (!el) return
   const m = resolveMode(mode)
+  const next = MODES[(MODES.indexOf(m) + 1) % MODES.length]
   el.dataset.mode = m
   el.textContent = meta[m] || ''
-  const names = { chapter: 'Глава', book: 'Книга', author: 'Автор' }
-  el.title = `${names[m]}: ${meta[m] || '—'} — нажмите, чтобы показать другое`
+  el.title = `${MODE_NAMES[m]}: ${meta[m] || '—'} — нажмите, чтобы показать другое`
+  // Доступное имя включает видимый текст (2.5.3 Label in Name) и говорит, что
+  // это орган управления: у заголовка нет ни фона, ни рамки, а на телефоне
+  // всплывающей подсказки не существует — без этого он и для незрячего, и для
+  // зрячего остаётся невидимой кнопкой.
+  el.setAttribute(
+    'aria-label',
+    `${MODE_NAMES[m]}: ${meta[m] || '—'}. Показать ${MODE_NAMES[next].toLowerCase()}`,
+  )
 }
 
 // Вызывается при открытии книги: сбрасывает цикл на «главу».
@@ -55,11 +65,27 @@ export function setChapterTitle(label) {
 // --- Индикаторы на кнопке ⋮ -------------------------------------------------
 // Действие лежит в закрытом меню, но его состояние должно быть видно снаружи:
 // 'new' — найдены новые главы, 'err' — проверка не удалась, '' — чисто.
+const BADGE_TEXT = { new: 'найдены новые главы', err: 'проверка не удалась' }
+
 export function setMoreBadge(state) {
   const b = $('#more-btn')
   if (!b) return
   if (state) b.dataset.badge = state
   else delete b.dataset.badge
+  syncMoreLabel()
+}
+
+// Состояние скрытых действий передаётся не только оттенком точки: до переноса
+// в меню про новые главы сообщала подпись, и без текстовой альтернативы
+// незрячий пользователь не узнавал бы о них вовсе.
+function syncMoreLabel() {
+  const b = $('#more-btn')
+  if (!b) return
+  const parts = []
+  if (b.dataset.badge) parts.push(BADGE_TEXT[b.dataset.badge] || b.dataset.badge)
+  if (b.dataset.active === 'translate') parts.push('перевод включён')
+  b.setAttribute('aria-label', parts.length ? `Ещё: ${parts.join(', ')}` : 'Ещё')
+  b.title = b.getAttribute('aria-label')
 }
 
 // Включённый режим (перевод) подсвечивает саму кнопку ⋮ — вторая постоянная
@@ -69,6 +95,12 @@ export function setMoreActive(name) {
   if (!b) return
   if (name) b.dataset.active = name
   else delete b.dataset.active
+  syncMoreLabel()
+}
+
+// Меню открыто/закрыто — для скринридера и для клавиатуры.
+export function setMoreExpanded(open) {
+  $('#more-btn')?.setAttribute('aria-expanded', open ? 'true' : 'false')
 }
 
 // Тонкая полоса под верхней панелью: сетевая работа в поле зрения читающего.

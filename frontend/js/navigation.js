@@ -11,7 +11,7 @@ import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
 import { initProgressBar } from './progress-bar.js'
 import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
-         setMoreBadge } from './chrome.js'
+         setMoreBadge, setMoreExpanded } from './chrome.js'
 import { initTranslate, onTranslateDocLoaded } from './translate.js'
 
 // ===================== Навигация и панели =====================
@@ -193,12 +193,16 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => { if (!$('#reader').hidden && view) applyViewStyles() }, 200)
 })
 
-export function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false }
+export function openPanel(id) {
+  closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false
+  if (id === '#more-panel') setMoreExpanded(true)
+}
 export function closePanels() {
   $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
   $('#search-panel').hidden = true; $('#bm-panel').hidden = true
   $('#hl-panel').hidden = true; $('#more-panel').hidden = true
   $('#panel-overlay').hidden = true
+  setMoreExpanded(false)
 }
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#more-btn')?.addEventListener('click', () => openPanel('#more-panel'))

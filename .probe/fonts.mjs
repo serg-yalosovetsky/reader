@@ -125,7 +125,15 @@ for (const [key, url] of lists.urls) {
       } catch { return false }
     }
     const hasRegular = await loadFace(`400 16px "${family}"`)
-    const hasItalic = await loadFace(`italic 400 16px "${family}"`)
+    await loadFace(`italic 400 16px "${family}"`)
+    // check('italic ...') тут НЕ годится: Chrome синтезирует наклон для
+    // семейства без italic-начертания и отвечает true независимо от того, есть
+    // ли настоящий курсив. Платформенное имя шрифта синтетику тоже не выдаёт.
+    // Отличает только перечисление объявленных FontFace: у семейства без
+    // курсива фейса со style === 'italic' не существует вовсе.
+    const hasItalic = [...document.fonts].some(
+      (f) => f.family.replace(/"/g, '') === family && f.style === 'italic',
+    )
     // Контроль подмены: шрифт должен РЕАЛЬНО менять отрисовку русского текста,
     // а не молча падать в системный запасной с той же метрикой.
     const measure = (css) => {
@@ -147,7 +155,38 @@ for (const [key, url] of lists.urls) {
 }
 await p3.close()
 
-// ---------- 4. Контроль на слепоту ----------
+// ---------- 4. Контроль: кириллица есть, курсива нет ----------
+// Golos Text: кириллица есть, italic-фейсов ноль. Если стенд его пропускает —
+// значит проверка курсива поймала синтетический наклон Chrome вместо
+// настоящего начертания, и защищать состав списка ей нечем.
+console.log('\n=== контроль: семейство с кириллицей, но без курсива ===')
+const pItal = await browser.newPage()
+await pItal.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded', timeout: 40000 })
+const noItalic = await pItal.evaluate(async () => {
+  const RU = 'Тест кириллицы, дом'
+  const link = document.createElement('link')
+  link.rel = 'stylesheet'
+  link.href = 'https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;700&display=swap'
+  const loaded = new Promise((res) => { link.onload = () => res(true); link.onerror = () => res(false) })
+  document.head.append(link)
+  await loaded
+  await document.fonts.load('400 16px "Golos Text"', RU)
+  await document.fonts.load('italic 400 16px "Golos Text"', RU).catch(() => [])
+  return {
+    naive: document.fonts.check('italic 400 16px "Golos Text"', RU),
+    strict: [...document.fonts].some(
+      (f) => f.family.replace(/"/g, '') === 'Golos Text' && f.style === 'italic',
+    ),
+  }
+})
+await pItal.close()
+if (noItalic.strict) {
+  fail('Golos Text прошёл проверку курсива — стенд не отличает настоящий italic')
+} else {
+  console.log(`  ok   Golos Text отклонён (наивная проверка сказала бы «${noItalic.naive}»)`)
+}
+
+// ---------- 5. Контроль на слепоту ----------
 // Стенд, зелёный на чём угодно, ничего не доказывает: убеждаемся, что
 // заведомо несуществующее семейство проверку НЕ проходит.
 console.log('\n=== контроль: заведомо несуществующее семейство ===')

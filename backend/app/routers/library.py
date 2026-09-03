@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import anyio
+# Явно, а не полагаясь на ленивый __getattr__ пакета: он есть не во всех
+# версиях anyio, а промах вылезет только в рантайме при загрузке книги.
+import anyio.to_thread
 import tempfile
+from functools import partial
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
@@ -14,7 +18,6 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
-from ..services import _norm
 from ..storage import detect_format, import_file, sha1_of_file
 
 router = APIRouter(prefix="/api/library", tags=["library"])
@@ -371,14 +374,14 @@ def _completeness(work: Work, session: Session) -> dict:
             session.add(work)
             session.commit()
 
-    mons = session.exec(
-        select(Monitored).where(Monitored.work_id == work.id)
-    ).all()
+    mons = session.exec(select(Monitored).where(Monitored.work_id == work.id)).all()
     # Из нескольких подписок берём ту, что видела больше глав — она и есть
     # самый полный известный источник.
     best = max(mons, key=lambda m: m.last_seen_chapters or 0, default=None)
     site = (best.last_seen_chapters or 0) if best else 0
-    unit = _metric_kind(best.last_seen_source or best.source_url) if best else "chapters"
+    unit = (
+        _metric_kind(best.last_seen_source or best.source_url) if best else "chapters"
+    )
     return {
         "chapters_have": have,
         "chapters_site": site,
@@ -409,15 +412,19 @@ async def upload_book(
     async with await anyio.open_file(tmp_path, "wb") as tmp:
         while chunk := await file.read(1 << 20):
             await tmp.write(chunk)
+    # Файловые операции — в поток. Это async-обработчик: sha1_of_file читает
+    # книгу целиком, import_file её копирует, unlink дёргает ФС, и все трое
+    # выполнялись прямо в цикле событий. Под одним клиентом незаметно, но
+    # загрузка толстого EPUB держала весь сервис — не только свой запрос.
     try:
-        sha1 = sha1_of_file(tmp_path)
+        sha1 = await anyio.to_thread.run_sync(sha1_of_file, tmp_path)
         # Дедуп: если книга с таким SHA-1 уже есть — вернуть её.
         existing = session.exec(select(Work).where(Work.sha1 == sha1)).first()
         if existing:
             return existing
-        dest, _ = import_file(tmp_path, sha1)
+        dest, _ = await anyio.to_thread.run_sync(import_file, tmp_path, sha1)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
 
     work = Work(
         title=Path(file.filename or "Без названия").stem,

@@ -20,15 +20,20 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Optional
 
 import httpx
 
 # defusedxml защищает от XXE/billion-laughs. Источник OPDS — свой calibre-web по
 # Tailscale (доверенный), но парсим безопасно на случай MITM/подмены.
-# Element — только для аннотации типа (сам класс безопасен, парсим через defusedxml).
-
 from defusedxml import ElementTree as ET
+
+if TYPE_CHECKING:
+    # Только для аннотации типа: сам разбор идёт через defusedxml выше, а с
+    # `from __future__ import annotations` аннотация в рантайме не вычисляется,
+    # поэтому небезопасный парсер сюда не подтягивается. Раньше имени не было
+    # вовсе — F821, годная приманка для правки «добавлю обычный импорт».
+    from xml.etree.ElementTree import Element
 
 from ..app.config import (
     CALIBRE_LIBRARY,

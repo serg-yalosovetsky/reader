@@ -84,7 +84,12 @@ jobs:
           pip install -q -e . 2>/dev/null || true
           for req in requirements.txt requirements-dev.txt dev-requirements.txt \
                      test-requirements.txt requirements/dev.txt requirements/test.txt; do
-            [ -f "$req" ] && pip install -q -r "$req" 2>/dev/null || true
+            # Явный if, а не «A && B || C»: в той форме результат pip
+            # неотличим от отсутствия файла, и провал установки выглядел бы
+            # как «зависимостей просто нет».
+            if [ -f "$req" ]; then
+              pip install -q -r "$req" 2>/dev/null || true
+            fi
           done
           # PYTHONPATH=. for flat-layout imports; --continue-on-collection-errors so one
           # un-importable test module (missing heavy dep) doesn't zero the whole run

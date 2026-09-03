@@ -10,6 +10,8 @@ import { openReader, applyViewStyles } from './reader-core.js'
 import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
 import { initProgressBar } from './progress-bar.js'
+import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
+         setMoreBadge } from './chrome.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
@@ -72,6 +74,7 @@ $('#next-btn').addEventListener('click', goNext)
 // Раньше здесь висел 'input' нативного range — он срабатывал от первого же
 // касания, и системный свайп «снизу вверх» уносил позицию чтения.
 initProgressBar()
+initChrome()
 
 // Зоны клика по краям — перелистывание.
 $('#tap-prev').addEventListener('click', goPrev)
@@ -133,6 +136,10 @@ export function attachKeysToDoc(e) {
 
     // Жесты «Ленты»: горизонтальный свайп листает главы (влево->предыд., вправо->след.);
     // вертикаль = чтение, смена главы только на доскролле за верх/низ.
+    // Двойной тап по центру → полный экран (см. js/chrome.js: намерение
+    // отличается от выделения слова по getSelection() после жеста).
+    attachDoubleTapFullscreen(e.detail.doc)
+
     let _sx = 0, _sy = 0, _st = 0, _lastTY = null
     e.detail.doc.addEventListener('touchstart', (ev) => {
       const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY
@@ -187,39 +194,46 @@ export function openPanel(id) { closePanels(); $(id).hidden = false; $('#panel-o
 export function closePanels() {
   $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
   $('#search-panel').hidden = true; $('#bm-panel').hidden = true
-  $('#hl-panel').hidden = true; $('#panel-overlay').hidden = true
+  $('#hl-panel').hidden = true; $('#more-panel').hidden = true
+  $('#panel-overlay').hidden = true
 }
 $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
+$('#more-btn')?.addEventListener('click', () => openPanel('#more-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
-$('#fs-btn')?.addEventListener('click', () => {
-  const d = document
-  if (d.fullscreenElement || d.webkitFullscreenElement) {
-    (d.exitFullscreen || d.webkitExitFullscreen)?.call(d)
-  } else {
-    const el = d.documentElement
-    ;(el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)
-  }
-})
+$('#fs-btn')?.addEventListener('click', toggleFullscreen)
 document.addEventListener('fullscreenchange', () => {
   const on = !!document.fullscreenElement
   const b = $('#fs-btn'); if (b) { b.textContent = on ? '✖' : '⛶'; b.title = on ? 'Выйти из полного экрана' : 'Полный экран' }
 })
+// Состояние проверки новых глав: подпись в строке меню + точка на кнопке ⋮.
+// 'checking' и 'ok' точку не ставят: она значит «есть что посмотреть».
+function updState(state, note, title) {
+  const btn = $('#update-btn'); if (!btn) return
+  btn.dataset.state = state
+  btn.disabled = state === 'checking'
+  const st = $('#update-state'); if (st) st.textContent = note || ''
+  btn.title = title || ''
+  setMoreBadge(state === 'new' ? 'new' : state === 'err' ? 'err' : '')
+}
+export function updReset() {
+  updState('', '', 'Проверить новые главы')
+}
 $('#update-btn').addEventListener('click', async () => {
   const btn = $('#update-btn')
   if (btn.dataset.state === 'checking' || !currentWork) return
-  btn.dataset.state = 'checking'; btn.textContent = '↻'; btn.title = 'Проверяем...'
+  updState('checking', 'Проверяем…', 'Проверяем…')
   const workId = currentWork?.id
   try {
     const res = await api.post(`/api/monitored/check/${workId}`)
     if (res.error) {
       const emsg = res.error === 'not_monitored' ? 'Книга не отслеживается' : `Ошибка: ${res.error}`
-      btn.dataset.state = 'err'; btn.title = emsg
+      updState('err', 'ошибка', emsg)
       toast(emsg, 'err')
-      setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
+      setTimeout(updReset, 3500)
       return
     }
     if (res.downloaded) {
-      btn.dataset.state = 'ok'; btn.title = `Загружено (${res.chapters_found} гл.)`
+      updState('new', `+${res.chapters_found} гл.`, `Загружено (${res.chapters_found} гл.)`)
       toast(`Загружено новых глав до ${res.chapters_found} — открываю обновлённую книгу`, 'ok')
       // Освежаем офлайн-копию: openReader читает cache-first, и без
       // переустановки записи открылся бы СТАРЫЙ файл, а не докачанный.
@@ -227,10 +241,10 @@ $('#update-btn').addEventListener('click', async () => {
         try { await removeBook(workId); await downloadBook(workId) } catch { /* офлайн-копия снята, книга откроется из сети */ }
       }
     } else if (res.has_update) {
-      btn.dataset.state = 'err'; btn.title = 'Обновление есть, но скачать не удалось'
+      updState('err', 'ошибка', 'Обновление есть, но скачать не удалось')
       toast('Обновление есть, но скачать не удалось. Попробуйте позже.', 'err')
     } else {
-      btn.dataset.state = 'ok'; btn.title = 'Новых глав нет'
+      updState('ok', 'актуально', 'Новых глав нет')
       toast('Новых глав нет — книга актуальна', 'info')
     }
     // Всегда перезагружаем epub: он мог обновиться плановым чеком пока книга была открыта
@@ -238,10 +252,10 @@ $('#update-btn').addEventListener('click', async () => {
     const freshWork = libWorks.find(w => w.id === workId)
     if (freshWork) { await openReader(freshWork); return }
   } catch {
-    btn.dataset.state = 'err'; btn.title = 'Ошибка проверки'
+    updState('err', 'ошибка', 'Ошибка проверки')
     toast('Не удалось проверить обновления (сеть?)', 'err')
   }
-  setTimeout(() => { btn.dataset.state = ''; btn.textContent = '↻'; btn.title = 'Проверить новые главы' }, 3500)
+  setTimeout(updReset, 3500)
 })
 $('#search-btn').addEventListener('click', () => { openPanel('#search-panel'); $('#search-input').focus() })
 $('#panel-overlay').addEventListener('click', closePanels)

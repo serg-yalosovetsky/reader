@@ -12,6 +12,7 @@ import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.
 import { attachKeysToDoc, closePanels } from './navigation.js'
 import { cachedBook } from './core/offline.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
+import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 
 // ===================== ЧИТАЛКА =====================
@@ -24,12 +25,16 @@ export async function openReader(work, opts = {}) {
   document.body.classList.add('reader-open')
   $('#library').hidden = true
   $('#reader').hidden = false
-  $('#reader-title').textContent = work.title || ''
-  { const _ch = $('#chapter-label'); if (_ch) _ch.textContent = '' }
+  // Заголовок сверху: по умолчанию — название главы (ставится первым
+  // relocate), по тапу переключается на книгу и автора.
+  setBookMeta(work)
   const updBtn = $('#update-btn')
   updBtn.hidden = !libMonitored.has(work.id)
   updBtn.dataset.state = ''
+  updBtn.disabled = false
   updBtn.title = 'Проверить новые главы'
+  { const _st = $('#update-state'); if (_st) _st.textContent = '' }
+  setMoreBadge('')
 
   // История/URL: URL отражает ОТКРЫТУЮ книгу (#read/<id>), чтобы при
   // переоткрытии вкладки читалка вернулась к той же книге (позицию хранит
@@ -105,9 +110,8 @@ function onRelocate(e) {
   if (anchor) setLastAnchor(anchor)
   // Шкала (доля, «страница», текущая глава) — в progress-bar.js.
   updateProgress(e.detail)
-  // Название текущей главы (из оглавления книги) — в нижней панели у прогресса.
-  const chapEl = $('#chapter-label')
-  if (chapEl) chapEl.textContent = tocItem?.label ? tocItem.label.trim() : ''
+  // Название текущей главы — в заголовке сверху (внизу больше не дублируется).
+  setChapterTitle(tocItem?.label || '')
   // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {

@@ -150,17 +150,20 @@
   <section id="reader" class="screen" hidden>
     <div id="reader-top" class="reader-bar reader-top">
       <button id="back-btn" class="icon-btn" title="К библиотеке">‹<span class="btn-label"> Библиотека</span></button>
-      <span id="reader-title" class="reader-title"></span>
+      <!-- Заголовок-переключатель: по тапу глава → книга → автор → снова глава.
+           Дефолт при открытии книги — глава (мгновенная ориентация в тексте). -->
+      <button id="reader-title" class="reader-title" type="button"
+              data-mode="chapter" title="Глава / книга / автор"></button>
       <div class="reader-top-actions">
-        <button id="tts-btn" class="icon-btn" title="Читать вслух">🔊</button>
-        <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
-        <button id="bm-btn" class="icon-btn" title="Закладки">🔖</button>
-        <button id="hl-btn" class="icon-btn" title="Подсветки и цитаты">🖍️</button>
-        <button id="update-btn" class="icon-btn" title="Проверить новые главы" hidden>↻</button>
+        <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
         <button id="fs-btn" class="icon-btn" title="Полный экран">⛶</button>
+        <button id="more-btn" class="icon-btn" title="Ещё">⋮</button>
       </div>
+      <!-- Тонкая полоса сетевой работы (перевод главы): в поле зрения читающего,
+           но не отбирает место у текста и не мигает иконкой в углу. -->
+      <div id="top-loading" class="top-loading" hidden></div>
     </div>
 
     <div id="view-host" class="view-host">
@@ -184,7 +187,6 @@
     </div>
 
     <div id="reader-bottom" class="reader-bar reader-bottom">
-      <span id="chapter-label" class="chapter-label"></span>
       <button id="prev-btn" class="icon-btn" title="Назад">‹</button>
       <!-- Шкала: перематывает только по зажатию (см. js/progress-bar.js).
            Скрытый input остаётся хранилищем доли для закладок/подсветок. -->
@@ -309,6 +311,25 @@
         </select>
       </div>
     </aside>
+    <!-- Меню «Ещё»: редкие действия, снятые с верхней панели -->
+    <aside id="more-panel" class="panel" hidden>
+      <div class="panel-head">Ещё</div>
+      <nav class="more-list">
+        <button id="tts-btn" class="more-item" type="button">
+          <span class="more-ico">🔊</span><span class="more-label">Читать вслух</span></button>
+        <button id="translate-btn" class="more-item" type="button" aria-pressed="false">
+          <span class="more-ico">🌐</span><span class="more-label">Перевести на русский</span>
+          <span id="translate-state" class="more-state"></span></button>
+        <button id="bm-btn" class="more-item" type="button">
+          <span class="more-ico">🔖</span><span class="more-label">Закладки</span></button>
+        <button id="hl-btn" class="more-item" type="button">
+          <span class="more-ico">🖍️</span><span class="more-label">Подсветки и цитаты</span></button>
+        <button id="update-btn" class="more-item" type="button" hidden>
+          <span class="more-ico">↻</span><span class="more-label">Проверить новые главы</span>
+          <span id="update-state" class="more-state"></span></button>
+      </nav>
+    </aside>
+
     <div id="panel-overlay" class="panel-overlay" hidden></div>
   </section>
 

@@ -12,8 +12,10 @@
 import { $ } from './core/dom.js'
 import { view } from './core/state.js'
 
-const HOLD_MS = 320   // сколько держать палец, чтобы шкала проснулась
-const MOVE_TOL = 12   // px: сдвиг раньше этого — это свайп, а не зажатие
+// Единый «бюджет жестов» приложения: те же порог удержания и допуск на дрожь
+// используются для двойного тапа по центру экрана (см. js/chrome.js).
+export const HOLD_MS = 320   // сколько держать палец, чтобы шкала проснулась
+export const MOVE_TOL = 12   // px: сдвиг раньше этого — это свайп, а не зажатие
 
 let marks = []        // [{ fraction, label }] — начала глав из оглавления
 let lastLoc = null    // location из relocate: { current, next, total }

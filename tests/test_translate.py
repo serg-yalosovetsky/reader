@@ -303,17 +303,14 @@ def test_cache_put_survives_concurrent_insert(client, monkeypatch):
 
         def exec(self, stmt, *a, **kw):
             result = super().exec(stmt, *a, **kw)
-            if not state["raced"]:
+            # Будим соседа ТОЛЬКО после чтения. После INSERT нельзя: он уже
+            # держит блокировку записи, и вложенная сессия на SQLite повисла бы
+            # на ней до таймаута — тест мерил бы блокировку, а не гонку.
+            if not state["raced"] and getattr(stmt, "is_select", False):
                 state["raced"] = True
                 with DbSession(db_engine) as other:
                     other.add(tr.Translation(key=key, text="перевод соседа"))
-                    try:
-                        other.commit()
-                    except IntegrityError:
-                        # Код без SELECT перед вставкой успевает записать первым —
-                        # тогда «соседом» оказываемся мы. Это ровно тот случай,
-                        # который и должна гасить СУБД, а не ронять запрос.
-                        other.rollback()
+                    other.commit()
             return result
 
     monkeypatch.setattr(tr, "Session", RacingSession)
@@ -373,3 +370,22 @@ def test_gateway_error_text_not_reflected(client, monkeypatch):
     body = r.text
     assert "sk-SECRET-LEAK" not in body
     assert "cerebras" not in body
+
+
+def test_cache_put_is_idempotent_for_existing_key(client):
+    """Ключ уже в кэше: повторная запись не падает и не плодит дублей.
+
+    В отличие от теста гонки выше, этот случай прежний код тоже обрабатывал —
+    он здесь как регрессия на саму запись через ON CONFLICT, а не как
+    доказательство фикса.
+    """
+    from backend.app.db.session import engine as db_engine
+    from sqlmodel import Session as DbSession
+
+    key = "other:ru:" + "f" * 64
+    tr._cache_put([(key, "первая запись")])
+    tr._cache_put([(key, "вторая запись")])
+    with DbSession(db_engine) as s:
+        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+    assert len(rows) == 1
+    assert rows[0].text == "первая запись"

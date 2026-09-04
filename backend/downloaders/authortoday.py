@@ -327,14 +327,43 @@ def _login(c: httpx.Client, email: str, password: str) -> bool:
 
 
 def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
+    """Скачать книгу с author.today, держась за долгую сессию аккаунта.
+
+    Сессию ведёт accounts.at_auto: сохранённые куки, а если они протухли —
+    полный вход (пароль + код подтверждения из почты). Прежний путь «логиниться
+    паролем на каждую книгу» с включённым у AT подтверждением входа не работал
+    вовсе: _login возвращал False, результат никто не проверял, и книга 18+
+    выглядела как «нет доступа», хотя она бесплатна (serg/tasks#486).
+
+    Параметр creds оставлен ради совместимости вызовов (chain, monitor,
+    ingest) и больше не используется: пароль берёт at_auto из БД сам.
+    """
+    from ..accounts import at_auto
+
+    # Сессию берём всегда, а не только при пробросе creds: chain ищет на AT
+    # зеркала и зовёт download() без них, а 18+ книга нужна залогиненной и там.
+    # Нет учётки — session_cookies вернёт None, и работаем анонимом, как раньше.
+    cookies = at_auto.session_cookies()
+    try:
+        return _download_once(url, cookies)
+    except PaidContentError as e:
+        # «18+ без входа» при живой учётке = сессия протухла между проверкой
+        # живости и запросом главы. Один принудительный релогин, затем сдаёмся.
+        if getattr(e, "reason", "") == "adult":
+            fresh = at_auto.session_cookies(force=True)
+            if fresh and fresh != cookies:
+                return _download_once(url, fresh)
+        raise
+
+
+def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
     work_id = _work_id(url)
     with egress.at_client(
         timeout=60,
         follow_redirects=True,
+        cookies=cookies or {},
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
-        if creds:
-            _login(c, creds[0], creds[1])
         # 1) Страница книги — метаданные.
         wr = _get(c, f"{_BASE}/work/{work_id}")
         if wr.status_code != 200:
@@ -344,7 +373,7 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
         title, author, annotation, at_meta = _parse_work_meta(wr.text)
 
         # Без входа — платная/18+ недоступна; если залогинились, пробуем скачать.
-        if not _is_free(wr.text) and not creds:
+        if not _is_free(wr.text) and not cookies:
             raise PaidContentError(title=title, author=author, reason="paid")
 
         # 2) Страница ридера — список глав (+ cookies сессии для запросов глав).

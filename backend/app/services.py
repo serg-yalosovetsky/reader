@@ -308,7 +308,14 @@ def register_download(result: DownloadResult, session: Session) -> Work:
                 and new_sec > cur_sec
                 and new_rich >= cur_rich * 0.9
             )
-            if fuller or better_structure or more_chapters:
+            # Версионированный источник (документация Python): свежий файл
+            # актуальнее по определению, спрашивать объём текста нельзя. Патч-
+            # релиз может ВЫЧИСТИТЬ текст (удалённые модули, сокращённые
+            # примеры) — тогда все три критерия ниже ложны, файл не заменяется,
+            # а last_seen всё равно сдвигается, и релиз теряется молча
+            # (spec.reader.python-docs).
+            authoritative = bool((result.extra or {}).get("authoritative"))
+            if authoritative or fuller or better_structure or more_chapters:
                 dest, _ = import_file(src, sha1)
                 _apply_file(existing, dest, result, sha1)
                 # Файл реально заменён — только это событие бампает updated_at.

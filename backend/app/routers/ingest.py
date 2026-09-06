@@ -37,9 +37,13 @@ def ingest(body: IngestIn, session: Session = Depends(get_session)) -> Work:
     except DownloaderError as e:
         raise HTTPException(422, str(e))
     work = register_download(result, session)
-    # Поставить фик на отслеживание обновлений.
+    # Поставить фик на отслеживание обновлений. Метрику подписки задаёт адаптер,
+    # если она НЕ равна числу глав: у документации Python это номер версии
+    # (spec.reader.python-docs). Иначе подписка завелась бы с числом секций
+    # файла в «версионных» единицах и требовала лишней перекачки.
     if work.source_url:
-        monitor.add_monitor(session, work.source_url, work.id, work.chapters_count)
+        metric = (result.extra or {}).get("update_metric") or work.chapters_count
+        monitor.add_monitor(session, work.source_url, work.id, metric)
     return work
 
 

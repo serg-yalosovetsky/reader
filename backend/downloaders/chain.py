@@ -45,6 +45,10 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     opts = {"_creds": creds} if creds else None
 
     # 1) сайты со своими адаптерами.
+    if host.endswith("docs.python.org"):
+        from . import pythondocs
+
+        return pythondocs.download(url)
     if host.endswith("author.today"):
         from . import authortoday
 
@@ -174,6 +178,17 @@ def fetch_fullest(
     descriptor — наш дескриптор {title,author,annotation,file_path,file_format}
     для сверки идентичности. None — ни один источник не отдал валидный вариант."""
     from ..app import book_identity as bi
+
+    # У документации Python единственный источник по определению: искать её
+    # «зеркала» поиском по названию — это лишние запросы на каждом тике и риск
+    # подцепить тёзку (spec.reader.python-docs).
+    if primary_url and (urlparse(primary_url).hostname or "").endswith(
+        "docs.python.org"
+    ):
+        try:
+            return fetch(primary_url, creds=creds)
+        except DownloaderError:
+            return None
 
     cands: list[DownloadResult] = []
 

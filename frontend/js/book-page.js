@@ -111,7 +111,10 @@ export function bookPageMeta(w) {
 // отличалась от полной — «Вечно голодный студент 9» простоял 21 главой из 25.
 function completenessHtml(w) {
   const have = Number(w.chapters_have) || 0
-  const site = Number(w.chapters_site) || 0
+  // Документация Python «меряется» номером версии (3.14.7 → 31407): печатать
+  // «30 гл. из 31407» — значит показать книгу недокачанной на 99.9%.
+  const versioned = w.chapters_unit === 'version'
+  const site = versioned ? 0 : (Number(w.chapters_site) || 0)
   // readli меряет СТРАНИЦАМИ пагинации — подписывать их главами нельзя.
   const unit = w.chapters_unit === 'pages' ? 'стр.' : 'гл.'
   const rows = []

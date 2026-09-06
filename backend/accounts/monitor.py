@@ -63,9 +63,19 @@ def add_monitor(
 def _metric_kind(url: str) -> str:
     """В каких единицах данный источник меряет «главы».
 
-    readli отдаёт число СТРАНИЦ читалки, все остальные — число ГЛАВ. Величины
-    несопоставимы, и путать их нельзя ни при сравнении, ни при взятии max.
+    readli отдаёт число СТРАНИЦ читалки, docs.python.org — НОМЕР ВЕРСИИ
+    (3.14.7 → 31407), все остальные — число ГЛАВ. Величины несопоставимы, и
+    путать их нельзя ни при сравнении, ни при взятии max.
+
+    docs.python.org распознаётся ПОДСТРОКОЙ, а не через `_host`: сюда приходит
+    и полный URL, и голый хост из `last_seen_source`, а у голого хоста
+    `urlparse` не видит hostname вовсе (вернёт None) — проверка по хосту молча
+    дала бы «chapters», единицы разъехались бы, и книга перекачивалась бы на
+    каждом тике (spec.reader.python-docs).
     """
+    s = (url or "").lower()
+    if "docs.python.org" in s:
+        return "version"
     return "pages" if _host(url).lower().endswith("readli.net") else "chapters"
 
 
@@ -97,6 +107,11 @@ def _set_seen(mon: Monitored, value: int, url: str) -> None:
 def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
     """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
     из потоков, своей сессии у неё нет)."""
+    # docs.python.org: «главы» = НОМЕР ВЕРСИИ документации (см. _metric_kind)
+    if host.endswith("docs.python.org"):
+        from ..downloaders import pythondocs as _pd
+
+        return _pd.count_chapters(url)
     # readli: «главы» = число страниц читалки (пагинация растёт при дописывании)
     if host.endswith("readli.net"):
         from ..downloaders import readli as _rd
@@ -140,7 +155,11 @@ def _mirror_eligible(host: str, work_id: int | None, title: str) -> bool:
     искала никогда. Живой случай: две платные на AT книги (work 46 и 1662)
     годами падали на каждом тике, так и не спросив бесплатные агрегаторы.
     Нужны только опознаваемая книга (work_id) и название, по которому искать.
+    Исключение — документация Python: у неё единственный источник, и поиск
+    «зеркал» по названию только тратит запросы (spec.reader.python-docs).
     """
+    if host.endswith("docs.python.org"):
+        return False
     return bool(work_id) and bool(title)
 
 
@@ -425,8 +444,12 @@ def _download_and_write(
     # всю пагинацию. Без этой поправки полностью скачанная книга вечно числится
     # недокачанной: fail_count растёт и через _MAX_FAILS подписка выпадает
     # из авторетрая (живой случай: «Вечно голодный студент 9», 21 гл. из 80 стр.).
-    _page_metric = _metric_kind(best_url) == "pages"
-    got_all = (materialized == 0) or _page_metric or (materialized >= best_cur)
+    # Разнородна ЛЮБАЯ метрика, кроме глав: у readli это страницы пагинации, у
+    # docs.python.org — номер версии (31407). Сравнение с числом секций в файле
+    # там бессмысленно и приводит к вечному has_update: книга качалась бы заново
+    # на каждом тике, а fail_count рос бы до сотен.
+    _heterogeneous = _metric_kind(best_url) != "chapters"
+    got_all = (materialized == 0) or _heterogeneous or (materialized >= best_cur)
     mon.last_checked = utcnow()
     if got_all:
         mon.has_update = False
@@ -440,7 +463,7 @@ def _download_and_write(
             f"докачано {materialized} гл., на сайте {best_cur} — глава недоступна?"
         )
         # materialized — ГЛАВЫ из файла; сюда попадаем только при chapters-метрике
-        # (страничные источники отсечены _page_metric выше), так что единицы сходятся.
+        # (разнородные источники отсечены _heterogeneous выше), единицы сходятся.
         _set_seen(mon, materialized, best_url)
     session.add(mon)
     # Синхронизируем все дубликаты monitored для того же work_id

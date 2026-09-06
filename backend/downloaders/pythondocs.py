@@ -39,6 +39,15 @@ HOST = "docs.python.org"
 BASE = "https://docs.python.org/3/"
 AUTHOR = "Python Software Foundation"
 TIMEOUT = 120.0
+# Потолок на архив документации: он ~9 МБ, и 100 МБ — это уже не «версия
+# потолстела», а сломавшийся upstream. Без потолка ответ, который не кончается,
+# забивает диск VPS: скачивание идёт до конца, а «это вообще zip?» проверяется
+# только после записи.
+MAX_MASTER_BYTES = 100 * 1024 * 1024
+# Собранные части складываем в свой каталог и подчищаем: register_download
+# копирует книгу к себе по sha1, а исходный временный файл не удаляет — за
+# двенадцать книг на каждую пересборку это десятки мегабайт в /tmp навсегда.
+PARTS_TTL_SEC = 6 * 3600
 
 # Часть документации = книга. `dirs` — каталоги внутри официального epub,
 # `roots` — отдельные файлы в его корне. Порядок словаря = порядок оглавления
@@ -269,8 +278,15 @@ def fetch_master(ver: str, vint: int, lang: str = "en") -> Path:
                     raise DownloaderError(
                         f"архив документации не отдан ({r.status_code}): {url}"
                     )
+                size = 0
                 with tmp.open("wb") as f:
                     for chunk in r.iter_bytes(1 << 20):
+                        size += len(chunk)
+                        if size > MAX_MASTER_BYTES:
+                            raise DownloaderError(
+                                f"архив документации больше {MAX_MASTER_BYTES // 1024 // 1024} МБ "
+                                f"— похоже на сбой источника: {url}"
+                            )
                         f.write(chunk)
         if not zipfile.is_zipfile(tmp):
             raise DownloaderError(f"архив документации не похож на epub: {url}")
@@ -434,7 +450,7 @@ def _opf(key: str, ver: str, files: list[str], spine: list[str], cover: bool) ->
         ext = posixpath.splitext(href)[1].lower()
         ids[href] = f"i{i}"
         items.append(
-            f'<item id="i{i}" href="{href}" '
+            f'<item id="i{i}" href="{_esc(href)}" '
             f'media-type="{MEDIA.get(ext, "application/octet-stream")}"/>'
         )
     refs_list = ['<itemref idref="cover-page"/>'] if cover else []
@@ -483,7 +499,7 @@ def _ncx(key: str, tree: list[dict]) -> str:
             out.append(
                 f'{pad}<navPoint id="n{i}" playOrder="{i}">'
                 f"<navLabel><text>{_esc(n['title'])}</text></navLabel>"
-                f'<content src="{n["src"]}"/>{kids}</navPoint>'
+                f'<content src="{_esc(n["src"])}"/>{kids}</navPoint>'
             )
         return "\n".join(out)
 
@@ -501,7 +517,7 @@ def _nav(key: str, tree: list[dict]) -> str:
         if not nodes:
             return ""
         li = "".join(
-            f'<li><a href="{n["src"]}">{_esc(n["title"])}</a>{render(n["children"])}</li>'
+            f'<li><a href="{_esc(n["src"])}">{_esc(n["title"])}</a>{render(n["children"])}</li>'
             for n in nodes
         )
         return f"<ol>{li}</ol>"
@@ -514,6 +530,23 @@ def _nav(key: str, tree: list[dict]) -> str:
         f'<nav epub:type="toc" id="toc"><h1>{_esc(PARTS[key]["title"])}</h1>'
         f"{render(tree)}</nav></body></html>\n"
     )
+
+
+def _prune(parts_dir: Path) -> None:
+    """Убрать собранные части старше PARTS_TTL_SEC.
+
+    Чистим ПЕРЕД сборкой, а не после: свежесобранную часть ещё копирует
+    вызывающий код, и удалять её здесь — значит гоняться с ним наперегонки.
+    """
+    import time
+
+    deadline = time.time() - PARTS_TTL_SEC
+    for stale in parts_dir.glob("pydocs-*.epub"):
+        try:
+            if stale.stat().st_mtime < deadline:
+                stale.unlink(missing_ok=True)
+        except OSError:  # чужой файл/гонка — не повод ронять сборку книги
+            pass
 
 
 def _cover_page(title: str) -> str:
@@ -560,9 +593,15 @@ def build_part(master: Path, key: str, ver: str, out_path: Path | None = None) -
         assets = sorted(n for n in names if n.startswith("_static/")) + sorted(images)
         files = docs + assets
 
-        out = Path(out_path) if out_path else Path(
-            tempfile.mkstemp(suffix=".epub", prefix=f"pydocs-{key}-")[1]
-        )
+        if out_path:
+            out = Path(out_path)
+        else:
+            parts_dir = TMP_DIR / "pythondocs" / "parts"
+            parts_dir.mkdir(parents=True, exist_ok=True)
+            _prune(parts_dir)
+            out = Path(
+                tempfile.mkstemp(suffix=".epub", prefix=f"pydocs-{key}-", dir=str(parts_dir))[1]
+            )
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as w:
             # mimetype обязан лежать первым и БЕЗ сжатия — иначе часть читалок
             # не опознаёт архив как epub.

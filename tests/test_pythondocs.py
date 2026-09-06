@@ -224,3 +224,41 @@ def test_ru_blocks_match_browser_text_content(tmp_path):
 
     got = pr._blocks(b"<html><body><p>Use <code>print()</code> here</p></body></html>")
     assert got == ["Use print() here"]
+
+
+def test_generated_xml_escapes_paths_from_foreign_archive(tmp_path):
+    """Пути приезжают из ЧУЖОГО архива и попадают в наш XML как есть.
+
+    Экранировался только заголовок; `&` в имени файла делал content.opf
+    неразбираемым — книга становилась битой, причём молча и только на тех
+    версиях документации, где такой файл появится.
+    """
+    import xml.etree.ElementTree as ET
+
+    from backend.downloaders import pythondocs as _pd
+
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">
+  <metadata/>
+  <manifest><item id="a" href="tutorial/a&amp;b.xhtml"
+    media-type="application/xhtml+xml"/></manifest>
+  <spine toc="ncx"><itemref idref="a"/></spine>
+</package>"""
+    ncx = """<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><navMap>
+  <navPoint id="n1" playOrder="1"><navLabel><text>A &amp; B</text></navLabel>
+    <content src="tutorial/a&amp;b.xhtml"/></navPoint>
+</navMap></ncx>"""
+    master = tmp_path / "master.epub"
+    with zipfile.ZipFile(master, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("content.opf", opf)
+        z.writestr("toc.ncx", ncx)
+        z.writestr("tutorial/a&b.xhtml", "<html><body><p>x</p></body></html>")
+
+    out = _pd.build_part(master, "tutorial", "3.14.7", tmp_path / "part.epub")
+    with zipfile.ZipFile(out) as z:
+        # разбирается парсером — единственная проверка, которая тут что-то значит
+        ET.fromstring(z.read("content.opf"))
+        ET.fromstring(z.read("toc.ncx"))
+        ET.fromstring(z.read("nav.xhtml"))

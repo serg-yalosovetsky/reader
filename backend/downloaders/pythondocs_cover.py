@@ -96,7 +96,7 @@ def render(title: str, version: str, part_key: str, logo_png: bytes | None = Non
         t = y / (HEIGHT - 1)
         draw.line(
             [(0, y), (WIDTH, y)],
-            fill=tuple(round(a + (b - a) * t) for a, b in zip(BG_TOP, BG_BOTTOM)),
+            fill=tuple(round(a + (b - a) * t) for a, b in zip(BG_TOP, BG_BOTTOM, strict=True)),
         )
     draw.rectangle([0, 0, 13, HEIGHT], fill=accent)
 

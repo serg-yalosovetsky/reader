@@ -75,7 +75,7 @@ def pairs(master_en: Path, master_ru: Path) -> tuple[list[tuple[str, str]], dict
                 stats["mismatch"] += 1
                 continue
             stats["aligned"] += 1
-            for src_text, ru_text in zip(a, b):
+            for src_text, ru_text in zip(a, b, strict=True):
                 src_text = src_text.strip()
                 ru_text = ru_text.strip()
                 if len(src_text) < 3 or not ru_text:

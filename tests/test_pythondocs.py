@@ -146,6 +146,28 @@ def test_toc_covers_every_document(tmp_path):
     assert "<text>Whetting Your Appetite</text>" in ncx
 
 
+def test_part_has_embedded_cover(tmp_path):
+    """Обложка вшита В КНИГУ, а не проставлена в БД отдельным шагом.
+
+    Так она переживает каждое обновление версии сама: после замены файла
+    `_apply_file` достаёт её из epub тем же путём, что и у обычных книг, и
+    ленивая ИИ-генерация обложек к этим книгам не подключается.
+    """
+    from backend.app import covers
+
+    out = pd.build_part(_master(tmp_path), "tutorial", "3.14.7", tmp_path / "part.epub")
+    with zipfile.ZipFile(out) as z:
+        opf = z.read("content.opf").decode()
+        assert "cover.png" in z.namelist()
+        # объявлена и по-epub3, и по-epub2: читалки ищут по-разному
+        assert 'properties="cover-image"' in opf
+        assert '<meta name="cover" content="cover-img"/>' in opf
+        # первой страницей книги, иначе обложку никто не увидит при чтении
+        assert opf.index('idref="cover-page"') < opf.index('idref="i0"')
+    # извлекатель обложек самой читалки обязан её найти
+    assert covers.extract_cover(out, "epub", "pytest-pythondocs") is not None
+
+
 def test_download_result_carries_version_metric(tmp_path, monkeypatch):
     master = _master(tmp_path)
     monkeypatch.setattr(pd, "current_version", lambda: ("3.14.7", 31407))

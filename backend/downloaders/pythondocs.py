@@ -21,13 +21,16 @@ import posixpath
 import re
 import tempfile
 import zipfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+# defusedxml защищает от XXE/billion-laughs: XML приезжает из сети, пусть и
+# с python.org. Тот же выбор, что в calibre/client.py.
+from defusedxml import ElementTree as ET
 
 from ..app.config import TMP_DIR
+from . import pythondocs_cover
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 
 log = logging.getLogger("reader.pythondocs")
@@ -122,6 +125,9 @@ PARTS: dict[str, dict] = {
         ),
     },
 }
+
+# Логотип Python внутри официального архива (он же og:image документации).
+LOGO_ASSET = "_static/og-image.png"
 
 MEDIA = {
     ".xhtml": "application/xhtml+xml",
@@ -397,13 +403,23 @@ def _rewrite_links(html: str, self_path: str, keep: set[str], known: set[str]) -
     return re.sub(r'\b(href)="([^"]*)"', sub, html)
 
 
-def _opf(key: str, ver: str, files: list[str], spine: list[str]) -> str:
+def _opf(key: str, ver: str, files: list[str], spine: list[str], cover: bool) -> str:
     part = PARTS[key]
     items = [
         '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
         '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
         'properties="nav"/>',
     ]
+    if cover:
+        # Обложку объявляем ОБОИМИ способами: `properties="cover-image"` (epub3) и
+        # `<meta name="cover">` (epub2). Читалки и каталогизаторы ищут по-разному,
+        # а извлекатель обложек читалки (covers._epub_cover) начинает со второго.
+        items += [
+            '<item id="cover-img" href="cover.png" media-type="image/png" '
+            'properties="cover-image"/>',
+            '<item id="cover-page" href="cover.xhtml" '
+            'media-type="application/xhtml+xml"/>',
+        ]
     ids = {}
     for i, href in enumerate(files):
         ext = posixpath.splitext(href)[1].lower()
@@ -412,7 +428,9 @@ def _opf(key: str, ver: str, files: list[str], spine: list[str]) -> str:
             f'<item id="i{i}" href="{href}" '
             f'media-type="{MEDIA.get(ext, "application/octet-stream")}"/>'
         )
-    refs = "\n    ".join(f'<itemref idref="{ids[h]}"/>' for h in spine if h in ids)
+    refs_list = ['<itemref idref="cover-page"/>'] if cover else []
+    refs_list += [f'<itemref idref="{ids[h]}"/>' for h in spine if h in ids]
+    refs = "\n    ".join(refs_list)
     desc = (
         f"Официальная документация Python {ver}, раздел «{part['title']}». "
         f"Источник: {part_url(key)}"
@@ -429,7 +447,8 @@ def _opf(key: str, ver: str, files: list[str], spine: list[str]) -> str:
         f"    <dc:description>{_esc(desc)}</dc:description>\n"
         f"    <dc:source>{part_url(key)}</dc:source>\n"
         f'    <meta property="dcterms:modified">{ver}</meta>\n'
-        "  </metadata>\n"
+        + ('    <meta name="cover" content="cover-img"/>\n' if cover else "")
+        + "  </metadata>\n"
         "  <manifest>\n    " + "\n    ".join(items) + "\n  </manifest>\n"
         f'  <spine toc="ncx">\n    {refs}\n  </spine>\n'
         "</package>\n"
@@ -488,6 +507,17 @@ def _nav(key: str, tree: list[dict]) -> str:
     )
 
 
+def _cover_page(title: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+        f"<title>{_esc(title)}</title><style>"
+        "html,body{margin:0;padding:0;height:100%;text-align:center;background:#0e1620}"
+        "img{max-width:100%;max-height:100%}</style></head>"
+        f'<body><img src="cover.png" alt="{_esc(title)}"/></body></html>\n'
+    )
+
+
 def build_part(master: Path, key: str, ver: str, out_path: Path | None = None) -> Path:
     """Собрать самостоятельный epub одной части из официального архива."""
     if key not in PARTS:
@@ -514,6 +544,10 @@ def build_part(master: Path, key: str, ver: str, out_path: Path | None = None) -
             bodies[href] = _rewrite_links(html, href, keep, names)
 
         tree = _complete_tree(tree, docs, bodies)
+        # Логотип берём из самого архива документации — официальный, и он уже
+        # скачан; отдельного запроса за картинкой не нужно.
+        logo = z.read(LOGO_ASSET) if LOGO_ASSET in names else None
+        cover_png = pythondocs_cover.render(part["title"], ver, key, logo)
         assets = sorted(n for n in names if n.startswith("_static/")) + sorted(images)
         files = docs + assets
 
@@ -534,7 +568,10 @@ def build_part(master: Path, key: str, ver: str, out_path: Path | None = None) -
                 '<rootfiles><rootfile full-path="content.opf" '
                 'media-type="application/oebps-package+xml"/></rootfiles></container>',
             )
-            w.writestr("content.opf", _opf(key, ver, files, docs))
+            w.writestr("content.opf", _opf(key, ver, files, docs, bool(cover_png)))
+            if cover_png:
+                w.writestr("cover.png", cover_png)
+                w.writestr("cover.xhtml", _cover_page(part["title"]))
             w.writestr("toc.ncx", _ncx(key, tree))
             w.writestr("nav.xhtml", _nav(key, tree))
             for href, html in bodies.items():

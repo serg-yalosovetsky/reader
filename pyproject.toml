@@ -47,6 +47,10 @@ dependencies = [
     "anyio>=4.0",
     "psycopg[binary]>=3.3.4",
     "defusedxml>=0.7.1",
+    # Картинки: превью обложек (routers/reader.py) и обложки книг документации
+    # (downloaders/pythondocs_cover.py). Стояло в venv транзитивно и не было
+    # объявлено — `uv sync` мог снести его из живого окружения.
+    "pillow>=11.0",
 ]
 
 [dependency-groups]

@@ -232,24 +232,31 @@ def count_chapters(url: str) -> int | None:
     return current_version()[1]
 
 
-def _master_path(ver: str, vint: int) -> Path:
+def _master_path(ver: str, vint: int, lang: str = "en") -> Path:
     minor = ".".join(ver.split(".")[:2])
-    return TMP_DIR / "pythondocs" / f"python-{minor}-docs-{vint}.epub"
+    suffix = "" if lang == "en" else f"-{lang}"
+    return TMP_DIR / "pythondocs" / f"python-{minor}-docs{suffix}-{vint}.epub"
 
 
-def fetch_master(ver: str, vint: int) -> Path:
+def archive_url(ver: str, lang: str = "en") -> str:
+    """Адрес официального архива. Русская сборка живёт под /ru/ той же версии."""
+    minor = ".".join(ver.split(".")[:2])
+    root = BASE if lang == "en" else f"https://docs.python.org/{lang}/3/"
+    return f"{root}archives/python-{minor}-docs.epub"
+
+
+def fetch_master(ver: str, vint: int, lang: str = "en") -> Path:
     """Официальный epub целиком, с кэшем по версии.
 
     12 книг = 12 подписок, и каждая на своём тике попросила бы 9 МБ. Скачиваем
     во временный файл рядом и переименовываем: `check_all` обходит подписки в
     потоках, и половинчатый файл не должен стать «кэшем».
     """
-    dest = _master_path(ver, vint)
+    dest = _master_path(ver, vint, lang)
     if dest.exists() and dest.stat().st_size > 1_000_000:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    minor = ".".join(ver.split(".")[:2])
-    url = f"{BASE}archives/python-{minor}-docs.epub"
+    url = archive_url(ver, lang)
     fd, tmp_name = tempfile.mkstemp(suffix=".epub", dir=str(dest.parent))
     tmp = Path(tmp_name)
     try:
@@ -272,10 +279,12 @@ def fetch_master(ver: str, vint: int) -> Path:
         raise DownloaderError(f"не удалось скачать {url}: {e}") from e
     finally:
         tmp.unlink(missing_ok=True)
-    # Старые версии в кэше не нужны: место дороже повторной загрузки раз в месяц.
-    for old in dest.parent.glob("python-*-docs-*.epub"):
-        if old != dest:
-            old.unlink(missing_ok=True)
+    # Старые ВЕРСИИ в кэше не нужны: место дороже повторной загрузки раз в месяц.
+    # Именно версии, а не «все прочие файлы»: рядом лежит русская сборка той же
+    # версии, и удалять её здесь означало бы качать 9 МБ на каждую часть.
+    for stale in dest.parent.glob("python-*-docs*.epub"):
+        if not stale.name.endswith(f"-{vint}.epub"):
+            stale.unlink(missing_ok=True)
     return dest
 
 

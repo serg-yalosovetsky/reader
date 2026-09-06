@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
+from backend.app import translation_cache as tcache
 from backend.app.routers import translate as tr
 
 
@@ -309,21 +310,21 @@ def test_cache_put_survives_concurrent_insert(client, monkeypatch):
             if not state["raced"] and getattr(stmt, "is_select", False):
                 state["raced"] = True
                 with DbSession(db_engine) as other:
-                    other.add(tr.Translation(key=key, text="перевод соседа"))
+                    other.add(tcache.Translation(key=key, text="перевод соседа"))
                     other.commit()
             return result
 
-    monkeypatch.setattr(tr, "Session", RacingSession)
+    monkeypatch.setattr(tcache, "Session", RacingSession)
     # Не должно бросить: конфликт разрешает СУБД, а не проверка перед вставкой.
     tr._cache_put([(key, "наш перевод"), ("other:ru:" + "d" * 64, "другой абзац")])
 
     with DbSession(db_engine) as s:
-        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+        rows = s.exec(select(tcache.Translation).where(tcache.Translation.key == key)).all()
     assert len(rows) == 1, f"дубль в кэше: {len(rows)} строк"
     # Второй абзац батча записан — падение на одном ключе не теряет остальные.
     with DbSession(db_engine) as s:
         other_rows = s.exec(
-            select(tr.Translation).where(tr.Translation.key == "other:ru:" + "d" * 64)
+            select(tcache.Translation).where(tcache.Translation.key == "other:ru:" + "d" * 64)
         ).all()
     assert len(other_rows) == 1
 
@@ -337,7 +338,7 @@ def test_cache_put_handles_duplicate_within_one_batch(client):
     key = "other:ru:" + "e" * 64
     tr._cache_put([(key, "первый"), (key, "второй")])
     with DbSession(db_engine) as s:
-        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+        rows = s.exec(select(tcache.Translation).where(tcache.Translation.key == key)).all()
     assert len(rows) == 1
 
 
@@ -386,6 +387,6 @@ def test_cache_put_is_idempotent_for_existing_key(client):
     tr._cache_put([(key, "первая запись")])
     tr._cache_put([(key, "вторая запись")])
     with DbSession(db_engine) as s:
-        rows = s.exec(select(tr.Translation).where(tr.Translation.key == key)).all()
+        rows = s.exec(select(tcache.Translation).where(tcache.Translation.key == key)).all()
     assert len(rows) == 1
     assert rows[0].text == "первая запись"

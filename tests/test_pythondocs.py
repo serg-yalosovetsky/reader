@@ -180,3 +180,47 @@ def test_download_result_carries_version_metric(tmp_path, monkeypatch):
     assert res.extra["update_metric"] == 31407
     assert res.extra["authoritative"] is True
     Path(res.file_path).unlink(missing_ok=True)
+
+
+# --- официальный русский перевод как засев кэша -------------------------------
+
+
+def _lang_master(tmp_path, name: str, docs: dict[str, str]):
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w") as z:
+        for href, body in docs.items():
+            z.writestr(href, f"<html><body>{body}</body></html>")
+    return path
+
+
+def test_ru_pairs_align_by_position(tmp_path):
+    from backend.app.translation_cache import key as cache_key
+    from backend.downloaders import pythondocs_ru as pr
+
+    en = _lang_master(tmp_path, "en.epub", {
+        "tutorial/a.xhtml": "<p>Hello world of Python</p><p>Not translated yet</p>",
+        # второй документ: в русской сборке блоков БОЛЬШЕ — выравнивать нельзя
+        "tutorial/b.xhtml": "<p>Some paragraph about modules</p>",
+    })
+    ru = _lang_master(tmp_path, "ru.epub", {
+        "tutorial/a.xhtml": "<p>Привет, мир Python</p><p>Not translated yet</p>",
+        "tutorial/b.xhtml": "<p>Какой-то абзац о модулях</p><p>лишний блок</p>",
+    })
+    rows, stats = pr.pairs(en, ru)
+    assert stats["aligned"] == 1 and stats["mismatch"] == 1
+    # непереведённый абзац в кэш не кладём: он вернулся бы как «перевод» самого себя
+    assert stats["untranslated"] == 1
+    assert rows == [(cache_key("Hello world of Python", "other", "ru"), "Привет, мир Python")]
+
+
+def test_ru_blocks_match_browser_text_content(tmp_path):
+    """Ключ кэша считается по тексту блока — ровно как его отдаёт textContent.
+
+    Внутри абзаца документации почти всегда есть <code>; склей потомков через
+    пробел — и хэш разойдётся с тем, что пришлёт читалка, а засеянный перевод
+    молча перестанет находиться.
+    """
+    from backend.downloaders import pythondocs_ru as pr
+
+    got = pr._blocks(b"<html><body><p>Use <code>print()</code> here</p></body></html>")
+    assert got == ["Use print() here"]

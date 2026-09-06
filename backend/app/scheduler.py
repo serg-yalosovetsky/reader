@@ -48,6 +48,19 @@ def _monitor_job() -> None:
             log.info("Monitor check: %s", {k: r.get(k) for k in ("checked", "with_updates", "downloaded")})
     except Exception as e:  # noqa: BLE001
         log.warning("Monitor check failed: %s", e)
+    # Официальный русский перевод документации Python догоняет оригинал отдельно
+    # от него: после каждого релиза засеянные пары уже не совпадают с новым
+    # английским текстом. Пересев привязан к версии и потому дёшев — при
+    # совпадении это один лёгкий запрос за номером версии.
+    try:
+        from ..downloaders import pythondocs_ru
+
+        with Session(engine) as session:
+            res = pythondocs_ru.maybe_seed(session)
+        if res:
+            log.info("pythondocs ru seed: %s", res)
+    except Exception as e:  # noqa: BLE001
+        log.warning("pythondocs ru seed failed: %s", e)
 
 
 def _calibre_sync_job() -> None:

@@ -12,6 +12,11 @@
 //
 // Оригинал не выбрасывается: он лежит рядом (WeakMap на узел), поэтому возврат
 // мгновенный и не требует перезагрузки главы.
+//
+// Перевод тоже не выбрасывается — он остаётся в кэше вкладки (Map по тексту
+// абзаца) и применяется БЕЗ СЕТИ. Серверный кэш в БД от повторного запроса не
+// спасает: попадание в него всё равно стоит round-trip и полосы загрузки, а
+// «показать оригинал → перевести» — самое частое действие при чтении.
 import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
@@ -33,6 +38,36 @@ let seq = 0
 const originals = new WeakMap()
 // Пометка «этот узел уже переведён» — чтобы листание не переводило заново.
 const done = new WeakSet()
+// Кэш вкладки: текст абзаца -> перевод. Ключ по СОДЕРЖИМОМУ (как и на сервере),
+// поэтому переживает перезагрузку главы, возврат назад и повторное открытие
+// книги — то есть ровно те случаи, ради которых кэш и нужен.
+const cache = new Map()
+// Абзацы, которые переводить не надо (уже на целевом языке): их повторный
+// запрос стоил бы столько же, сколько настоящий перевод.
+const skipCache = new Set()
+// Потолок: книга на сотни тысяч абзацев не должна съесть память вкладки.
+// Вытеснение FIFO — Map хранит порядок вставки, старейший ключ идёт первым.
+const TR_CACHE_MAX = 4000
+
+function cachePut(src, text) {
+  if (!src) return
+  if (cache.size >= TR_CACHE_MAX) cache.delete(cache.keys().next().value)
+  cache.set(src, text)
+}
+
+// Подменить всё, что уже известно этой вкладке, СИНХРОННО. Возвращает блоки,
+// которых в кэше нет — только они и уходят в запрос.
+function applyCached(els) {
+  const miss = []
+  for (const el of els) {
+    const src = (el.textContent || '').trim()
+    if (skipCache.has(src)) { done.add(el); continue }
+    const hit = cache.get(src)
+    if (hit) applyText(el, hit)
+    else miss.push(el)
+  }
+  return miss
+}
 
 export function isTranslateOn() { return on }
 
@@ -77,6 +112,7 @@ function aheadBlocks(doc) {
 // виде не сохраняются (структура фраз при переводе всё равно не совпадает).
 // Оригинальная разметка возвращается целиком при выключении.
 function applyText(el, text) {
+  cachePut((el.textContent || '').trim(), text)
   if (!originals.has(el)) {
     const frag = el.ownerDocument.createDocumentFragment()
     for (const n of el.childNodes) frag.append(n.cloneNode(true))
@@ -120,7 +156,13 @@ async function runTranslate(doc, els, quiet) {
       const el = els[Number(it.id)]
       if (!el) continue
       if (it.changed && it.text) { applyText(el, it.text); changed++ }
-      else done.add(el)  // уже русский или не удался — второй раз не просим
+      else {
+        // Уже русский или батч не удался — второй раз не просим. Абзац на
+        // целевом языке помним по тексту: иначе следующее включение перевода
+        // отправит его в запрос снова, хотя ответ известен заранее.
+        done.add(el)
+        if (!res.failed) skipCache.add((el.textContent || '').trim())
+      }
     }
     if (!quiet && !changed && !(res.translated || res.cached)) {
       // Ничего не поменялось и переводить было нечего: текст уже по-русски.
@@ -144,14 +186,16 @@ async function runTranslate(doc, els, quiet) {
   }
 }
 
-// Видимый экран — сразу, запас — следом и только если режим ещё включён.
+// Сначала — всё, что вкладка уже знает (синхронно, без сети и без полосы
+// загрузки), и только потом запрос за остатком: видимый экран сразу, запас
+// следом и только если режим ещё включён.
 async function translateCurrent(doc) {
-  if (!doc || busy) return
-  const els = currentBlocks(doc)
-  if (els.length) await runTranslate(doc, els, false)
+  if (!doc) return
+  const miss = applyCached(currentBlocks(doc))
+  if (miss.length && !busy) await runTranslate(doc, miss, false)
   if (!on || doc !== bookDoc) return
-  const ahead = aheadBlocks(doc)
-  if (ahead.length) runTranslate(doc, ahead, true)
+  const aheadMiss = applyCached(aheadBlocks(doc))
+  if (aheadMiss.length && !busy) runTranslate(doc, aheadMiss, true)
 }
 
 function setOn(next) {

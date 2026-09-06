@@ -50,7 +50,11 @@ const skipCache = new Set()
 const TR_CACHE_MAX = 4000
 
 function cachePut(src, text) {
-  if (!src) return
+  // src === text означает, что ключом стал уже ПЕРЕВЕДЁННЫЙ текст: такой
+  // записи в кэше быть не должно, она сделала бы перевод неотличимым от
+  // оригинала. Сейчас это недостижимо (подстановка всегда идёт по оригиналу),
+  // но защита дешевле, чем разбирательство, если порядок вызовов изменится.
+  if (!src || src === text) return
   if (cache.size >= TR_CACHE_MAX) cache.delete(cache.keys().next().value)
   cache.set(src, text)
 }
@@ -157,11 +161,13 @@ async function runTranslate(doc, els, quiet) {
       if (!el) continue
       if (it.changed && it.text) { applyText(el, it.text); changed++ }
       else {
-        // Уже русский или батч не удался — второй раз не просим. Абзац на
-        // целевом языке помним по тексту: иначе следующее включение перевода
-        // отправит его в запрос снова, хотя ответ известен заранее.
+        // Уже на целевом языке или батч не удался — второй раз в этом проходе
+        // не просим. Но ЗАПОМИНАЕМ только первое: признак берём по самому
+        // абзацу (it.skipped), а не по ответу целиком. Один упавший абзац из
+        // двенадцати не должен лишать остальные одиннадцать кэша — на книге,
+        // где русский и английский вперемешку, это самый частый случай.
         done.add(el)
-        if (!res.failed) skipCache.add((el.textContent || '').trim())
+        if (it.skipped) skipCache.add((el.textContent || '').trim())
       }
     }
     if (!quiet && !changed && !(res.translated || res.cached)) {

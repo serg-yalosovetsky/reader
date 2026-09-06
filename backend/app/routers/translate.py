@@ -293,12 +293,24 @@ async def translate(req: TranslateReq) -> dict:
     items = []
     for pid, key in plan:
         if key is None:
-            items.append({"id": pid, "text": src_by_id.get(pid, ""), "changed": False})
+            # `skipped: True` — переводить НЕ НАДО (уже целевой язык, пусто,
+            # слишком длинный абзац). Отличается от «не удалось»: там текст тоже
+            # возвращается исходным, но ответ ещё может появиться позже. Без
+            # этого флага фронт не может отличить одно от другого по одному
+            # элементу и вынужден судить по всему ответу целиком.
+            items.append(
+                {"id": pid, "text": src_by_id.get(pid, ""), "changed": False,
+                 "skipped": True}
+            )
         elif key in have:
             items.append({"id": pid, "text": have[key], "changed": True})
         else:
-            # Батч упал — оставляем оригинал, фронт не подменяет этот абзац.
-            items.append({"id": pid, "text": src_by_id.get(pid, ""), "changed": False})
+            # Батч упал — оставляем оригинал, фронт не подменяет этот абзац и НЕ
+            # запоминает его как «переводить не надо»: в следующий раз попробуем.
+            items.append(
+                {"id": pid, "text": src_by_id.get(pid, ""), "changed": False,
+                 "skipped": False}
+            )
     return {
         "items": items,
         "translated": len(fresh),

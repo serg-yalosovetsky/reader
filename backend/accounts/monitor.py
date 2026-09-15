@@ -76,7 +76,11 @@ def _metric_kind(url: str) -> str:
     s = (url or "").lower()
     if "docs.python.org" in s:
         return "version"
-    return "pages" if _host(url).lower().endswith("readli.net") else "chapters"
+    # readli — та же ловушка голого хоста: `_set_seen` пишет «readli.net», у него
+    # `_host` пуст, и страницы readli молча становились главами. Итог: «25 гл. из
+    # 109» на странице книги и `_seen_for` == 0 на каждом тике (update-pipeline v11).
+    host = (_host(url) or s).lower()
+    return "pages" if host.endswith("readli.net") else "chapters"
 
 
 def _seen_for(mon: Monitored, url: str) -> int:

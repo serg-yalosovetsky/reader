@@ -210,17 +210,24 @@ def fetch_fullest(
             )
             try:
                 if not bi.same_book(descriptor, cand, get_text_a=gta, get_text_b=gtb):
+                    log.info(
+                        "fetch_fullest: отброшено «%s» (%s) — не та же книга",
+                        res.title, res.source_url,
+                    )
                     return
-            except Exception:  # noqa: BLE001 — сверка не должна валить докачку
-                pass
+            except Exception as e:  # noqa: BLE001 — сверка не должна валить докачку
+                # Кандидат остаётся в выборе, как и раньше, но след обязан быть.
+                log.warning(
+                    "fetch_fullest: сверка same_book упала на %s: %s", res.source_url, e
+                )
         cands.append(res)
 
     # 1) текущий источник (как есть, с creds для закрытого контента)
     if primary_url:
         try:
             _consider(fetch(primary_url, creds=creds))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.warning("fetch_fullest: основной источник %s не отдал книгу: %s", primary_url, e)
     # 2) author.today по названию/автору (volume-aware search_work)
     if title:
         try:
@@ -229,8 +236,8 @@ def fetch_fullest(
             at_url = authortoday.search_work(title, author)
             if at_url and at_url != primary_url:
                 _consider(authortoday.download(at_url))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.warning("fetch_fullest: зеркало author.today не отдало «%s»: %s", title, e)
         # 3) searchfloor
         try:
             from . import searchfloor
@@ -240,15 +247,15 @@ def fetch_fullest(
                 sf_url = f"https://searchfloor.org/b/{bid}"
                 if sf_url != primary_url:
                     _consider(searchfloor._download_book(bid, sf_url))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.warning("fetch_fullest: зеркало searchfloor не отдало «%s»: %s", title, e)
         # 4) readli
         try:
             from . import readli
 
             _consider(readli.search_and_download(title, author))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.warning("fetch_fullest: зеркало readli не отдало «%s»: %s", title, e)
 
     if not cands:
         return None

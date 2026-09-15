@@ -91,11 +91,49 @@ def search_and_download(title: str, author: str = ""):
         headers={"User-Agent": _UA, "Accept-Language": "ru"},
     ) as c:
         html = _get(c, f"{_BASE}/srch/?q={quote(title)}").text
-    soup = BeautifulSoup(html, "lxml")
+        best_href, authors = _pick(
+            BeautifulSoup(html, "lxml").select(_CARD_SEL)[:15], title, author
+        )
+        # Поиск readli отстаёт от каталога: свежий том есть на странице автора, но
+        # не в /srch/ (живой случай 2026-09-15 — «Вечно голодный студент 10»).
+        # Идём туда только за автором, совпавшим с запросом: без автора чужая
+        # страница ничего не доказывает.
+        if not best_href and authors:
+            best_href = _from_author_pages(c, sorted(authors), title, author)
 
+    if not best_href:
+        return None
+    return download(best_href if best_href.startswith("http") else _BASE + best_href)
+
+
+_CARD_SEL = "article.book, div.book__all"
+_LINK_SEL = "h4.book__title a, .book__title a, a.book__link"
+_AUTHOR_SEL = ".book__authors a[href*='/avtor/'], a[href*='/avtor/']"
+# Страниц автора обходим не больше стольких: у плодовитого автора их десятки, а
+# листинг идёт от новых книг к старым — свежий том почти всегда на первых.
+_AUTHOR_PAGES_MAX = 8
+
+
+def _vol(title: str) -> int:
+    """Номер тома из названия; без номера — том 1, как в book_identity.title_matches."""
+    from ..app.book_identity import _title_key
+
+    return _title_key(title)[1] or 1
+
+
+def _pick(cards, title: str, author: str) -> tuple[str | None, set[str]]:
+    """Карточка под запрос и страницы авторов, прошедших сверку.
+
+    Номер тома — жёсткий фильтр, а не ранжирование: у томов одной серии похожесть
+    названий одинакова (0.94), и «первый из равных» на запрос тома 10 отдавал
+    том 2. Дальше его отбрасывал same_book, и книга оставалась без зеркала вовсе
+    (spec.reader.update-pipeline v11).
+    """
+    want_vol = _vol(title)
     best_href, best_score = None, -1.0
-    for card in soup.select("article.book, div.book__all")[:15]:
-        link = card.select_one("h4.book__title a, .book__title a, a.book__link")
+    authors: set[str] = set()
+    for card in cards:
+        link = card.select_one(_LINK_SEL)
         if not link or not link.get("href"):
             continue
         cand_title = link.get("title") or link.get_text(strip=True)
@@ -103,19 +141,46 @@ def search_and_download(title: str, author: str = ""):
         if title_s < _TITLE_MIN:
             continue
         if author:
-            au = card.select_one(
-                ".book__authors a[href*='/avtor/'], a[href*='/avtor/']"
-            )
+            au = card.select_one(_AUTHOR_SEL)
             cand_author = au.get_text(strip=True) if au else ""
             if cand_author and not _author_ok(author, cand_author):
                 continue
+            if cand_author and au.get("href"):
+                authors.add(au["href"])
+        if _vol(cand_title) != want_vol:
+            continue
         # название — основной ранжирующий сигнал (точный «Том 1» бьёт «Том 2»)
         if title_s > best_score:
             best_score, best_href = title_s, link["href"]
+    return best_href, authors
 
-    if not best_href:
-        return None
-    return download(best_href if best_href.startswith("http") else _BASE + best_href)
+
+def _from_author_pages(
+    c: httpx.Client, author_hrefs: list[str], title: str, author: str
+) -> str | None:
+    """Найти нужный том на страницах автора (/avtor/<slug>/page/<n>/)."""
+    for href in author_hrefs:
+        base = (href if href.startswith("http") else _BASE + href).rstrip("/")
+        seen: set[str] = set()
+        for n in range(1, _AUTHOR_PAGES_MAX + 1):
+            r = _get(c, f"{base}/" if n == 1 else f"{base}/page/{n}/")
+            if r.status_code != 200:
+                break
+            cards = BeautifulSoup(r.text, "lxml").select(_CARD_SEL)
+            picked, _ = _pick(cards, title, author)
+            if picked:
+                return picked
+            hrefs = {
+                a["href"]
+                for a in (k.select_one(_LINK_SEL) for k in cards)
+                if a and a.get("href")
+            }
+            # Страница без новых карточек — листинг кончился (на случай, если за
+            # концом readli отдаёт повтор, а не 404).
+            if not hrefs - seen:
+                break
+            seen |= hrefs
+    return None
 
 
 def _get(c: httpx.Client, url: str, attempts: int = 4) -> httpx.Response:

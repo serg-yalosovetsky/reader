@@ -114,11 +114,12 @@ export function showTopLoading(on) {
 // --- Двойной тап по центру → полный экран ------------------------------------
 // Тайминги берём из progress-bar.js: один «бюджет жестов» на всё приложение.
 import { HOLD_MS, MOVE_TOL } from './progress-bar.js'
+import { isFullscreen, exitFullscreen } from './core/fullscreen.js'
 
 export function toggleFullscreen() {
   const d = document
-  if (d.fullscreenElement || d.webkitFullscreenElement) {
-    (d.exitFullscreen || d.webkitExitFullscreen)?.call(d)
+  if (isFullscreen(d)) {
+    exitFullscreen(d) // помечает выход «нашим» — это не системное «назад»
   } else {
     const el = d.documentElement
     ;(el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)

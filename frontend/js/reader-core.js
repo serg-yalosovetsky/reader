@@ -27,6 +27,9 @@ export async function openReader(work, opts = {}) {
   document.body.classList.add('reader-open')
   $('#library').hidden = true
   $('#reader').hidden = false
+  // Прокрутка библиотеки/страницы книги не должна срезать верх читалки: у
+  // body.reader-open прокрутки нет, и сдвиг оставался навсегда (serg/tasks#902).
+  window.scrollTo(0, 0)
   // Заголовок сверху: по умолчанию — название главы (ставится первым
   // relocate), по тапу переключается на книгу и автора.
   setBookMeta(work)

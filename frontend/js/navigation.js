@@ -13,11 +13,14 @@ import { initProgressBar } from './progress-bar.js'
 import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
          setMoreBadge, setMoreExpanded } from './chrome.js'
 import { initTranslate, onTranslateDocLoaded } from './translate.js'
+import { exitFullscreen, exitMeansBack, takeButtonExit } from './core/fullscreen.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
 function closeReader() {
   ttsStop()
+  // Библиотека не должна остаться в полноэкранном режиме читалки (serg/tasks#902).
+  exitFullscreen()
   document.body.classList.remove('reader-open')
   $('#reader').hidden = true
   $('#library').hidden = false
@@ -211,6 +214,20 @@ $('#fs-btn')?.addEventListener('click', toggleFullscreen)
 document.addEventListener('fullscreenchange', () => {
   const on = !!document.fullscreenElement
   const b = $('#fs-btn'); if (b) { b.textContent = on ? '✖' : '⛶'; b.title = on ? 'Выйти из полного экрана' : 'Полный экран' }
+  // Смена режима меняет высоту окна, а прокрутка документа, набранная в другом
+  // режиме, срезала верх читалки: у body.reader-open прокрутки нет, вернуть её
+  // было нечем (serg/tasks#902). Сбрасываем; книгу переложит обработчик resize.
+  window.scrollTo(0, 0)
+  const byButton = takeButtonExit()
+  if (on) return
+  const readerOpen = !$('#reader').hidden
+  const coarse = !!window.matchMedia?.('(pointer: coarse)').matches
+  if (exitMeansBack({ readerOpen, byButton, coarse })) {
+    // Системное «назад» в полноэкранном режиме браузер потратил на выход из него —
+    // доводим до библиотеки тем же одним нажатием (serg/tasks#903).
+    if (history.state && history.state.reader) history.back()
+    else closeReader()
+  }
 })
 // Состояние проверки новых глав: подпись в строке меню + точка на кнопке ⋮.
 // 'checking' и 'ok' точку не ставят: она значит «есть что посмотреть».

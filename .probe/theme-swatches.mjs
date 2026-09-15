@@ -88,6 +88,32 @@ for (const [label, w, h] of VIEWPORTS) {
   check(`${label}: остальные строки панели остались горизонтальными`,
     m.otherRows.length >= 4 && m.otherRows.every((d) => d === 'row'), { otherRows: m.otherRows })
 
+  // Подпись под кружком — единственный надёжный различитель «Терминала» и «Фосфора»
+  // (фоны их кружков различаются на 1.11:1, текст на 1.28:1 — это неисправимо,
+  // темы и задуманы почти одинаковыми), поэтому читаемость подписи — требование, а не отделка.
+  if (label.startsWith('портрет 390')) {
+    const weak = await page.evaluate((themes) => {
+      const lum = (css) => {
+        const [r, g, b] = css.match(/\d+/g).slice(0, 3).map((v) => {
+          const s = v / 255
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+        })
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+      }
+      const out = []
+      for (const t of themes) {
+        document.documentElement.dataset.theme = t
+        const name = document.querySelector('.swatch-name')
+        const panel = document.getElementById('settings-panel')
+        const [a, b] = [lum(getComputedStyle(name).color), lum(getComputedStyle(panel).backgroundColor)].sort((x, y) => y - x)
+        const ratio = (a + 0.05) / (b + 0.05)
+        if (ratio < 4.5) out.push(`${t} ${ratio.toFixed(2)}`)
+      }
+      return out
+    }, Object.keys(NAMES))
+    check('подпись темы читаема во всех темах (≥4.5:1)', weak.length === 0, { weak })
+  }
+
   await page.close()
 }
 

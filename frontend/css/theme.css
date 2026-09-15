@@ -374,7 +374,10 @@ html.restoring-book #library { display: none; }
   font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
   box-shadow: 0 0 0 2px var(--card);
 }
-.swatch-name { font-size: 10.5px; color: var(--fg-dim); text-align: center; line-height: 1.2; }
+/* Подпись — основным цветом темы, не приглушённым: «Терминал» и «Фосфор»
+   различимы только ею (фоны кружков 1.11:1, текст 1.28:1 — темы и задуманы
+   почти одинаковыми), а --fg-dim на «Сумерках» давал 4.39:1 при норме 4.5. */
+.swatch-name { font-size: 10.5px; color: var(--fg); text-align: center; line-height: 1.2; }
 .stepper { display: flex; align-items: center; gap: 6px; }
 .stepper-val { font-size: 13px; min-width: 48px; text-align: center; color: var(--fg); }
 .select { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; }

@@ -68,4 +68,10 @@ assert.match(html, /width:18%/)
 
 assert.equal(dl.countActive([running, { status: 'queued' }, { status: 'done' }, { status: 'error' }]), 2)
 
+// Скрытая вкладка пропускает только повторные опросы: первый запрос при загрузке
+// и запрос после «Добавить» идут всегда (иначе фоновая вкладка оставалась с пустой панелью).
+assert.equal(dl.shouldPoll('hidden', true), true)
+assert.equal(dl.shouldPoll('hidden', false), false)
+assert.equal(dl.shouldPoll('visible', false), true)
+
 console.log('ok: downloads panel')

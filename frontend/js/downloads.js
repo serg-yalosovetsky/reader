@@ -56,6 +56,15 @@ export function describeJob(job) {
   return { title, sub: parts.join(' · '), pct, kind: job.status }
 }
 
+// Опрашивать ли сервер сейчас. Скрытая вкладка пропускает только ПОВТОРНЫЕ опросы:
+// первый запрос при загрузке и запрос сразу после «Добавить» идут всегда. Иначе
+// библиотека, открытая в фоне (новая вкладка средней кнопкой, телефон с погашенным
+// экраном), оставалась с пустой панелью: visibilitychange приходит не везде
+// (найдено живой проверкой во фоновой вкладке Chrome, 2026-09-15).
+export function shouldPoll(visibilityState, force) {
+  return Boolean(force) || visibilityState === 'visible'
+}
+
 export function countActive(jobs) {
   return (jobs || []).filter((j) => j.status === 'queued' || j.status === 'running').length
 }
@@ -122,14 +131,14 @@ function render(data) {
   }
 }
 
-function schedule(ms) {
+function schedule(ms, force = false) {
   clearTimeout(timer)
-  timer = setTimeout(tick, ms)
+  timer = setTimeout(() => tick(force), ms)
 }
 
-async function tick() {
+async function tick(force = false) {
   timer = null
-  if (document.visibilityState !== 'visible') return // вернёмся по visibilitychange
+  if (!shouldPoll(document.visibilityState, force)) return // вернёмся по visibilitychange
   let data
   try {
     data = await api.get('/api/ingest/jobs?limit=20')
@@ -145,13 +154,13 @@ async function tick() {
   if (active > 0) schedule(POLL_MS)
 }
 
-export function refreshDownloads() { schedule(0) }
+export function refreshDownloads() { schedule(0, true) }
 
 // Скачивание, начатое в этой вкладке: панель раскрывается, опрос начинается сразу.
 export function watchDownloads(jobId) {
   if (jobId) ownJobs.add(jobId)
   setCollapsed(false)
-  schedule(300)
+  schedule(300, true)
 }
 
 function init() {

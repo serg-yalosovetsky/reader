@@ -1,7 +1,9 @@
 """Утилиты файлового хранилища книг: SHA-1, импорт файла в BOOKS_DIR."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
@@ -37,5 +39,17 @@ def import_file(src: Path, sha1: str | None = None) -> tuple[Path, str]:
     dest = BOOKS_DIR / f"{sha1}{ext}"
     if not dest.exists():
         BOOKS_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        # Атомарно: копия в .part и rename. Оборванная прямая копия осталась бы под
+        # итоговым sha1-именем, и следующий импорт увидел бы «уже есть» — битая книга
+        # навсегда (задание скачивания теперь возобновляется после рестарта, #892).
+        tmp = dest.with_name(dest.name + ".part")
+        try:
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dest)
+        except BaseException:
+            # Недописанный .part убираем; если и это не вышло — ошибка копирования
+            # важнее, она уходит выше как есть, а мусорный .part не выглядит книгой.
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            raise
     return dest, sha1

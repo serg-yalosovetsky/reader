@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import scheduler
+from . import ingestjob, scheduler
 from .config import FRONTEND_DIR
 from .db.session import init_db
 from .routers import article, accounts, bookmarks, calibre, convert, highlights, ingest, library, progress, reader, readera, translate, tts
@@ -41,8 +41,13 @@ def _setup_logging() -> None:
 async def lifespan(app: FastAPI):
     _setup_logging()
     init_db()
+    # Очередь скачиваний в БД: сперва вернуть свои задания, прерванные крэшем,
+    # потом поднять воркеры (serg/tasks#892).
+    ingestjob.recover_on_startup()
+    ingestjob.start_workers()
     scheduler.start()
     yield
+    ingestjob.stop_workers(mark=True)
     scheduler.shutdown()
 
 

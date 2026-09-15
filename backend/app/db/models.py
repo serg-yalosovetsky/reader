@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+import uuid
+
+from sqlalchemy import Index, text
 from sqlmodel import Field, SQLModel
 
 
@@ -198,3 +201,62 @@ class Translation(SQLModel, table=True):
     key: str = Field(index=True, unique=True)
     text: str = ""
     created_at: datetime = Field(default_factory=utcnow)
+
+
+def utcnow_naive() -> datetime:
+    """UTC без tzinfo — так Postgres отдаёт timestamp without time zone; в таблице
+    заданий храним одну конвенцию, чтобы разность времён не падала."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class IngestJob(SQLModel, table=True):
+    """Фоновое задание скачивания книги (POST /api/ingest {background: true}).
+
+    Живёт в БД, а не в памяти процесса: рестарт сервиса не должен молча убивать
+    идущее скачивание (serg/tasks#892). Жизненный цикл и правила возобновления —
+    backend/app/ingestjob.py.
+    """
+
+    __tablename__ = "ingest_job"
+    __table_args__ = (
+        # Одно активное задание на один запрос: повторный POST (двойной тап,
+        # перезагрузка страницы) не должен ставить то же скачивание второй раз.
+        Index(
+            "ux_ingest_job_active_query",
+            "query",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+    )
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex, primary_key=True, max_length=64)
+    kind: str = "ingest"
+    query: str = ""
+    status: str = Field(default="queued", index=True)  # queued | running | done | error
+    # Запусков задания; плановая остановка сервиса попытку не сжигает (см. ingestjob).
+    attempts: int = 0
+    max_attempts: int = 3
+    interruptions: int = 0
+    interrupted_by: Optional[str] = None  # shutdown | crash
+    not_before: Optional[datetime] = None
+    # Какой процесс держит задание: юнит стабилен между рестартами, boot — нет.
+    worker_unit: str = ""
+    worker_boot: str = ""
+    heartbeat_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    title: str = ""
+    author: str = ""
+    source_host: str = ""
+    work_id: Optional[int] = None
+    chapters: int = 0
+    error: Optional[str] = None
+    # Прогресс для панели скачиваний (serg/tasks#893); колонки заведены сразу,
+    # чтобы не делать второй ALTER на общем Postgres.
+    progress_done: int = 0
+    progress_total: Optional[int] = None
+    progress_unit: str = ""
+    progress_stage: str = ""

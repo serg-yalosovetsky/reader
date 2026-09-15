@@ -20,7 +20,7 @@ from sqlmodel import Session
 
 from backend.accounts import monitor
 from backend.app.db.models import Monitored, Work
-from backend.app.routers import ingest as ingest_router
+from backend.app import ingest_service
 from backend.downloaders.base import DownloaderError, DownloadResult
 
 URL = "https://ficbook.net/readfic/3658527"
@@ -79,16 +79,16 @@ def _work(**kw) -> Work:
 
 
 def _patch_ok(monkeypatch):
-    monkeypatch.setattr(ingest_router.chain, "fetch", lambda q, creds=None: _result())
-    monkeypatch.setattr(ingest_router, "register_download", lambda res, session: _work())
-    monkeypatch.setattr(ingest_router.monitor, "add_monitor", lambda *a, **k: None)
+    monkeypatch.setattr(ingest_service.chain, "fetch", lambda q, creds=None: _result())
+    monkeypatch.setattr(ingest_service, "register_download", lambda res, session: _work())
+    monkeypatch.setattr(ingest_service.monitor, "add_monitor", lambda *a, **k: None)
 
 
 def _patch_fail(monkeypatch):
     def boom(q, creds=None):
         raise DownloaderError("403 Client Error: Forbidden")
 
-    monkeypatch.setattr(ingest_router.chain, "fetch", boom)
+    monkeypatch.setattr(ingest_service.chain, "fetch", boom)
 
 
 def _wait_job(client, job_id: str, timeout: float = 10.0) -> dict:

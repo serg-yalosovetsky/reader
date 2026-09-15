@@ -456,6 +456,12 @@ export class Paginator extends HTMLElement {
     #margin = 0
     #index = -1
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
+    // ПАТЧ (serg/tasks#909): смещение вида от верха якорного диапазона на момент,
+    // когда якорь сняли с экрана. Без него возврат к якорю выравнивал текст по
+    // верху первой видимой строки, и каждый рост документа сдвигал его на строку.
+    #anchorDelta = null // { range, delta }
+    // Читатель прокрутил сам, а якорь ещё не переснят (#afterScroll ждёт дебаунс).
+    #userScrolled = false
     #justAnchored = false
     #locked = false // while true, prevent any further navigation
     #styles
@@ -703,7 +709,7 @@ export class Paginator extends HTMLElement {
         }
         this.#view = new View({
             container: this,
-            onExpand: () => this.#scrollToAnchor(this.#anchor),
+            onExpand: () => this.#restoreAnchor(),
         })
         this.#container.append(this.#view.element)
         return this.#view
@@ -809,13 +815,42 @@ export class Paginator extends HTMLElement {
             // после выхода из полноэкранного режима текст уезжал вверх.
             // Якорь — видимый range, его держит #afterScroll, так что это
             // прокрутка на место, а не переверстка.
-            this.#resizeTimer = setTimeout(() => this.#scrollToAnchor(this.#anchor), 80)
+            this.#resizeTimer = setTimeout(() => this.#restoreAnchor(), 80)
             return
         }
         this.#resizeTimer = setTimeout(() => {
             if (typeof w === 'number') this.#lastRenderedWidth = w
             this.render()
         }, 80)
+    }
+    // ПАТЧ (serg/tasks#909). Вернуть взгляд к якорю после изменения размеров
+    // (рост документа главы, высота контейнера). В «ленте» якорь снимается
+    // отложенно, через 80 мс после последнего scroll, а во время касания и
+    // инерции scroll идёт каждый кадр, и якорь остаётся там, где свайп начался.
+    // Возврат к нему отбрасывал читателя назад на весь пройденный путь: «веду
+    // вниз, отпускаю — и оказываюсь на страницу выше». Пока читатель листает
+    // сам, старый якорь недействителен: переснимаем его с экрана и не прыгаем.
+    #restoreAnchor() {
+        if (this.scrolled && (this.#touchScrolled || this.#momentumRAF || this.#userScrolled)) {
+            this.#rememberAnchor(this.#getVisibleRange())
+            return
+        }
+        return this.#scrollToAnchor(this.#anchor)
+    }
+    // Якорь = видимый диапазон; в «ленте» ещё и точное смещение вида от него.
+    #rememberAnchor(range) {
+        if (!range) return
+        this.#anchor = range
+        const offset = this.scrolled ? this.#rangeOffset(range) : null
+        this.#anchorDelta = offset == null ? null : { range, delta: this.start - offset }
+    }
+    // Куда #scrollToRect поставил бы прокрутку, чтобы верх диапазона был вверху.
+    #rangeOffset(anchor) {
+        const rects = uncollapse(anchor)?.getClientRects?.()
+        if (!rects) return null
+        const rect = Array.from(rects).find(r => r.width > 0 && r.height > 0) || rects[0]
+        if (!rect) return null
+        return this.#getRectMapper()(rect).left - this.#margin
     }
     render() {
         if (!this.#view) return
@@ -895,6 +930,9 @@ export class Paginator extends HTMLElement {
             samples: [{ t: e.timeStamp, x: touch?.screenX, y: touch?.screenY }],
         }
         if (this.#momentumRAF) { cancelAnimationFrame(this.#momentumRAF); this.#momentumRAF = null }
+        // ПАТЧ (serg/tasks#909): флаг программной прокрутки, чьё scroll-событие так
+        // и не пришло, иначе съел бы #afterScroll этого свайпа.
+        this.#justAnchored = false
     }
     #onTouchMove(e) {
         const state = this.#touchState
@@ -918,7 +956,12 @@ export class Paginator extends HTMLElement {
                 this.#touchScrolled = true
                 // touch events don't cross iframe boundaries; scroll #container manually
                 const M = 1.2
+                const before = this.#container[this.scrollProp]
                 this.#container.scrollBy(this.#vertical ? -dx * M : 0, this.#vertical ? 0 : dy * M)
+                // ПАТЧ (serg/tasks#909): «листал сам» — только если лента сдвинулась. Упор
+                // в край главы scroll-события не даёт, #afterScroll флаг не снимет, и
+                // возврат к якорю навигации (конец/начало главы) перестал бы работать.
+                if (this.#container[this.scrollProp] !== before) this.#userScrolled = true
             }
             return
         }
@@ -964,6 +1007,7 @@ export class Paginator extends HTMLElement {
             const move = v * dt
             this.#container.scrollBy(this.#vertical ? -move : 0, this.#vertical ? 0 : move)
             const after = this.#container[this.scrollProp]
+            if (after !== before) this.#userScrolled = true
             v *= Math.pow(0.945, dt / 16)
             if (Math.abs(v) < 0.015 || after === before) { this.#momentumRAF = null; return }
             this.#momentumRAF = requestAnimationFrame(step)
@@ -1016,6 +1060,8 @@ export class Paginator extends HTMLElement {
         if (element[scrollProp] === offset) {
             this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size]
             this.#afterScroll(reason)
+            // ПАТЧ (serg/tasks#909): scroll-события не будет — снять флаг сразу.
+            this.#justAnchored = false
             return
         }
         // FIXME: vertical-rl only, not -lr
@@ -1042,6 +1088,10 @@ export class Paginator extends HTMLElement {
     }
     async #scrollToAnchor(anchor, reason = 'anchor') {
         this.#anchor = anchor
+        // ПАТЧ (serg/tasks#909): новый якорь задан явно — прежняя прокрутка читателя
+        // уже не в счёт (иначе переход по оглавлению сразу после свайпа не
+        // возвращался бы к цели при дорисовке шрифтов и картинок).
+        this.#userScrolled = false
         const rects = uncollapse(anchor)?.getClientRects?.()
         // if anchor is an element or a range
         if (rects) {
@@ -1050,6 +1100,13 @@ export class Paginator extends HTMLElement {
             const rect = Array.from(rects)
                 .find(r => r.width > 0 && r.height > 0) || rects[0]
             if (!rect) return
+            // ПАТЧ (serg/tasks#909): якорь, снятый с экрана, возвращаем ровно на
+            // прежнее смещение, а не на верх первой видимой строки.
+            const d = this.#anchorDelta
+            if (this.scrolled && reason === 'anchor' && d && d.range === anchor) {
+                await this.#scrollTo(this.#getRectMapper()(rect).left - this.#margin + d.delta, reason)
+                return
+            }
             await this.#scrollToRect(rect, reason)
             return
         }
@@ -1078,8 +1135,10 @@ export class Paginator extends HTMLElement {
         const range = this.#getVisibleRange()
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor
-        if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor')
-            this.#anchor = range
+        if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor') {
+            this.#rememberAnchor(range)
+            this.#userScrolled = false
+        }
         else this.#justAnchored = true
 
         const index = this.#index

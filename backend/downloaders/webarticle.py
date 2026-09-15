@@ -146,7 +146,7 @@ class ImageStore:
         mime = (mime or "").lower()
         if mime not in _MIME_EXT or len(data) > MAX_IMG_BYTES:
             return None
-        digest = hashlib.sha1(data).hexdigest()
+        digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
         if digest in self._by_hash:
             self._by_url[url] = self._by_hash[digest]
             return self._by_hash[digest]
@@ -181,7 +181,7 @@ class ImageStore:
             self.skipped += 1
             return None
 
-        digest = hashlib.sha1(data).hexdigest()
+        digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
         if digest in self._by_hash:  # та же картинка под другим URL
             self._by_url[url] = self._by_hash[digest]
             return self._by_hash[digest]
@@ -576,7 +576,7 @@ def build_book(
     book_author = (author or "").strip() or next((a.author for a in arts if a.author), "")
     host = urlparse(arts[0].url).hostname or ""
     lang = next((a.lang for a in arts if a.lang), "") or "ru"
-    ident = "web-" + hashlib.sha1("\n".join(a.url for a in arts).encode()).hexdigest()[:16]
+    ident = "web-" + hashlib.sha1("\n".join(a.url for a in arts).encode(), usedforsecurity=False).hexdigest()[:16]
     annotation = f"Собрано из {len(sections)} статей с {host}."
 
     path: Path = build_epub(
@@ -699,7 +699,7 @@ def build_book_from_files(
     book_author = (author or "").strip() or next((a.author for a in arts if a.author), "")
     host = urlparse(arts[0].url).hostname or ""
     lang = next((a.lang for a in arts if a.lang), "") or "ru"
-    ident = "web-" + hashlib.sha1("\n".join(a.url for a in arts).encode()).hexdigest()[:16]
+    ident = "web-" + hashlib.sha1("\n".join(a.url for a in arts).encode(), usedforsecurity=False).hexdigest()[:16]
     annotation = f"Собрано из {len(sections)} сохранённых страниц" + (f" ({host})" if host else "") + "."
 
     path_out: Path = build_epub(

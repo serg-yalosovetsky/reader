@@ -12,7 +12,7 @@ SUPPORTED_FORMATS = {".epub": "epub", ".fb2": "fb2", ".pdf": "pdf"}
 
 def sha1_of_file(path: Path) -> str:
     """SHA-1 файла (как у ReadEra doc_sha1) — потоково, без загрузки в память."""
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)  # идентичность файла, не защита
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)

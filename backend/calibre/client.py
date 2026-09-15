@@ -198,7 +198,7 @@ def download_book(calibre_id: int, fmt: str, dest: str | Path) -> tuple[Path, st
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)  # контрольная сумма скачивания, не защита
     with _client(timeout=180.0) as cli:
         with cli.stream("GET", f"/opds/download/{calibre_id}/{fmt}/") as r:
             r.raise_for_status()

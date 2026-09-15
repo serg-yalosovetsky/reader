@@ -144,7 +144,7 @@ def _seed(meta: dict, salt: str = "") -> int:
     """Детерминированный seed из sha1/заголовка (одинаковая книга → тот же арт;
     salt меняем при force-регенерации)."""
     key = (meta.get("sha1") or meta.get("title") or "x") + salt
-    return int(hashlib.sha1(key.encode("utf-8", "ignore")).hexdigest()[:12], 16)
+    return int(hashlib.sha1(key.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()[:12], 16)
 
 
 # --------------------------------------------------------------------------- #

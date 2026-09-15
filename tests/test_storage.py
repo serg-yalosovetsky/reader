@@ -17,7 +17,7 @@ def test_detect_format():
 def test_sha1_of_file(tmp_path):
     p = tmp_path / "data.bin"
     p.write_bytes(b"hello world")
-    assert storage.sha1_of_file(p) == hashlib.sha1(b"hello world").hexdigest()
+    assert storage.sha1_of_file(p) == hashlib.sha1(b"hello world", usedforsecurity=False).hexdigest()
 
 
 def test_import_file_idempotent(tmp_path):

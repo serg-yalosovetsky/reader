@@ -126,7 +126,7 @@ async def _synth_edge(text: str, edge_id: str, rate: str, audio_path, words_path
 
 
 def _key(text: str, voice_id: str, rate: str) -> str:
-    return hashlib.sha1(f"{voice_id}|{rate}|{text}".encode()).hexdigest()
+    return hashlib.sha1(f"{voice_id}|{rate}|{text}".encode(), usedforsecurity=False).hexdigest()
 
 
 class SynthIn(BaseModel):

@@ -39,7 +39,7 @@ def is_generic_cover(data: bytes | None, *, check_aspect: bool = False) -> bool:
     """
     if not data:
         return False
-    if hashlib.md5(data).hexdigest() in _GENERIC_COVER_MD5:
+    if hashlib.md5(data, usedforsecurity=False).hexdigest() in _GENERIC_COVER_MD5:
         return True
     if check_aspect:
         size = _img_size(data)

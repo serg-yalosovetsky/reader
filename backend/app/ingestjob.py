@@ -28,6 +28,7 @@ import socket
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import delete, or_, update
 from sqlalchemy.exc import IntegrityError
@@ -46,9 +47,36 @@ CRASH_RETRY_DELAY = timedelta(seconds=10)
 RETENTION = timedelta(days=7)
 
 _HOST = socket.gethostname()
-WORKER_UNIT = (
-    f"reader.service@{_HOST}" if os.environ.get("INVOCATION_ID") else f"manual@{_HOST}:{os.getpid()}"
-)
+
+
+def _detect_unit(cgroup_text: str, host: str, pid: int) -> str:
+    """Имя systemd-юнита процесса из его cgroup: «reader.service@host».
+
+    НЕ по INVOCATION_ID: systemd выставляет его ЛЮБОМУ юниту, и диагностический
+    процесс из транзиентного юнита mesh-ops счёл себя ридером (проверка
+    2026-09-15) — его recover_on_startup вернул бы в очередь живые задания прода.
+    Вне service-юнита (ручной запуск, тесты) — «manual@host:pid»: такой процесс
+    не считает своими ничьи прерванные задания, кроме собственных.
+    """
+    for line in (cgroup_text or "").splitlines():
+        path = line.rsplit(":", 1)[-1]
+        for seg in reversed(path.strip("/").split("/")):
+            if seg.endswith(".service"):
+                return f"{seg}@{host}"
+    return f"manual@{host}:{pid}"
+
+
+def _read_own_cgroup() -> str:
+    try:
+        return Path("/proc/self/cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        # Не Linux или /proc недоступен: юнит определится как manual@host:pid —
+        # безопасный вариант (чужие задания не трогаем), но скажем об этом.
+        log.warning("очередь скачиваний: не прочитать /proc/self/cgroup (%s) — воркер будет manual", e)
+        return ""
+
+
+WORKER_UNIT = _detect_unit(_read_own_cgroup(), _HOST, os.getpid())
 WORKER_BOOT = os.environ.get("INVOCATION_ID") or uuid.uuid4().hex
 
 _ACTIVE = ("queued", "running")

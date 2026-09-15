@@ -259,17 +259,46 @@
     <!-- Панель вида (темы, шрифт) -->
     <aside id="settings-panel" class="panel" hidden>
       <div class="panel-head">Вид</div>
-      <div class="setting-row">
+      <!-- Тема: 8 вариантов сеткой 4×2 под подписью (serg/tasks#912). Образец «Аа»
+           цветом темы вместо цветного кружка — иначе «Терминал» и «Фосфор»
+           неразличимы; подпись под кружком видна всегда: title на телефоне
+           недоступен, а у кнопок с текстом внутри он ещё и не читается
+           скринридером — отсюда явный aria-label. -->
+      <div class="setting-row setting-row--theme">
         <span class="setting-label">Тема</span>
         <div class="theme-swatches">
-          <button class="swatch" data-theme="day" title="День" style="background:#ffffff;color:#222"></button>
-          <button class="swatch" data-theme="sepia" title="Сепия" style="background:#f5ecd9;color:#5b4636"></button>
-          <button class="swatch" data-theme="grey"     title="Серая"    style="background:#cfd2d4;color:#222"></button>
-          <button class="swatch" data-theme="dusk"     title="Сумерки"  style="background:#2b2e33;color:#dde1e7"></button>
-          <button class="swatch" data-theme="night"    title="Ночь"     style="background:#15171a;color:#cbd0d6"></button>
-          <button class="swatch" data-theme="terminal" title="Терминал" style="background:#0d1117;color:#3fb950">●</button>
-          <button class="swatch" data-theme="black"    title="Чёрная"   style="background:#000;color:#bdbdbd"></button>
-          <button class="swatch" data-theme="phosphor" title="Фосфор"   style="background:#000;color:#39d353">●</button>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="day" aria-label="Тема: День" title="День" style="background:#ffffff;color:#222">Аа</button>
+            <span class="swatch-name" aria-hidden="true">День</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="sepia" aria-label="Тема: Сепия" title="Сепия" style="background:#f5ecd9;color:#5b4636">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Сепия</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="grey" aria-label="Тема: Серая" title="Серая" style="background:#cfd2d4;color:#222">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Серая</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="dusk" aria-label="Тема: Сумерки" title="Сумерки" style="background:#2b2e33;color:#dde1e7">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Сумерки</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="night" aria-label="Тема: Ночь" title="Ночь" style="background:#15171a;color:#cbd0d6">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Ночь</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="terminal" aria-label="Тема: Терминал" title="Терминал" style="background:#0d1117;color:#3fb950">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Терминал</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="black" aria-label="Тема: Чёрная" title="Чёрная" style="background:#000;color:#bdbdbd">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Чёрная</span>
+          </div>
+          <div class="swatch-item">
+            <button class="swatch" data-theme="phosphor" aria-label="Тема: Фосфор" title="Фосфор" style="background:#000;color:#39d353">Аа</button>
+            <span class="swatch-name" aria-hidden="true">Фосфор</span>
+          </div>
         </div>
       </div>
       <div class="setting-row">

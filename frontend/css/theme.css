@@ -347,11 +347,34 @@ html.restoring-book #library { display: none; }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .setting-label { font-size: 14px; color: var(--fg-dim); }
-.theme-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
-.swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; font-size: 11px; position: relative; }
-/* Тач-зона 44px вокруг кружка 30px (WCAG 2.5.5) без изменения его вида/раскладки. */
-.swatch::before { content: ''; position: absolute; inset: -7px; }
-.swatch[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+/* Тема — единственный ряд с 8 вариантами: подпись сверху, сетка на всю ширину
+   снизу. В общей строке свотчам оставалось 236–266px, а 8 кружков с отступами
+   требуют 296px — не влезало ни на одном телефоне (serg/tasks#912). */
+.setting-row--theme { flex-direction: column; align-items: stretch; gap: 10px; }
+/* Сетка 4×2, а не flex-wrap: перенос всегда 4+4 и сирота структурно невозможен —
+   flex-wrap переносил жадно и давал то 7+1, то 6+2. */
+.theme-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 8px; }
+.swatch-item { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+/* Цель 44×44 — настоящий бокс, как у .reader-bar .icon-btn. Прежний свес
+   ::before{inset:-7px} перекрывался свесом соседа при отступе 8px, и хит-тест
+   давал 37–39px вместо обещанных 44 (замер стенда .probe/theme-swatches.mjs). */
+.swatch {
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--line); cursor: pointer;
+  font-size: 14px; font-weight: 600; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.swatch[aria-current="true"] { border: 2px solid var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+/* Выбор — не только цвет кольца: галочка-бейдж (форма). */
+.swatch[aria-current="true"]::after {
+  content: '✓'; position: absolute; right: -2px; bottom: -2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  box-shadow: 0 0 0 2px var(--card);
+}
+.swatch-name { font-size: 10.5px; color: var(--fg-dim); text-align: center; line-height: 1.2; }
 .stepper { display: flex; align-items: center; gap: 6px; }
 .stepper-val { font-size: 13px; min-width: 48px; text-align: center; color: var(--fg); }
 .select { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; }

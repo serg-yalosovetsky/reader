@@ -62,11 +62,27 @@ def _work_id(url: str) -> str:
     return m.group(1)
 
 
+def _utf16_units(s: str) -> list[int]:
+    b = s.encode("utf-16-le", "surrogatepass")
+    return [int.from_bytes(b[i : i + 2], "little") for i in range(0, len(b), 2)]
+
+
 def _decrypt(text: str, secret: str, user_id: str = "") -> str:
-    """XOR-расшифровка текста главы (порт decryptText из юзерскрипта)."""
-    key = secret[::-1] + "@_@" + (user_id or "")
+    """XOR-расшифровка текста главы (порт decryptText из юзерскрипта).
+
+    XOR идёт по UTF-16-юнитам — так, как считает JavaScript (charCodeAt), а не по
+    code point'ам Python. Символ вне BMP (эмодзи, значки) — это ДВА юнита; при
+    посимвольном XOR в Python индекс ключа после каждого такого символа уезжал на
+    единицу, и весь текст дальше превращался в мусор (serg/tasks#899: «Глава 7»
+    книги 3406 — три эмодзи, хвост «Спасибо за подарки…» расшифровывался только
+    ключом со сдвигом ровно на 3). surrogatepass — XOR может дать одиночный
+    суррогат в промежутке, это не ошибка данных.
+    """
+    key = _utf16_units(secret[::-1] + "@_@" + (user_id or ""))
     klen = len(key)
-    return "".join(chr(ord(text[i]) ^ ord(key[i % klen])) for i in range(len(text)))
+    units = _utf16_units(text)
+    raw = b"".join((u ^ key[i % klen]).to_bytes(2, "little") for i, u in enumerate(units))
+    return raw.decode("utf-16-le", "surrogatepass")
 
 
 def _title_volume(title: str) -> int | None:

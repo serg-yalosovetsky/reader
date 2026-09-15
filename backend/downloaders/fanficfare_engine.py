@@ -131,15 +131,16 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     except subprocess.TimeoutExpired as e:
         raise DownloaderError(f"FanFicFare превысил тайм-аут на {url}") from e
 
-    stderr = (proc.stderr or "").strip()
+    stderr = _strip_noise(proc.stderr)
     # FanFicFare сообщает о незнакомом сайте характерным текстом.
     if "Failed to find adapter" in stderr or "No adapter found" in stderr:
         raise UnsupportedURL(stderr or f"FanFicFare не знает сайт: {url}")
 
     epubs = sorted(workdir.glob("*.epub"))
     if not epubs:
-        # Нет файла — частые причины: требуется логин, защита Cloudflare, 0 глав.
-        msg = stderr or (proc.stdout or "").strip() or "EPUB не создан"
+        # Нет файла — частые причины: требуется логин, защита Cloudflare, 0 глав,
+        # фик удалён («Story does not exist» — FanFicFare пишет это в STDOUT).
+        msg = _reason(proc.stdout, proc.stderr) or "EPUB не создан"
         raise DownloaderError(f"Не удалось скачать {url}: {msg[:400]}")
 
     epub = epubs[0]
@@ -154,6 +155,28 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         num_chapters=int(meta.get("numChapters", 0) or 0),
         extra={"workdir": str(workdir), "raw_meta": meta},
     )
+
+
+# Служебные строки, которые печатает не FanFicFare, а окружение интерпретатора:
+# `zzz_sentry_bootstrap.pth` в venv сообщает об инициализации Sentry в stderr
+# КАЖДОГО python-процесса. Раньше сообщение об ошибке строилось как
+# `stderr or stdout`, и эта строка вытесняла настоящую причину («Story does not
+# exist» в stdout) — и из лога, и из интерфейса (serg/tasks#888).
+_NOISE_PREFIXES = ("[sentry_bootstrap]",)
+
+
+def _strip_noise(text: str | None) -> str:
+    lines = [
+        ln for ln in (text or "").splitlines()
+        if ln.strip() and not ln.lstrip().startswith(_NOISE_PREFIXES)
+    ]
+    return "\n".join(lines).strip()
+
+
+def _reason(stdout: str | None, stderr: str | None) -> str:
+    """Причина отказа из ОБОИХ потоков: FanFicFare пишет её то в stdout, то в stderr."""
+    parts = [s for s in (_strip_noise(stderr), _strip_noise(stdout)) if s]
+    return " | ".join(parts)
 
 
 def _read_meta(epub: Path) -> dict:

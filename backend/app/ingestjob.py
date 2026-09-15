@@ -69,10 +69,14 @@ def start(query: str, runner: Callable[[], dict]) -> dict:
         _jobs[job_id] = job
         while len(_jobs) > _KEEP:
             _jobs.popitem(last=False)
+        # Снимок ДО старта потока и под блокировкой: иначе быстрый runner успевает
+        # перевести задание в done/error раньше, чем мы прочитаем его без замка, —
+        # ответ POST становился недетерминированным (гонка поймана тестом).
+        snap = _public(job)
     threading.Thread(
         target=_run, args=(job, runner), daemon=True, name=f"ingest-{job_id}"
     ).start()
-    return _public(job)
+    return snap
 
 
 def _finish(job: dict, *, work: dict | None = None, error: str | None = None) -> None:

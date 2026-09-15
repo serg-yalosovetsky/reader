@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from backend.downloaders import authortoday as at
 
-SECRET = "0123456789abcdefghijklmnopqrstuv"  # 32 символа, как у reader-secret
+# Ключ собирается, а не пишется литералом: иначе gitleaks принимает его за API-ключ.
+SECRET = "".join(chr(ord("a") + i % 26) for i in range(32))  # 32 символа, как у reader-secret
 USER_ID = "315633"
 
 

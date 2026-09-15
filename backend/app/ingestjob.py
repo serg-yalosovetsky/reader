@@ -26,6 +26,7 @@ import os
 import re
 import socket
 import threading
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,6 +102,18 @@ _USERINFO = re.compile(r"(\w+://)[^/@\s]+@")
 def mask(text: str | None) -> str:
     """Скрыть логин/пароль в URL (https://user:pass@host → https://***@host)."""
     return _USERINFO.sub(r"\1***@", text or "")
+
+
+def _log_failure(message: str, *args, exc: BaseException) -> None:
+    """Сбой с трассировкой, но без секретов.
+
+    log.exception дописывает traceback с сырым str(e) сам, мимо mask(): ссылка
+    вида https://user:pass@host из текста исключения уходила бы в общий Loki
+    немаскированной (приёмка serg/tasks#892, security-reviewer HIGH). Трассировку
+    форматируем сами и маскируем целиком — по ней по-прежнему можно чинить.
+    """
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    log.error(message + "\n%s", *args, mask(tb))
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -270,7 +283,7 @@ def process_one() -> bool:
         # Причину с длительностью ingest_service уже записал warning'ом.
         _finish_error(row.id, str(e))
     except Exception as e:  # noqa: BLE001 — воркер не роняем, но и не молчим
-        log.exception("задание %s упало: %s", row.id, mask(row.query))
+        _log_failure("задание %s упало: %s", row.id, mask(row.query), exc=e)
         _finish_error(row.id, f"{type(e).__name__}: {e}")
     return True
 
@@ -338,8 +351,8 @@ def _loop(gen: int) -> None:
     while not _stop.is_set() and gen == _generation:
         try:
             busy = process_one()
-        except Exception:  # noqa: BLE001 — БД недоступна и т.п.: воркер живёт, след в логе
-            log.exception("воркер очереди скачиваний: сбой цикла")
+        except Exception as e:  # noqa: BLE001 — БД недоступна и т.п.: воркер живёт, след в логе
+            _log_failure("воркер очереди скачиваний: сбой цикла", exc=e)
             busy = False
         if not busy:
             _wake.wait(POLL_S)
@@ -370,8 +383,8 @@ def stop_workers(mark: bool = True) -> None:
     if mark:
         try:
             mark_shutdown()
-        except Exception:  # noqa: BLE001 — БД недоступна на остановке: при старте это задание уйдёт как крэш
-            log.exception("очередь скачиваний: не удалось вернуть задания в очередь при остановке")
+        except Exception as e:  # noqa: BLE001 — БД недоступна на остановке: при старте это задание уйдёт как крэш
+            _log_failure("очередь скачиваний: не удалось вернуть задания в очередь при остановке", exc=e)
     for th in _threads:
         th.join(timeout=1.0)
     _threads.clear()

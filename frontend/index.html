@@ -69,6 +69,15 @@
       </div>
     </header>
     <div id="ingest-status" class="ingest-status" hidden></div>
+    <!-- Панель «Скачивания» (serg/tasks#893): данные с сервера, переживает перезагрузку и рестарт -->
+    <button id="dl-toggle" type="button" class="dl-toggle" hidden aria-controls="dl-panel" aria-expanded="false"></button>
+    <aside id="dl-panel" class="dl-panel" hidden aria-label="Скачивания">
+      <div class="dl-head">
+        <span>Скачивания <span id="dl-count"></span></span>
+        <button id="dl-close" type="button" class="icon-btn" aria-label="Свернуть панель скачиваний">✕</button>
+      </div>
+      <ul id="dl-list" class="dl-list"></ul>
+    </aside>
     <div id="book-grid" class="book-grid"></div>
     <p id="lib-empty" class="lib-empty" hidden>Пока пусто. Вставьте ссылку на фанфик или загрузите файл.</p>
 

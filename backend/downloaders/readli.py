@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
 from .textclean import clean_html, clean_title
@@ -233,6 +234,7 @@ def download(url: str) -> DownloadResult:
         soup = BeautifulSoup(first.text, "lxml")
         title, total = _parse_head(soup)
         author = _parse_author(soup)
+        progress.report(1, total, "pages", "скачивание", title=title)
 
         # Собираем HTML ВСЕХ страниц (с сохранением <h3>Глава N</h3>), затем режем
         # на реальные главы — readli пагинирует книгу, но главы размечены <h3> и
@@ -240,6 +242,7 @@ def download(url: str) -> DownloadResult:
         pages_html: list[str] = [_page_html(soup)]
         for n in range(2, total + 1):
             pages_html.append(_page_html(BeautifulSoup(_get(c, page_url(n)).text, "lxml")))
+            progress.report(n, total, "pages")
             time.sleep(0.2)
 
     full = "".join(pages_html)

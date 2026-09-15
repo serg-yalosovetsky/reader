@@ -23,6 +23,7 @@ import httpx
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
+from ..app import progress
 from . import egress
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
 
@@ -385,6 +386,7 @@ def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
             raise DownloaderError(
                 "author.today: не найден список глав (возможно, нужен вход в аккаунт)"
             )
+        progress.report(0, len(chapters), "chapters", "скачивание", title=title)
         uid_m = _USERID_RE.search(rr.text)
         user_id = ""  # аноним: в JS `app.userId || ""`, userId:0 тоже даёт ""
         if uid_m and uid_m.group(1) != "0":
@@ -403,6 +405,7 @@ def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
                     paid_tail = True
                     break
                 chapter_htmls.append((ch.get("title") or "", html))
+                progress.report(idx + 1, len(chapters), "chapters")
                 if idx + 1 < len(chapters):
                     time.sleep(0.25)
         except DownloaderError as e:

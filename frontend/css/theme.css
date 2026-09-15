@@ -775,3 +775,37 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 .bp-compl-short { color: var(--danger, #e5534b); }
 .bp-compl-short b { color: var(--danger, #e5534b); }
 .bp-compl-note { opacity: .85; }
+
+/* ===== Панель «Скачивания» (serg/tasks#893) ===== */
+.dl-toggle {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  min-width: 48px; min-height: 48px; padding: 0 16px; border-radius: 24px;
+  border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  font: 600 15px/1 var(--font-sans, system-ui, sans-serif); cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+}
+.dl-toggle.is-active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.dl-panel {
+  position: fixed; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  width: 340px; max-width: calc(100vw - 32px); max-height: min(60vh, 480px); overflow: auto;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
+}
+.dl-head {
+  position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 6px 6px 14px; background: var(--card); border-bottom: 1px solid var(--line); font-weight: 600;
+}
+.dl-list { list-style: none; margin: 0; padding: 0; }
+.dl-item { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.dl-item:last-child { border-bottom: 0; }
+.dl-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-sub { margin-top: 2px; font-size: 12px; color: var(--fg-dim); overflow-wrap: anywhere; }
+.dl-item.dl-error .dl-sub { color: var(--danger); }
+.dl-bar { margin-top: 6px; height: 4px; border-radius: 2px; background: var(--bg-soft); overflow: hidden; }
+.dl-bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+@media (max-width: 560px) {
+  .dl-panel { left: 16px; right: 16px; width: auto; max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dl-bar > i { transition: none; }
+}

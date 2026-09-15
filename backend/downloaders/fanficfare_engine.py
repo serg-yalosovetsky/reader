@@ -8,11 +8,14 @@ import contextlib
 import json
 import os
 import subprocess
+import time
+import threading
 import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 
 # Домены, которые FanFicFare покрывает и которые нам интересны в первую очередь.
@@ -112,6 +115,7 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         "-f", "epub",
         "--json-meta-file",          # метаданные рядом: <output>.json
         "--non-interactive",
+        "-p",                        # «.» в stdout на каждый запрос — прогресс для панели
         "-o", f"is_adult={'true' if is_adult else 'false'}",
         "-o", "output_filename=book.${formatext}",
         "-o", "include_images=true",   # встраивать обложку (и иллюстрации) сайта
@@ -122,16 +126,23 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     for k, v in (extra_options or {}).items():
         cmd += ["-o", f"{k}={v}"]
 
+    total = None
+    if progress.active_job():
+        # Только для фонового задания: число глав заранее — одним лёгким
+        # проходом --meta-only. Не вышло — прогресс покажем в запросах.
+        meta = get_meta(url, creds=creds, timeout=60)
+        total = int(meta.get("numChapters") or 0) or None
+        progress.report(
+            0, total, "chapters" if total else "requests", "скачивание",
+            title=meta.get("title") or None,
+        )
     try:
         with _creds_config(creds) as cred_args:
-            proc = subprocess.run(
-                cmd + cred_args + [url], cwd=workdir,
-                capture_output=True, text=True, timeout=600,
-            )
+            _rc, out, err = _run_fff(cmd + cred_args + [url], workdir, 600, total=total)
     except subprocess.TimeoutExpired as e:
         raise DownloaderError(f"FanFicFare превысил тайм-аут на {url}") from e
 
-    stderr = _strip_noise(proc.stderr)
+    stderr = _strip_noise(err)
     # FanFicFare сообщает о незнакомом сайте характерным текстом.
     if "Failed to find adapter" in stderr or "No adapter found" in stderr:
         raise UnsupportedURL(stderr or f"FanFicFare не знает сайт: {url}")
@@ -140,7 +151,7 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     if not epubs:
         # Нет файла — частые причины: требуется логин, защита Cloudflare, 0 глав,
         # фик удалён («Story does not exist» — FanFicFare пишет это в STDOUT).
-        msg = _reason(proc.stdout, proc.stderr) or "EPUB не создан"
+        msg = _reason(out, err) or "EPUB не создан"
         raise DownloaderError(f"Не удалось скачать {url}: {msg[:400]}")
 
     epub = epubs[0]
@@ -155,6 +166,62 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         num_chapters=int(meta.get("numChapters", 0) or 0),
         extra={"workdir": str(workdir), "raw_meta": meta},
     )
+
+
+def _run_fff(cmd: list[str], cwd: Path, timeout: int, *, total: int | None) -> tuple[int, str, str]:
+    """Запустить FanFicFare, считая точки флага -p как прогресс (serg/tasks#893).
+
+    -p печатает «.» в stdout на КАЖДЫЙ сетевой запрос — единственный прогресс,
+    который FanFicFare отдаёт наружу. Точки в начале строки считаются и в текст
+    не попадают: иначе они вклинились бы в причину отказа («.....Story does not
+    exist»). stderr — во временный файл, не в непрочитанный PIPE: болтливый
+    stderr переполнил бы пайп и повесил процесс. Таймаут сохраняется: по его
+    истечении процесс убивается и поднимается TimeoutExpired.
+    """
+    state = {"dots": 0, "at_line_start": True}
+    out_chars: list[str] = []
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errf:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=errf,
+            text=True, encoding="utf-8", errors="replace",
+        )
+
+        def pump() -> None:
+            for ch in iter(lambda: proc.stdout.read(1), ""):
+                if ch == "." and state["at_line_start"]:
+                    state["dots"] += 1
+                    continue
+                state["at_line_start"] = ch == "\n"
+                out_chars.append(ch)
+
+        reader = threading.Thread(target=pump, daemon=True, name="fff-stdout")
+        reader.start()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                rc = proc.wait(timeout=1.0)
+                break
+            except subprocess.TimeoutExpired:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    proc.wait()
+                    reader.join(timeout=2)
+                    raise subprocess.TimeoutExpired(cmd, timeout) from None
+                _report_dots(state["dots"], total)
+        reader.join(timeout=5)
+        _report_dots(state["dots"], total)
+        errf.seek(0)
+        err = errf.read()
+    return rc, "".join(out_chars), err
+
+
+def _report_dots(dots: int, total: int | None) -> None:
+    """Точки → прогресс. С известным числом глав: первые ~2 запроса — страница
+    истории и метаданные, дальше запрос на главу."""
+    if total:
+        progress.report(min(max(dots - 2, 0), total), total, "chapters")
+    else:
+        progress.report(dots, None, "requests")
 
 
 # Служебные строки, которые печатает не FanFicFare, а окружение интерпретатора:

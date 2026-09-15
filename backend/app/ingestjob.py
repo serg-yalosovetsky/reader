@@ -195,6 +195,28 @@ def get(job_id: str) -> dict | None:
         return _public(row) if row is not None else None
 
 
+def list_jobs(limit: int = 20, recent_hours: int = 24) -> dict:
+    """Задания для панели: все активные (по времени постановки) и завершённые за
+    последние recent_hours (свежие первыми)."""
+    limit = max(1, min(int(limit), 100))
+    t = now()
+    with Session(engine) as s:
+        active = s.exec(
+            select(IngestJob).where(col(IngestJob.status).in_(_ACTIVE)).order_by(col(IngestJob.created_at))
+        ).all()
+        recent = s.exec(
+            select(IngestJob)
+            .where(
+                col(IngestJob.status).in_(("done", "error")),
+                col(IngestJob.finished_at) >= t - timedelta(hours=recent_hours),
+            )
+            .order_by(col(IngestJob.finished_at).desc())
+            .limit(limit)
+        ).all()
+        jobs = [_public(r) for r in active] + [_public(r) for r in recent]
+    return {"active": len(active), "jobs": jobs[: max(limit, len(active))]}
+
+
 def _claim() -> tuple[str, IngestJob] | None:
     """Взять следующее готовое задание. ("run", row) | ("stopped", row) | None."""
     t = now()

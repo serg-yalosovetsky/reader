@@ -49,6 +49,12 @@ def ingest(
         raise HTTPException(422, str(e)) from e
 
 
+@router.get("/jobs")
+def ingest_jobs(limit: int = 20) -> dict:
+    """Панель «Скачивания»: активные задания и завершённые за сутки."""
+    return ingestjob.list_jobs(limit=limit)
+
+
 @router.get("/jobs/{job_id}")
 def ingest_job(job_id: str) -> dict:
     """Статус фонового добавления: queued | running | done | error."""

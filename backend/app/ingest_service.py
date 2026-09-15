@@ -15,6 +15,7 @@ from sqlmodel import Session
 
 from ..accounts import monitor, store
 from ..downloaders import chain
+from . import progress
 from .db.models import IngestJob, Work
 from .db.session import engine
 from .ingestjob import mask, now
@@ -56,6 +57,7 @@ def do_ingest(q: str, session: Session, job_id: str | None = None) -> Work:
                 job.author = result.author or job.author
                 job.source_host = _host(result.source_url or q)
                 session.add(job)  # уйдёт commit'ом регистрации книги
+        progress.report(stage="регистрация в библиотеке")
         work = register_download(result, session)
         if job_id:
             job = session.get(IngestJob, job_id)
@@ -87,5 +89,6 @@ def do_ingest(q: str, session: Session, job_id: str | None = None) -> Work:
 
 
 def run_ingest_job(job_id: str, query: str) -> None:
-    with Session(engine) as session:
+    with progress.activate(job_id), Session(engine) as session:
+        progress.report(stage="поиск источника")
         do_ingest(query, session, job_id=job_id)

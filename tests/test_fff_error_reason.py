@@ -10,9 +10,6 @@
 
 from __future__ import annotations
 
-import subprocess
-from types import SimpleNamespace
-
 import pytest
 
 from backend.downloaders import fanficfare_engine as fff
@@ -24,14 +21,14 @@ NOISE = "[sentry_bootstrap] Sentry initialized (env=production, max 5/3600s per 
 
 def _fake_run(stdout: str, stderr: str):
     def run(*a, **k):
-        return SimpleNamespace(returncode=0, stdout=stdout, stderr=stderr)
+        return 0, stdout, stderr
 
     return run
 
 
 def test_reason_from_stdout_is_not_masked_by_bootstrap_noise(monkeypatch):
     monkeypatch.setattr(
-        subprocess, "run",
+        fff, "_run_fff",
         _fake_run(f"Story does not exist: ({URL})\n", NOISE + "\n"),
     )
     with pytest.raises(DownloaderError) as ei:
@@ -43,7 +40,7 @@ def test_reason_from_stdout_is_not_masked_by_bootstrap_noise(monkeypatch):
 
 def test_real_stderr_reason_is_kept(monkeypatch):
     monkeypatch.setattr(
-        subprocess, "run",
+        fff, "_run_fff",
         _fake_run("", NOISE + "\nHTTPErrorFFF: 403 Client Error: Forbidden\n"),
     )
     with pytest.raises(DownloaderError) as ei:
@@ -54,7 +51,7 @@ def test_real_stderr_reason_is_kept(monkeypatch):
 
 
 def test_only_noise_still_says_something(monkeypatch):
-    monkeypatch.setattr(subprocess, "run", _fake_run("", NOISE + "\n"))
+    monkeypatch.setattr(fff, "_run_fff", _fake_run("", NOISE + "\n"))
     with pytest.raises(DownloaderError) as ei:
         fff.download(URL)
     msg = str(ei.value)
@@ -66,7 +63,7 @@ def test_unknown_site_detection_survives_noise(monkeypatch):
     from backend.downloaders.base import UnsupportedURL
 
     monkeypatch.setattr(
-        subprocess, "run",
+        fff, "_run_fff",
         _fake_run("", NOISE + "\nFailed to find adapter for URL\n"),
     )
     with pytest.raises(UnsupportedURL):

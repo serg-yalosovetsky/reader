@@ -1,6 +1,7 @@
 // Библиотека: список книг, ingest/upload, ReadEra-sync, тема библиотеки.
 import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
+import { watchDownloads, onDownloadFinished } from './downloads.js'
 import { prefs, savePrefs } from './core/prefs.js'
 import { currentWork } from './core/state.js'
 import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
@@ -526,12 +527,17 @@ function errText(err) {
   return s.length > 300 ? s.slice(0, 300) + '…' : s
 }
 
+// Скачивание, запущенное в другой вкладке/на другом устройстве, закончилось —
+// обновляем сетку, чтобы книга появилась без перезагрузки страницы.
+onDownloadFinished(() => { loadLibrary().catch(() => {}) })
+
 // Добавление книги идёт фоновым заданием: большая книга качается минутами
 // («Червь», 311 глав, ~7 мин), а nginx рвёт синхронный запрос через 300 с —
 // человек видел 504, хотя книга докачивалась (serg/tasks#887).
 const INGEST_POLL_MS = 2500
 async function ingestInBackground(q, label) {
   const job = await api.post('/api/ingest', { query: q, background: true })
+  watchDownloads(job.job_id)  // панель «Скачивания» раскрывается и следит за заданием
   const t0 = Date.now()
   let netFails = 0
   for (;;) {

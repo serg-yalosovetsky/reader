@@ -376,6 +376,43 @@ def _download_and_write(
     best_url: str,
     best_cur: int,
 ) -> dict:
+    """Докачка с логами старта и итога (spec.reader.update-pipeline v12).
+
+    Строки уходят в journald → Alloy → Loki: без них в Grafana не видно даже
+    того, что автообновление вообще взялось за книгу (serg/tasks#888). Снимок
+    id/названия берётся ДО докачки — внутри ORM-объекты истекают после commit.
+    """
+    wid = work_obj.id if work_obj else None
+    title = (work_obj.title if work_obj else "") or ""
+    t0 = time.monotonic()
+    _log.info(
+        "докачка начата: work=%s «%s» из %s (на источнике %s)",
+        wid, title, best_url, best_cur,
+    )
+    try:
+        out = _download_and_write_impl(session, mon, work_obj, best_url, best_cur)
+    except Exception as e:
+        _log.warning(
+            "докачка не удалась за %.1f с: work=%s «%s» из %s — %s: %s",
+            time.monotonic() - t0, wid, title, best_url, type(e).__name__, e,
+        )
+        raise
+    _log.info(
+        "докачка завершена за %.1f с: work=%s «%s», глав в файле %s, на источнике %s, "
+        "полностью=%s, источник %s",
+        time.monotonic() - t0, wid, title, out.get("chapters"), best_cur,
+        out.get("downloaded"), out.get("source_used"),
+    )
+    return out
+
+
+def _download_and_write_impl(
+    session: Session,
+    mon: "Monitored",
+    work_obj: "Work | None",
+    best_url: str,
+    best_cur: int,
+) -> dict:
     """Скачать книгу + обложку, записать результат.
 
     Структура гарантирует короткие транзакции:

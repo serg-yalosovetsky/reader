@@ -514,8 +514,44 @@ function setIngestStatus(msg, { error = false } = {}) {
 // незачем, ему адресован только текст.
 function errText(err) {
   const d = err && err.data && err.data.detail
-  const s = d ? String(d) : ((err && err.message) || String(err))
+  let s = d ? String(d) : ((err && err.message) || String(err))
+  // Ответ пришёл не от приложения, а от nginx (504/502 — HTML-страница):
+  // разметка человеку ничего не говорит, ему нужен смысл (serg/tasks#887).
+  if (/^\s*</.test(s)) {
+    const code = err && err.status
+    s = code === 504
+      ? 'сервер не дождался ответа (504). Книга могла докачаться — загляните в библиотеку через пару минут.'
+      : `сервер ответил ошибкой${code ? ' ' + code : ''}`
+  }
   return s.length > 300 ? s.slice(0, 300) + '…' : s
+}
+
+// Добавление книги идёт фоновым заданием: большая книга качается минутами
+// («Червь», 311 глав, ~7 мин), а nginx рвёт синхронный запрос через 300 с —
+// человек видел 504, хотя книга докачивалась (serg/tasks#887).
+const INGEST_POLL_MS = 2500
+async function ingestInBackground(q, label) {
+  const job = await api.post('/api/ingest', { query: q, background: true })
+  const t0 = Date.now()
+  let netFails = 0
+  for (;;) {
+    await new Promise((r) => setTimeout(r, INGEST_POLL_MS))
+    let st
+    try {
+      st = await api.get(`/api/ingest/jobs/${encodeURIComponent(job.job_id)}`)
+      netFails = 0
+    } catch (err) {
+      // Короткий обрыв связи — не повод бросать ожидание: книга качается на
+      // сервере независимо от вкладки. Затяжной — уже ответ.
+      if (err && err.name === 'NetworkError' && ++netFails < 5) continue
+      throw err
+    }
+    if (st.status === 'done') return st.work || {}
+    if (st.status === 'error') throw new Error(st.error || 'скачивание не удалось')
+    const sec = Math.round((Date.now() - t0) / 1000)
+    const clock = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+    setIngestStatus(`${label} ${clock}` + (st.status === 'queued' ? ' · в очереди' : ''))
+  }
 }
 
 // Запрос, по которому мы уже ответили «это у тебя есть». Повторный Enter по
@@ -562,9 +598,10 @@ $('#ingest-form').addEventListener('submit', async (e) => {
       return
     }
   }
-  setIngestStatus(isUrl ? 'Скачиваю…' : 'Ищу по названию…')
+  const ingestLabel = isUrl ? 'Скачиваю…' : 'Ищу по названию…'
+  setIngestStatus(ingestLabel)
   try {
-    const work = await api.post('/api/ingest', { query: q })
+    const work = await ingestInBackground(q, ingestLabel)
     setIngestStatus('Готово: ' + (work.title || 'книга добавлена'))
     dupQuery = ''
     // Поле не чистим: это фильтр, и по нему скачанная книга сразу видна в списке

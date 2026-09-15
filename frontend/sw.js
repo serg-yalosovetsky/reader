@@ -13,7 +13,7 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v7'
+const SHELL_CACHE = 'reader-shell-v8'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
 const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE])
@@ -206,9 +206,11 @@ self.addEventListener('fetch', (e) => {
   }
   // Прочие API: network-first с кэш-фолбэком.
   if (url.pathname.startsWith('/api/')) {
-    // Статус фоновой проверки не кэшируем: кэшированный «done» прошлой
-    // проверки выглядел бы как итог текущей.
-    if (url.pathname === '/api/monitored/check/status') {
+    // Статусы фоновых заданий не кэшируем: кэшированный «done» прошлой
+    // проверки выглядел бы как итог текущей, а «running» добавления книги при
+    // сбое сети крутил бы ожидание вечно.
+    if (url.pathname === '/api/monitored/check/status'
+        || url.pathname.startsWith('/api/ingest/jobs/')) {
       e.respondWith(fetch(req).catch(() => offlineResponse()))
       return
     }

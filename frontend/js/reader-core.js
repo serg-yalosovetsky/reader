@@ -143,7 +143,7 @@ function resolvedColor(varName) {
 }
 function bookCSS() {
   const fg = resolvedColor('--fg'), bg = resolvedColor('--bg'), accent = resolvedColor('--accent')
-  const isDark = ['dusk', 'night', 'terminal', 'black'].includes(prefs.theme)
+  const isDark = ['dusk', 'night', 'terminal', 'black', 'phosphor'].includes(prefs.theme)
   const colorScheme = isDark ? 'dark' : 'light'
   const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['pt-sans']
   // В режиме «лента» одна колонка должна занимать всю ширину экрана.

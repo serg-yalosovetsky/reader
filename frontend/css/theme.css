@@ -29,6 +29,10 @@ html[data-theme="dusk"]     { color-scheme: dark; --bg:#2b2e33; --bg-soft:#32363
 html[data-theme="night"]    { color-scheme: dark; --bg:#15171a; --bg-soft:#1d2024; --fg:#cbd0d6; --fg-dim:#8b929b; --line:#2a2e34; --card:#1b1e22; --danger:#ff7a7a; }
 html[data-theme="terminal"] { color-scheme: dark; --bg:#0d1117; --bg-soft:#161b22; --fg:#3fb950; --fg-dim:#4a8f5c; --line:#21262d; --card:#161b22; --accent:#3fb950; --accent-text:#0d1117; --danger:#ff7a7a; }
 html[data-theme="black"]    { color-scheme: dark; --bg:#000000; --bg-soft:#0c0c0c; --fg:#bdbdbd; --fg-dim:#7a7a7a; --line:#1a1a1a; --card:#0a0a0a; --danger:#ff7a7a; }
+/* «Фосфор» (serg/tasks#911): чистый чёрный, зелёный текст. В отличие от terminal
+   фон именно #000, а зелёный приглушён до ~10.6:1 — ярче для долгого чтения режет глаз.
+   Контраст проверяет tests/js/test_themes.mjs. */
+html[data-theme="phosphor"] { color-scheme: dark; --bg:#000000; --bg-soft:#07130a; --fg:#39d353; --fg-dim:#2ea043; --line:#12301a; --card:#050d07; --accent:#7ee787; --accent-text:#000000; --danger:#ff7a7a; }
 
 * { box-sizing: border-box; }
 

@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 import os
@@ -187,7 +188,9 @@ _LIST_COLUMNS = (
 
 
 @router.get("")
-def list_works(session: Session = Depends(get_session)) -> list[dict]:
+def list_works(
+    hidden: bool = False, session: Session = Depends(get_session)
+) -> list[dict]:
     """Все произведения, новые сверху — узким набором полей.
 
     Раньше здесь материализовался весь Work: 27 колонок × ~1400 записей, потом из
@@ -197,7 +200,15 @@ def list_works(session: Session = Depends(get_session)) -> list[dict]:
     model_dump ~13%.
     """
     result = []
-    rows = session.exec(select(*_LIST_COLUMNS).order_by(Work.updated_at.desc())).all()
+    # Скрытые книги (serg/tasks#923) в обычном списке не показываются; фронт
+    # берёт их отдельным запросом ?hidden=1 и только когда человек ищет.
+    # `is_(True)` / `~is_(True)`, а не `== False`: у книг, заведённых до
+    # появления колонки, значение может остаться NULL, и сравнение с False
+    # потеряло бы их из библиотеки молча.
+    cond = Work.hidden.is_(True) if hidden else ~Work.hidden.is_(True)
+    rows = session.exec(
+        select(*_LIST_COLUMNS).where(cond).order_by(Work.updated_at.desc())
+    ).all()
     for r in rows:
         cover_path = r.cover_path
         cover_v = 0
@@ -439,6 +450,28 @@ async def upload_book(
     session.commit()
     session.refresh(work)
     return work
+
+
+class HiddenIn(BaseModel):
+    hidden: bool
+
+
+@router.put("/{work_id}/hidden")
+def set_hidden(
+    work_id: int, payload: HiddenIn, session: Session = Depends(get_session)
+) -> dict:
+    """Скрыть книгу из библиотеки или вернуть её обратно (serg/tasks#923).
+
+    updated_at намеренно НЕ трогаем: он задаёт порядок библиотеки, и книга,
+    которую вернули из скрытых, прыгала бы на первое место как свежая.
+    """
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "work not found")
+    work.hidden = bool(payload.hidden)
+    session.add(work)
+    session.commit()
+    return {"ok": True, "id": work_id, "hidden": work.hidden}
 
 
 @router.delete("/{work_id}/update-flag")

@@ -750,6 +750,16 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 }
 
 /* Офлайн-книги: бейдж на карточке библиотеки */
+/* Скрытая книга (serg/tasks#923) попадает на экран только через поиск: метка
+   объясняет, почему её нет в библиотеке, а приглушённая обложка отличает её
+   от обычных результатов. */
+.hidden-badge {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  background: var(--fg-dim); color: var(--bg); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 6px; border-radius: 999px;
+}
+.book-card.is-hidden .book-cover { opacity: .55; }
 .offline-badge {
   /* Поднят над кнопкой «Читать»: она заняла левый нижний угол. */
   position: absolute; left: 6px; bottom: 36px; z-index: 2;

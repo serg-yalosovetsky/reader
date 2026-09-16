@@ -75,6 +75,10 @@ class Work(SQLModel, table=True):
     # пересчёт глав по файлу). None остаётся у записей, созданных до появления
     # поля, — их заполняет бэкфилл по mtime файла (см. db/session.py).
     content_updated_at: Optional[datetime] = Field(default_factory=utcnow)
+    # Скрытая книга не показывается в сетке библиотеки и находится только
+    # поиском (serg/tasks#923). Это ВИДИМОСТЬ, а не архив: файл, прогресс,
+    # подписки и докачка новых глав продолжают работать как раньше.
+    hidden: bool = False
 
 
 class Progress(SQLModel, table=True):

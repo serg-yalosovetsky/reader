@@ -8,6 +8,9 @@ export let lastAnchor = ''
 export let lastIdx = null
 export let _selIndex = -1
 export let libWorks = [], libCalibre = [], libProgress = {}
+// Скрытые книги (serg/tasks#923): в сетке библиотеки их нет, грузятся лениво
+// при первом поиске и участвуют только в нём.
+export let libHidden = []
 export let libUpdated = new Set(), libMonitored = new Set()
 export const navStack = []
 
@@ -20,6 +23,7 @@ export const setLastIdx = (i) => { lastIdx = i }
 export const setSelIndex = (i) => { _selIndex = i }
 export const setLibWorks = (v) => { libWorks = v }
 export const setLibCalibre = (v) => { libCalibre = v }
+export const setLibHidden = (v) => { libHidden = v }
 export const setLibProgress = (v) => { libProgress = v }
 export const setLibUpdated = (v) => { libUpdated = v }
 export const setLibMonitored = (v) => { libMonitored = v }

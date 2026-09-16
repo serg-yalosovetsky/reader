@@ -4,8 +4,9 @@ import { api } from './core/api.js'
 import { watchDownloads, onDownloadFinished } from './downloads.js'
 import { prefs, savePrefs } from './core/prefs.js'
 import { currentWork } from './core/state.js'
-import { libWorks, libCalibre, libProgress, libUpdated, libMonitored,
-         setLibWorks, setLibCalibre, setLibProgress, setLibUpdated, setLibMonitored } from './core/state.js'
+import { libWorks, libCalibre, libHidden, libProgress, libUpdated, libMonitored,
+         setLibWorks, setLibCalibre, setLibHidden, setLibProgress, setLibUpdated,
+         setLibMonitored } from './core/state.js'
 import { openReader } from './reader-core.js'
 import { openBookPage, bookPageMeta } from './book-page.js'
 import { isOffline, offlineIds, removeBook, downloadBook } from './core/offline.js'
@@ -171,7 +172,10 @@ const _hit = (s, q) => _norm(s).includes(_norm(q))
 export function findLibMatches(q) {
   const s = (q || '').trim()
   if (!s) return { works: [], calibre: [] }
-  const works = libWorks.filter(w => _hit(w.title, s) || _hit(w.author, s) || _hit(w.series, s))
+  const match = (w) => _hit(w.title, s) || _hit(w.author, s) || _hit(w.series, s)
+  // Скрытые книги в сетке не показываются, но поиском находятся (serg/tasks#923)
+  // — и считаются «уже есть в библиотеке», иначе Enter полез бы качать их заново.
+  const works = libWorks.filter(match).concat(libHidden.filter(match))
   const importedIds = new Set(libWorks.map(w => w.calibre_id).filter(Boolean))
   const calibre = libCalibre.filter(
     b => !importedIds.has(b.calibre_id) && (_hit(b.title, s) || _hit(b.authors, s))
@@ -183,6 +187,28 @@ export function findLibMatches(q) {
 // в списке не показываются вообще. Поэтому грузим его при первом поиске, а не
 // на открытии библиотеки — иначе 214 КБ и (на холодном кэше сервера) до десяти
 // секунд тратятся всегда, даже когда человек просто пришёл читать своё.
+// Скрытые книги (serg/tasks#923) грузим лениво и только при первом поиске: в
+// сетке их нет, а список библиотеки не должен из-за них толстеть на каждом
+// открытии. Тот же приём, что с каталогом Calibre ниже.
+let hiddenReq = null
+function ensureHidden() {
+  if (hiddenReq || libHidden.length) return
+  hiddenReq = api.get('/api/library?hidden=1')
+    .then((works) => {
+      setLibHidden(works || [])
+      const q = (($('#lib-q') || {}).value || '').trim()
+      if (q && !isUrlQuery(q)) applyLibFilter(q)
+    })
+    .catch((e) => {
+      // Не падаем: поиск по видимым книгам работает и без этого списка. Но и не
+      // молчим — иначе «скрытая книга не находится» выглядело бы как сломанный
+      // поиск. Следующий запрос попробует снова.
+      hiddenReq = null
+      console.warn('[reader] не удалось получить скрытые книги:', e?.message || e)
+      toast('Скрытые книги сейчас недоступны — поиск идёт только по видимым', 'err', 5000)
+    })
+}
+
 let calibreReq = null
 function ensureCalibre() {
   if (calibreReq || libCalibre.length) return
@@ -196,8 +222,31 @@ function ensureCalibre() {
     .catch(() => {})
 }
 
+// Скрыть книгу или вернуть её обратно (serg/tasks#923). Списки правим на месте:
+// перезагружать всю библиотеку ради одной карточки — полторы тысячи карточек.
+export async function toggleHidden(w) {
+  const next = !w.hidden
+  try {
+    await api.put(`/api/library/${w.id}/hidden`, { hidden: next })
+  } catch (e) {
+    toast(`Не удалось ${next ? 'скрыть' : 'вернуть'} книгу: ${e?.message || e}`, 'err', 6000)
+    return false
+  }
+  w.hidden = next
+  if (next) {
+    setLibWorks(libWorks.filter((x) => x.id !== w.id))
+    setLibHidden(libHidden.concat([w]))
+  } else {
+    setLibHidden(libHidden.filter((x) => x.id !== w.id))
+    setLibWorks([w].concat(libWorks))
+  }
+  toast(next ? 'Книга скрыта — найдётся поиском' : 'Книга снова в библиотеке', 'info', 4000)
+  applyLibFilter((($('#lib-q') || {}).value || '').trim())
+  return true
+}
+
 export function applyLibFilter(q) {
-  if (q) ensureCalibre()
+  if (q) { ensureCalibre(); ensureHidden() }
   const hits = findLibMatches(q)
   const grid = $('#book-grid')
   grid.innerHTML = ''
@@ -309,8 +358,10 @@ function showHover(card, base) {
     <div class="lh-actions">
       <button class="btn-primary lh-read">📖 Читать</button>
       <button class="btn-ghost lh-open">Подробнее</button>
+      <button class="btn-ghost lh-hide" title="${w.hidden ? 'Вернуть книгу в библиотеку' : 'Убрать из библиотеки: останется доступной поиском'}">${w.hidden ? '👁 Показать' : '🙈 Скрыть'}</button>
     </div>`
   el.querySelector('.lh-read').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openReader(w) })
+  el.querySelector('.lh-hide').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; toggleHidden(w) })
   el.querySelector('.lh-open').addEventListener('click', (e) => { e.stopPropagation(); el.hidden = true; openBookPage(w) })
   el.querySelectorAll('[data-flt]').forEach((elx) => {
     elx.addEventListener('click', (e) => {
@@ -360,7 +411,8 @@ function bookCard(w, ratio, hasUpdate) {
   // Без сети книга без офлайн-копии открыться не сможет — помечаем, чтобы тап
   // по ней не был тупиком (CSS гасит такие карточки только в режиме офлайна).
   const noCopy = !isOffline(w.id) ? 'no-offline-copy' : ''
-  card.className = ['book-card', readState, showUpdate ? 'has-update' : '', noCopy]
+  card.className = ['book-card', readState, showUpdate ? 'has-update' : '', noCopy,
+                    w.hidden ? 'is-hidden' : '']
     .filter(Boolean).join(' ')
   const pct = Math.round((ratio || 0) * 100)
   // Всегда запрашиваем /cover: если обложки нет, бэкенд лениво сгенерирует её
@@ -381,8 +433,13 @@ function bookCard(w, ratio, hasUpdate) {
   // прогресса не хватало, «не видно, что книга прочитана/начата».
   const readBadge = done ? '<span class="read-badge" title="Прочитано">✓</span>' : ''
   const pctBadge = readState === 'partial' ? `<span class="pct-badge">${pct}%</span>` : ''
+  // Книга попала в список только потому, что её нашли поиском — метка объясняет,
+  // почему в самой библиотеке её не видно (serg/tasks#923).
+  const hidBadge = w.hidden
+    ? '<span class="hidden-badge" title="Скрыта: в библиотеке не показывается, находится поиском">скрыта</span>'
+    : ''
   card.innerHTML = `
-    <div class="book-cover">${cover}${badge}${offBadge}${readBadge}${pctBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button><button class="book-read-btn" title="Читать" aria-label="Читать ${escapeHtml(w.title || 'книгу')}"><span aria-hidden="true">▶</span> Читать</button></div>
+    <div class="book-cover">${cover}${badge}${offBadge}${readBadge}${pctBadge}${hidBadge}<button class="book-del-btn" title="Удалить книгу" aria-label="Удалить">✕</button><button class="book-read-btn" title="Читать" aria-label="Читать ${escapeHtml(w.title || 'книгу')}"><span aria-hidden="true">▶</span> Читать</button></div>
     <div class="book-meta">
       <div class="b-title">${escapeHtml(w.title || 'Без названия')}</div>
       <div class="b-author${w.author ? ' b-link' : ''}" data-flt="author">${escapeHtml(w.author || '')}</div>

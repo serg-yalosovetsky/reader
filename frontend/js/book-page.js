@@ -8,7 +8,7 @@ import { libProgress, libMonitored } from './core/state.js'
 import {
   offlineSupported, isOffline, downloadBook, removeBook, refreshBook, offlineMeta,
 } from './core/offline.js'
-import { filterBy } from './library.js'
+import { filterBy, toggleHidden } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 
 let curWork = null
@@ -194,6 +194,7 @@ function renderBookPage(w) {
           ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
           ${origBtn}
           <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
+          <button id="bp-hide" class="btn-ghost bp-btn" title="${w.hidden ? 'Вернуть книгу в библиотеку' : 'Убрать из библиотеки: останется доступной поиском'}">${w.hidden ? '👁 Показать в библиотеке' : '🙈 Скрыть из библиотеки'}</button>
           <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
         </div>
       </div>
@@ -332,6 +333,19 @@ function renderBookPage(w) {
     $('#book-page').hidden = true
     document.body.classList.remove('bookpage-open')
     openReader(w, { original: true })
+  })
+  // Скрыть книгу из библиотеки или вернуть (serg/tasks#923). Со страницы книги
+  // не уходим: человек видит, что состояние переключилось.
+  $('#bp-hide').addEventListener('click', async () => {
+    const btn = $('#bp-hide')
+    btn.disabled = true
+    const ok = await toggleHidden(w)
+    btn.disabled = false
+    if (!ok) return
+    btn.textContent = w.hidden ? '👁 Показать в библиотеке' : '🙈 Скрыть из библиотеки'
+    btn.title = w.hidden
+      ? 'Вернуть книгу в библиотеку'
+      : 'Убрать из библиотеки: останется доступной поиском'
   })
   $('#bp-del').addEventListener('click', async () => {
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return

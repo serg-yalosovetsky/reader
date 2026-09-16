@@ -211,6 +211,12 @@ $('#toc-btn').addEventListener('click', () => openPanel('#toc-panel'))
 $('#more-btn')?.addEventListener('click', () => openPanel('#more-panel'))
 $('#settings-btn').addEventListener('click', () => openPanel('#settings-panel'))
 $('#fs-btn')?.addEventListener('click', toggleFullscreen)
+// Когда страница последний раз меняла видимость: гашение экрана телефона и уход
+// вкладки в фон снимают полноэкранный режим так же, как системное «назад»
+// (serg/tasks#927), и отличить одно от другого можно только по этому соседству.
+let lastVisibilityAt = 0
+document.addEventListener('visibilitychange', () => { lastVisibilityAt = Date.now() })
+
 document.addEventListener('fullscreenchange', () => {
   const on = !!document.fullscreenElement
   const b = $('#fs-btn'); if (b) { b.textContent = on ? '✖' : '⛶'; b.title = on ? 'Выйти из полного экрана' : 'Полный экран' }
@@ -222,12 +228,25 @@ document.addEventListener('fullscreenchange', () => {
   if (on) return
   const readerOpen = !$('#reader').hidden
   const coarse = !!window.matchMedia?.('(pointer: coarse)').matches
-  if (exitMeansBack({ readerOpen, byButton, coarse })) {
+  const decide = () => exitMeansBack({
+    readerOpen, byButton, coarse,
+    docHidden: document.visibilityState === 'hidden',
+    msSinceVisibilityChange: lastVisibilityAt ? Date.now() - lastVisibilityAt : null,
+  })
+  if (!decide()) return
+  // Решение откладываем на кадр-другой: при блокировке экрана Android иногда
+  // присылает fullscreenchange РАНЬШЕ visibilitychange, и в этот момент выход
+  // ещё неотличим от «назад». Через 250 мс страница уже помечена скрытой, и
+  // проверка отвечает верно. Для настоящего «назад» задержка незаметна: это
+  // переход к библиотеке, а не отклик на палец (serg/tasks#927).
+  setTimeout(() => {
+    if (!decide()) return
+    if ($('#reader').hidden) return  // книгу закрыли без нас, пока ждали
     // Системное «назад» в полноэкранном режиме браузер потратил на выход из него —
     // доводим до библиотеки тем же одним нажатием (serg/tasks#903).
     if (history.state && history.state.reader) history.back()
     else closeReader()
-  }
+  }, 250)
 })
 // Состояние проверки новых глав: подпись в строке меню + точка на кнопке ⋮.
 // 'checking' и 'ok' точку не ставят: она значит «есть что посмотреть».

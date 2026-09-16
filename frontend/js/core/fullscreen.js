@@ -17,8 +17,23 @@ export function takeButtonExit() {
   return v
 }
 
-export function exitMeansBack({ readerOpen, byButton, coarse }) {
-  return Boolean(readerOpen && !byButton && coarse)
+// Сколько после переключения видимости выход из полноэкранного режима считается
+// делом браузера, а не человека. Блокировка экрана шлёт visibilitychange и снимает
+// режим почти одновременно; жест «назад» приходит на давно видимой странице.
+export const VISIBILITY_GRACE_MS = 1500
+
+export function exitMeansBack({
+  readerOpen, byButton, coarse, docHidden = false, msSinceVisibilityChange = null,
+}) {
+  if (!(readerOpen && !byButton && coarse)) return false
+  // Гашение экрана телефона снимает полноэкранный режим ровно так же, как
+  // системное «назад»: не нашей кнопкой и на сенсорном экране. Живой случай
+  // (serg/tasks#927): человек гасил экран во время чтения, а при разблокировке
+  // оказывался в библиотеке. Страница при этом скрыта или только что вернулась
+  // из фона — по этому и отличаем.
+  if (docHidden) return false
+  if (msSinceVisibilityChange != null && msSinceVisibilityChange < VISIBILITY_GRACE_MS) return false
+  return true
 }
 
 export function isFullscreen(d = document) {

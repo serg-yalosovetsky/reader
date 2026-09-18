@@ -75,9 +75,9 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
             result.source_url, sha1, result.title, result.author
         )
         cover_src = "source" if cover else ""
-    if cover:
-        work.cover_path = str(cover)
-        work.cover_source = cover_src
+    picked = _pick_cover(cover, cover_src, work)
+    if picked:
+        work.cover_path, work.cover_source = picked
     # Метаданные (описание, жанры/метки, статус, рейтинг) из свежего файла книги
     # (epub-opf или fb2 <title-info>).
     from . import bookmeta
@@ -275,6 +275,24 @@ def _is_placeholder_cover(path) -> bool:
     if not p.exists():
         return False
     return covers.is_generic_cover(p.read_bytes(), check_aspect=True)
+
+
+def _pick_cover(new_cover, new_src: str, work: Work) -> tuple[str, str] | None:
+    """Чем заменить обложку книги, или None — «оставить как было».
+
+    Правило владельца (serg/tasks#984): обложка живёт своей жизнью, перекачка
+    файла её не отбирает. Заменяет прежнюю ТОЛЬКО настоящая новая обложка;
+    пустота и баннер сайта — не замена.
+
+    Отдельная функция, а не пара условий по месту: правило должно быть в одном
+    месте и проверяться тестом, иначе оно тихо разъедется с показом обложек — так
+    книга и осталась с пустым местом вместо картинки.
+    """
+    if not new_cover:
+        return None
+    if _is_placeholder_cover(new_cover):
+        return None
+    return str(new_cover), new_src
 
 
 def register_download(result: DownloadResult, session: Session) -> Work:

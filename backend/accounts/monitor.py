@@ -566,7 +566,11 @@ def _download_and_write_impl(
     # начинается покупка (serg/tasks#983). Это НЕ сбой докачки — штрафовать
     # подписку нельзя, иначе через _MAX_FAILS книга молча выпадает из
     # автообновления, как и случилось с «Вечно голодным студентом 10».
-    paid_tail = bool((getattr(res, "extra", None) or {}).get("partial_paid"))
+    _extra = getattr(res, "extra", None) or {}
+    # partial_paid — платный хвост у САМОГО победителя; primary_partial_paid —
+    # у источника подписки, когда победило бесплатное зеркало (его переносит
+    # chain._carry_paywall, serg/tasks#983).
+    paid_tail = bool(_extra.get("partial_paid") or _extra.get("primary_partial_paid"))
     if got_all:
         mon.has_update = False
         mon.fail_count = 0

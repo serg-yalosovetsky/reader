@@ -223,9 +223,11 @@ def fetch_fullest(
         cands.append(res)
 
     # 1) текущий источник (как есть, с creds для закрытого контента)
+    primary_res = None
     if primary_url:
         try:
-            _consider(fetch(primary_url, creds=creds))
+            primary_res = fetch(primary_url, creds=creds)
+            _consider(primary_res)
         except Exception as e:  # noqa: BLE001
             log.warning("fetch_fullest: основной источник %s не отдал книгу: %s", primary_url, e)
     # 2) author.today по названию/автору (volume-aware search_work)
@@ -267,7 +269,36 @@ def fetch_fullest(
     for _r in cands:
         if _chapters(_r) > best_ch and _richness(_r) >= best_rich * 0.9:
             best, best_rich, best_ch = _r, _richness(_r), _chapters(_r)
-    return best
+    return _carry_paywall(primary_res, best)
+
+
+def _carry_paywall(primary, winner):
+    """Перенести на победителя знание о платном хвосте ПЕРВИЧНОГО источника.
+
+    Победителем докачки часто оказывается зеркало (readli/searchfloor): у него
+    платного хвоста нет по построению, оно отдаёт весь бесплатный объём. А
+    «недостача» считается по счётчику источника подписки — на author.today
+    заголовков больше, потому что последние главы продаются. Без этого переноса
+    монитор видит результат без признаков платности и штрафует подписку за чужую
+    коммерцию: пять тиков — и книга выпадает из автообновления (serg/tasks#983,
+    «Вечно голодный студент 10»: на AT 22 заголовка, readli отдаёт 21 главу).
+
+    Флаг кладём ОТДЕЛЬНЫМ ключом: сам файл победителя не «частично платный», и
+    путать эти два факта нельзя.
+    """
+    if winner is None or primary is None or primary is winner:
+        return winner
+    if not (getattr(primary, "extra", None) or {}).get("partial_paid"):
+        return winner
+    extra = getattr(winner, "extra", None)
+    if isinstance(extra, dict):
+        extra["primary_partial_paid"] = True
+    else:
+        log.warning(
+            "fetch_fullest: некуда перенести признак платного хвоста с %s",
+            getattr(primary, "source_url", "?"),
+        )
+    return winner
 
 
 def _search_free(title: str, author: str = "") -> DownloadResult | None:

@@ -126,6 +126,44 @@ def _set_seen(
     mon.last_seen_source = _host(url)
 
 
+def _has_new_content(
+    *, best_cur: int, seen: int, materialized: int, heterogeneous: bool
+) -> bool:
+    """Есть ли что докачивать: сравниваем и с «видели», и с ФАЙЛОМ.
+
+    Одного сравнения с `seen` мало. Стоит счётчику сравняться с сайтом — и
+    недокачанная книга навсегда числится полной: докачка не запускается ни разу,
+    ошибки нет, в логе пусто. Живой случай (serg/tasks#983): «Вечно голодный
+    студент 10» — сайт 22, видели 22, в файле 19.
+
+    `materialized` — реальные главы в файле (count_sections). Сравнивать их можно
+    только с ОДНОРОДНОЙ метрикой: у readli «главы» — это страницы читалки, и
+    полностью скачанная книга качалась бы на каждом тике (было у тома 9).
+    `materialized == 0` значит «посчитать не смогли» (цельный fb2 зеркала) — это
+    не повод выдумывать обновление.
+    """
+    if best_cur > seen:
+        return True
+    return bool(not heterogeneous and materialized and best_cur > materialized)
+
+
+def _file_chapters(work_obj) -> int:
+    """Сколько глав лежит в файле книги; 0 — файла нет или посчитать не вышло."""
+    if not work_obj or not getattr(work_obj, "file_path", ""):
+        return 0
+    from ..app.services import count_sections as _cs
+
+    try:
+        return _cs(
+            work_obj.file_path,
+            work_obj.file_format,
+            book_title=work_obj.title or "",
+        )
+    except Exception as e:  # noqa: BLE001 — битый файл не должен ронять проверку
+        _log.warning("не удалось посчитать главы в файле work=%s: %s", work_obj.id, e)
+        return 0
+
+
 def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
     """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
     из потоков, своей сессии у неё нет)."""
@@ -724,8 +762,19 @@ def check_all(
             mon.fail_count = 0
             mon.last_error = None
             session.add(mon)
+        # Недокачанная книга — тоже обновление, даже если счётчик догнал сайт
+        # (serg/tasks#983). Главы в файле считаем лениво: только когда иначе
+        # решение было бы «ничего не делать».
+        _mat = 0
+        if not (best_cur > seen) and _metric_kind(best_url) == "chapters":
+            _mat = _file_chapters(_w)
         if (
-            best_cur > seen
+            _has_new_content(
+                best_cur=best_cur,
+                seen=seen,
+                materialized=_mat,
+                heterogeneous=_metric_kind(best_url) != "chapters",
+            )
             or needs_initial
             or (mon.has_update and auto_download and (mon.fail_count or 0) < _MAX_FAILS)
         ):
@@ -828,8 +877,23 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
 
     mon = session.get(Monitored, mon.id)  # re-fetch после commit
     seen = _seen_for(mon, best_url)  # только сопоставимая база, см. _metric_kind
+    # Человек нажал «Проверить обновления» именно у этой книги — это просьба
+    # попробовать снова, поэтому снимаем backoff (serg/tasks#983: подписка после
+    # пяти неудач оставалась выключенной даже при ручной проверке).
+    if mon.fail_count:
+        mon.fail_count = 0
+        session.add(mon)
+        session.commit()
+    _heterogeneous = _metric_kind(best_url) != "chapters"
     has_new = (
-        (best_cur > seen) or (not mon.work_id and best_cur > 0) or mon.has_update
+        _has_new_content(
+            best_cur=best_cur,
+            seen=seen,
+            materialized=_file_chapters(_w) if not _heterogeneous else 0,
+            heterogeneous=_heterogeneous,
+        )
+        or (not mon.work_id and best_cur > 0)
+        or mon.has_update
     )
     detail: dict = {
         "has_update": has_new,

@@ -68,7 +68,12 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
             except DownloaderError:
                 free = None
             if free and _richness(free) > _richness(res):
-                return free
+                # Зеркало полнее — отдаём его, но уносим с собой факт платности.
+                # Иначе дальше по цепочке никто не знает, что часть глав продаётся:
+                # монитор видит «в файле меньше, чем на сайте», считает это
+                # неудачей докачки и штрафует подписку за чужую коммерцию — через
+                # пять тиков книга выпадает из автообновления (serg/tasks#983).
+                return _carry_paywall(res, free)
         return res
     if host.endswith("readli.net"):
         from . import readli

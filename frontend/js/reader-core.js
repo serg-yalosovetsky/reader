@@ -108,9 +108,16 @@ export async function openReader(work, opts = {}) {
 
 function onRelocate(e) {
   hideSelPopup()
-  const { fraction, cfi, index, range, tocItem } = e.detail
+  const { fraction, cfi, index, range, tocItem, section } = e.detail
   setLastCfi(cfi || lastCfi)
-  if (typeof index === 'number') setLastIdx(index)
+  // Индекс текущей главы foliate отдаёт как section.current: наружу view эмитит
+  // не detail пагинатора, а собранный lastLocation ({...progress, tocItem,
+  // pageItem, cfi, range}), и поля `index` в нём нет вовсе. Пока читали `index`,
+  // lastIdx оставался null НАВСЕГДА — а на нём висят переход между главами
+  // (gotoChapterStart) и края главы по Home/End (serg/tasks#996). `index`
+  // оставлен запасным: если foliate когда-нибудь начнёт его слать, хуже не будет.
+  const idx = typeof section?.current === 'number' ? section.current : index
+  if (typeof idx === 'number') setLastIdx(idx)
   // Текстовый якорь верха экрана — основа устойчивого восстановления позиции.
   const anchor = captureAnchor(range)
   if (anchor) setLastAnchor(anchor)

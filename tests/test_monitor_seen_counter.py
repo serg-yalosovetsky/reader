@@ -108,3 +108,30 @@ def test_unknown_file_chapters_is_not_an_update():
     assert m._has_new_content(
         best_cur=22, seen=22, materialized=0, heterogeneous=False
     ) is False
+
+
+# --- 3. Платный хвост книги — не ошибка -------------------------------------
+# Живая проверка 18.09.2026: author.today с аккаунтом отдаёт 12 глав, в файле
+# 21 (собрано с зеркал), на сайте 22 заголовка — 22-я за деньги. Без этого
+# различения каждая проверка считала это неудачей и через пять тиков гасила
+# подписку.
+
+def test_paid_tail_is_not_an_update():
+    """Упёрлись в платное на том же числе глав — качать нечего."""
+    assert m._has_new_content(
+        best_cur=22, seen=22, materialized=21, heterogeneous=False, paid_tail_seen=22
+    ) is False
+
+
+def test_new_free_chapter_after_paid_tail_is_an_update():
+    """На сайте стало больше, чем когда упёрлись — снова идём за новым."""
+    assert m._has_new_content(
+        best_cur=23, seen=22, materialized=21, heterogeneous=False, paid_tail_seen=22
+    ) is True
+
+
+def test_missing_chapter_without_paywall_is_still_an_update():
+    """Без платного хвоста недостача в файле по-прежнему значит «докачать»."""
+    assert m._has_new_content(
+        best_cur=22, seen=22, materialized=19, heterogeneous=False, paid_tail_seen=0
+    ) is True

@@ -127,7 +127,12 @@ def _set_seen(
 
 
 def _has_new_content(
-    *, best_cur: int, seen: int, materialized: int, heterogeneous: bool
+    *,
+    best_cur: int,
+    seen: int,
+    materialized: int,
+    heterogeneous: bool,
+    paid_tail_seen: int = 0,
 ) -> bool:
     """Есть ли что докачивать: сравниваем и с «видели», и с ФАЙЛОМ.
 
@@ -141,10 +146,19 @@ def _has_new_content(
     полностью скачанная книга качалась бы на каждом тике (было у тома 9).
     `materialized == 0` значит «посчитать не смогли» (цельный fb2 зеркала) — это
     не повод выдумывать обновление.
+
+    `paid_tail_seen` — число глав на сайте, на котором докачка упёрлась в платное.
+    Пока сайт показывает не больше этого, недостача в файле объяснена деньгами, а
+    не сбоем: качать нечего. Появится новая бесплатная глава — число на сайте
+    вырастет, и первое же сравнение с `seen` вернёт True.
     """
     if best_cur > seen:
         return True
-    return bool(not heterogeneous and materialized and best_cur > materialized)
+    if heterogeneous or not materialized:
+        return False
+    if paid_tail_seen and best_cur <= paid_tail_seen:
+        return False
+    return best_cur > materialized
 
 
 def _file_chapters(work_obj) -> int:
@@ -548,10 +562,24 @@ def _download_and_write_impl(
     _heterogeneous = _metric_kind(best_url) != "chapters"
     got_all = (materialized == 0) or _heterogeneous or (materialized >= best_cur)
     mon.last_checked = utcnow()
+    # Хвост книги платный: адаптер author.today честно сказал, что дальше
+    # начинается покупка (serg/tasks#983). Это НЕ сбой докачки — штрафовать
+    # подписку нельзя, иначе через _MAX_FAILS книга молча выпадает из
+    # автообновления, как и случилось с «Вечно голодным студентом 10».
+    paid_tail = bool((getattr(res, "extra", None) or {}).get("partial_paid"))
     if got_all:
         mon.has_update = False
         mon.fail_count = 0
+        mon.paid_tail_seen = 0
         mon.last_error = None
+        _set_seen(mon, best_cur, best_url)
+    elif paid_tail:
+        mon.has_update = False
+        mon.fail_count = 0
+        mon.paid_tail_seen = best_cur
+        mon.last_error = (
+            f"доступно {materialized} гл. из {best_cur} — дальше платно"
+        )
         _set_seen(mon, best_cur, best_url)
     else:
         mon.has_update = True
@@ -774,6 +802,7 @@ def check_all(
                 seen=seen,
                 materialized=_mat,
                 heterogeneous=_metric_kind(best_url) != "chapters",
+                paid_tail_seen=mon.paid_tail_seen or 0,
             )
             or needs_initial
             or (mon.has_update and auto_download and (mon.fail_count or 0) < _MAX_FAILS)
@@ -891,6 +920,7 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
             seen=seen,
             materialized=_file_chapters(_w) if not _heterogeneous else 0,
             heterogeneous=_heterogeneous,
+            paid_tail_seen=mon.paid_tail_seen or 0,
         )
         or (not mon.work_id and best_cur > 0)
         or mon.has_update

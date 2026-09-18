@@ -14,6 +14,7 @@ import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
          setMoreBadge, setMoreExpanded } from './chrome.js'
 import { initTranslate, onTranslateDocLoaded } from './translate.js'
 import { exitFullscreen, exitMeansBack, takeButtonExit } from './core/fullscreen.js'
+import { keyNavAction } from './core/keynav.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
@@ -91,15 +92,43 @@ function handleKey(e) {
   // В полях ввода (поиск, заметки) клавиши листания не перехватываем.
   const t = e.target
   if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName || ''))) return
-  const k = e.key
-  if (k === 'ArrowLeft') { goPrev(); e.preventDefault() }
-  else if (k === 'ArrowRight') { goNext(); e.preventDefault() }
-  else if (k === 'PageUp') { goPrev(); e.preventDefault() }
-  else if (k === 'PageDown') { goNext(); e.preventDefault() }
-  else if (k === ' ' || k === 'Spacebar') { e.shiftKey ? goPrev() : goNext(); e.preventDefault() }
-  else if (k === 'Enter') { e.shiftKey ? goPrev() : goNext(); e.preventDefault() }
-  else if (k === 'Home') { view.goToFraction(0); e.preventDefault() }
-  else if (k === 'End') { view.goToFraction(1); e.preventDefault() }
+  const action = keyNavAction(e.key, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
+  if (!action) return
+  if (action === 'prev') goPrev()
+  else if (action === 'next') goNext()
+  else gotoEdge(action)
+  e.preventDefault()
+}
+// Home/End — края ТЕКУЩЕЙ главы, с Ctrl — края КНИГИ (serg/tasks#996).
+// anchor 0 — начало секции, 1 — конец: ровно так листает сам foliate (#turnPage
+// отдаёт `anchor: prev ? () => 1 : () => 0`).
+async function gotoEdge(action) {
+  const r = view?.renderer
+  const toEnd = action === 'chapterEnd' || action === 'bookEnd'
+  const wholeBook = action === 'bookStart' || action === 'bookEnd'
+  let index = wholeBook ? null : lastIdx
+  if (wholeBook && r) {
+    // Нелинейные секции (обложка, колофон) краями книги не считаются — тем же
+    // критерием foliate выбирает first/lastSection.
+    const secs = r.sections || []
+    index = toEnd
+      ? secs.findLastIndex(s => s?.linear !== 'no')
+      : secs.findIndex(s => s?.linear !== 'no')
+  }
+  // Индекс неизвестен (relocate ещё не приходил) или renderer не готов —
+  // честный фолбэк на прежнее поведение, а не молчаливое «ничего не случилось».
+  if (!r || index == null || index < 0) {
+    try { await view?.goToFraction(toEnd ? 1 : 0) }
+    catch (err) { console.warn('keynav: переход к краю книги не удался', err) }
+    return
+  }
+  try {
+    await r.goTo({ index, anchor: () => (toEnd ? 1 : 0) })
+  } catch (err) {
+    console.warn('keynav: переход к краю главы не удался, иду к краю книги', err)
+    try { await view.goToFraction(toEnd ? 1 : 0) }
+    catch (err2) { console.warn('keynav: фолбэк тоже не удался', err2) }
+  }
 }
 document.addEventListener('keydown', handleKey)
 // Когда фокус внутри книги (iframe), события клавиш ловим и там.

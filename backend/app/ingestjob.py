@@ -45,6 +45,10 @@ SLOTS = 2  # FanFicFare — отдельный процесс ~200 МБ, у юн
 MAX_ACTIVE = 20  # queued + running; сверх — 429, а не бесконечная очередь
 POLL_S = 3.0
 CRASH_RETRY_DELAY = timedelta(seconds=10)
+# Пауза перед повтором после ОБЫЧНОЙ ошибки скачивания (сеть моргнула, сайт
+# придержал запрос). Больше крэш-отсрочки: там процесс уже мёртв и ждать нечего,
+# а здесь имеет смысл дать источнику отдышаться (serg/tasks#986).
+ERROR_RETRY_DELAY = timedelta(seconds=60)
 RETENTION = timedelta(days=7)
 
 _HOST = socket.gethostname()
@@ -271,9 +275,79 @@ def _claim() -> tuple[str, IngestJob] | None:
         return None
 
 
+def _should_retry(attempts: int, max_attempts: int) -> bool:
+    """Осталась ли у задания попытка после ошибки скачивания.
+
+    Правило простое: пока потраченных попыток меньше разрешённых — пробуем
+    снова. Сбой источника часто разовый (serg/tasks#986: та же книга скачалась
+    с повтора без единой правки кода), а человеку нажимать «Добавить» заново,
+    не понимая, есть ли смысл, — плохой ответ.
+    """
+    return (attempts or 0) < (max_attempts or 0)
+
+
+# Причины, которые по опыту ридера бывают РАЗОВЫМИ: их и только их имеет смысл
+# повторять. Список белый намеренно — см. _is_retryable.
+_RETRYABLE_MARKERS = (
+    "epub не создан",      # FanFicFare промолчал (serg/tasks#986)
+    "промолчал",
+    "тайм-аут",
+    "таймаут",
+    "timeout",
+    "сетевая ошибка",
+    "недоступен",
+)
+
+# Источник ответил, но своей поломкой (5xx), а не отказом: «вернуло 503».
+_SERVER_ERROR_RE = re.compile(r"(?:вернул[оа]?|код ответа|status)\s*5\d\d\b", re.I)
+
+
+def _is_retryable(message: str | None) -> bool:
+    """Стоит ли повторять скачивание с такой причиной отказа.
+
+    Список БЕЛЫЙ, и это осознанно. «Story does not exist», 403 и «нет адаптера» —
+    приговор: повтор через минуту ничего не изменит, зато человек вместо честной
+    ошибки несколько минут смотрит на задание в очереди. Ошибиться в сторону
+    «error» дешевле, чем гонять карусель повторов по приговору, поэтому
+    незнакомая причина считается окончательной.
+    """
+    text = (message or "").lower()
+    if not text:
+        return False
+    if any(m in text for m in _RETRYABLE_MARKERS):
+        return True
+    return bool(_SERVER_ERROR_RE.search(text))
+
+
 def _finish_error(job_id: str, message: str) -> None:
+    """Записать отказ: вернуть задание в очередь, пока есть попытки, иначе error."""
     t = now()
     with Session(engine) as s:
+        row = s.get(IngestJob, job_id)
+        if (
+            row is not None
+            and _is_retryable(message)
+            and _should_retry(row.attempts, row.max_attempts)
+        ):
+            res = s.execute(
+                update(IngestJob)
+                .where(col(IngestJob.id) == job_id, col(IngestJob.status) == "running")
+                .values(
+                    status="queued",
+                    finished_at=None,
+                    updated_at=t,
+                    not_before=t + ERROR_RETRY_DELAY,
+                    error=mask(message)[:500],
+                )
+            )
+            s.commit()
+            if res.rowcount == 1:
+                log.warning(
+                    "задание %s: ошибка «%s», попытка %s из %s — повтор через %s с",
+                    job_id, mask(message)[:200], row.attempts, row.max_attempts,
+                    int(ERROR_RETRY_DELAY.total_seconds()),
+                )
+                return
         s.execute(
             update(IngestJob)
             .where(col(IngestJob.id) == job_id, col(IngestJob.status) == "running")

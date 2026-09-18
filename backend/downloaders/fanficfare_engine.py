@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import subprocess
 import time
@@ -17,6 +18,11 @@ from urllib.parse import urlparse
 
 from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
+
+# Отказы скачивания уходят в journald → Loki вместе с остальными строками
+# сервиса: без них немой сбой невозможно разобрать даже задним числом
+# (serg/tasks#986).
+log = logging.getLogger("reader.download")
 
 # Домены, которые FanFicFare покрывает и которые нам интересны в первую очередь.
 # Список не исчерпывающий: FanFicFare поддерживает 100+ сайтов, но маршрутизацию
@@ -87,9 +93,16 @@ def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 1
             proc = subprocess.run(cmd + cred_args + [url],
                                   capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        # Молчание здесь стоило часов разбора: задание продолжало работу без
+        # числа глав, и никто не знал, что метаданные вообще не получены.
+        log.warning("метаданные %s не получены за %s с (таймаут)", url, timeout)
         return {}
     out = (proc.stdout or "").strip()
     if not out:
+        log.warning(
+            "метаданные %s пусты: код возврата %s; stderr: %s",
+            url, proc.returncode, _strip_noise(proc.stderr)[-200:] or "(пусто)",
+        )
         return {}
     try:
         return json.loads(out)
@@ -138,7 +151,7 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
         )
     try:
         with _creds_config(creds) as cred_args:
-            _rc, out, err = _run_fff(cmd + cred_args + [url], workdir, 600, total=total)
+            rc, out, err = _run_fff(cmd + cred_args + [url], workdir, 600, total=total)
     except subprocess.TimeoutExpired as e:
         raise DownloaderError(f"FanFicFare превысил тайм-аут на {url}") from e
 
@@ -151,7 +164,12 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     if not epubs:
         # Нет файла — частые причины: требуется логин, защита Cloudflare, 0 глав,
         # фик удалён («Story does not exist» — FanFicFare пишет это в STDOUT).
-        msg = _reason(out, err) or "EPUB не создан"
+        msg = _failure_reason(rc, out, err)
+        raw = ((err or "") + "\n" + (out or "")).strip()
+        log.warning(
+            "FanFicFare не создал EPUB для %s: %s (код возврата %s; сырой вывод: %s)",
+            url, msg[:400], rc, raw[-500:] or "пусто",
+        )
         raise DownloaderError(f"Не удалось скачать {url}: {msg[:400]}")
 
     epub = epubs[0]
@@ -244,6 +262,26 @@ def _reason(stdout: str | None, stderr: str | None) -> str:
     """Причина отказа из ОБОИХ потоков: FanFicFare пишет её то в stdout, то в stderr."""
     parts = [s for s in (_strip_noise(stderr), _strip_noise(stdout)) if s]
     return " | ".join(parts)
+
+
+def _failure_reason(rc: int, stdout: str | None, stderr: str | None) -> str:
+    """Причина отказа для человека и лога. Пустой она быть не может.
+
+    FanFicFare обычно пишет причину сам («Story does not exist», требование
+    логина). Но он умеет завершиться молча — с любым кодом возврата и пустыми
+    потоками. Раньше в этом случае человек видел «EPUB не создан» и не мог даже
+    понять, повторять ему или сломано навсегда (serg/tasks#986: сбой оказался
+    разовым, повтор тем же кодом скачал книгу целиком).
+
+    Порядок: настоящий текст → честное «промолчал, код такой-то». Сырой хвост
+    потоков сюда НЕ идёт: он состоит из служебного шума venv, который однажды уже
+    вытеснил настоящую причину из интерфейса (serg/tasks#888). Место сырого
+    вывода — лог, туда он и пишется отдельной строкой.
+    """
+    text = _reason(stdout, stderr)
+    if text:
+        return text
+    return f"EPUB не создан: FanFicFare промолчал (код возврата {rc})"
 
 
 def _read_meta(epub: Path) -> dict:

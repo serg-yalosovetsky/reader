@@ -56,6 +56,14 @@ def _apply_file(work: Work, dest: Path, result: DownloadResult, sha1: str) -> No
         work.chapters_count = counted or result.num_chapters
     work.calibre_id = calibre.add_book(dest) or work.calibre_id
     cover = covers.extract_cover(dest, result.file_format, sha1)
+    # Из файла ЗЕРКАЛА нередко извлекается не обложка, а баннер или логотип сайта
+    # (serg/tasks#984: PNG 122×41 из readli-epub). Такой картинкой нельзя затирать
+    # уже имеющуюся настоящую обложку: выдача /cover считает её мусором и отвечает
+    # 404 — книга остаётся вообще без картинки. Отбраковываем здесь, тогда ниже
+    # отработают обычные запасные пути (описание, сайт-источник), а если и они
+    # ничего не дадут — у книги останется прежняя обложка.
+    if cover and _is_placeholder_cover(cover):
+        cover = None
     cover_src = "embedded" if cover else ""
     if not cover and result.file_format == "epub":
         desc = covers._epub_description(dest)
@@ -249,6 +257,24 @@ def _real_chapters(path, fmt) -> int:
         if not _GENERIC_SECTION.match(ttl):
             real += 1
     return real
+
+
+def _is_placeholder_cover(path) -> bool:
+    """Похожа ли картинка на баннер/логотип сайта, а не на обложку книги.
+
+    Критерий тот же, что у выдачи обложек (`is_generic_cover` с проверкой
+    пропорций). Разъедутся эти два суждения — запись сочтёт картинку годной, показ
+    отбракует, и книга останется без обложки, никому не пожаловавшись
+    (serg/tasks#984).
+
+    Файла нет — это не «заглушка», а отсутствие данных: решение принимает
+    вызывающий. Ошибку чтения намеренно НЕ глушим: она уйдёт наверх вместе с
+    остальными ошибками докачки и попадёт в её лог.
+    """
+    p = Path(path)
+    if not p.exists():
+        return False
+    return covers.is_generic_cover(p.read_bytes(), check_aspect=True)
 
 
 def register_download(result: DownloadResult, session: Session) -> Work:

@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import os
 import shutil
+import zipfile
 from pathlib import Path
 
 from .config import BOOKS_DIR
@@ -53,3 +54,45 @@ def import_file(src: Path, sha1: str | None = None) -> tuple[Path, str]:
                 tmp.unlink()
             raise
     return dest, sha1
+
+
+# Запас прочности против zip-бомбы: больше этого из архива не разворачиваем.
+# Считаем фактически записанные байты, а не info.file_size: заголовок архива
+# пишет тот же, кто прислал архив, и верить ему нельзя.
+MAX_ZIP_UNPACKED = 512 * 1024 * 1024
+
+
+def extract_books_from_zip(
+    zip_path: Path, out_dir: Path, max_books: int = 200
+) -> list[Path]:
+    """Развернуть из zip все поддерживаемые книги в out_dir.
+
+    Возвращает пути распакованных файлов в порядке появления в архиве.
+    Имена внутри архива недоверенные, поэтому берём только basename: ни
+    "../", ни абсолютный путь за пределы out_dir не выведут (zip-slip).
+    Каждая книга кладётся в свой подкаталог — одинаковые имена в разных
+    папках архива не затирают друг друга, а имя файла остаётся исходным
+    (из него потом берётся заголовок книги).
+    """
+    out: list[Path] = []
+    total = 0
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            if info.is_dir() or len(out) >= max_books:
+                continue
+            name = Path(info.filename.replace("\\", "/")).name
+            if not name or not detect_format(name):
+                continue
+            sub = out_dir / f"{len(out):04d}"
+            sub.mkdir(parents=True, exist_ok=True)
+            dest = sub / name
+            with z.open(info) as src, open(dest, "wb") as dst:
+                while chunk := src.read(1 << 20):
+                    total += len(chunk)
+                    if total > MAX_ZIP_UNPACKED:
+                        raise ValueError(
+                            "архив разворачивается больше чем в 512 МБ — не принимаю"
+                        )
+                    dst.write(chunk)
+            out.append(dest)
+    return out

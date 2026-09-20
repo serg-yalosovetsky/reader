@@ -7,6 +7,7 @@ import anyio
 # версиях anyio, а промах вылезет только в рантайме при загрузке книги.
 import anyio.to_thread
 import tempfile
+import zipfile
 from functools import partial
 from pathlib import Path
 
@@ -19,7 +20,12 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
-from ..storage import detect_format, import_file, sha1_of_file
+from ..storage import (
+    detect_format,
+    extract_books_from_zip,
+    import_file,
+    sha1_of_file,
+)
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
@@ -405,40 +411,10 @@ def _completeness(work: Work, session: Session) -> dict:
     }
 
 
-@router.post("/upload")
-async def upload_book(
-    file: UploadFile = File(...),
-    session: Session = Depends(get_session),
-) -> Work:
-    """Ручная загрузка EPUB/FB2 (полезно на этапе 1 и как фоллбэк)."""
-    fmt = detect_format(file.filename or "")
-    if not fmt:
-        raise HTTPException(400, "поддерживаются только .epub, .fb2 и .pdf")
-
-    # Сохраняем во временный файл, считаем SHA-1, импортируем в хранилище.
-    suffix = Path(file.filename or "").suffix.lower()
-    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    async with await anyio.open_file(tmp_path, "wb") as tmp:
-        while chunk := await file.read(1 << 20):
-            await tmp.write(chunk)
-    # Файловые операции — в поток. Это async-обработчик: sha1_of_file читает
-    # книгу целиком, import_file её копирует, unlink дёргает ФС, и все трое
-    # выполнялись прямо в цикле событий. Под одним клиентом незаметно, но
-    # загрузка толстого EPUB держала весь сервис — не только свой запрос.
-    try:
-        sha1 = await anyio.to_thread.run_sync(sha1_of_file, tmp_path)
-        # Дедуп: если книга с таким SHA-1 уже есть — вернуть её.
-        existing = session.exec(select(Work).where(Work.sha1 == sha1)).first()
-        if existing:
-            return existing
-        dest, _ = await anyio.to_thread.run_sync(import_file, tmp_path, sha1)
-    finally:
-        await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
-
+def _add_work(session: Session, title: str, fmt: str, dest: Path, sha1: str) -> Work:
+    """Завести запись о загруженной книге."""
     work = Work(
-        title=Path(file.filename or "Без названия").stem,
+        title=title,
         site="upload",
         file_path=str(dest),
         file_format=fmt,
@@ -450,6 +426,82 @@ async def upload_book(
     session.commit()
     session.refresh(work)
     return work
+
+
+async def _import_one(session: Session, path: Path, title: str) -> tuple[Work, bool]:
+    """Импортировать один файл книги. Возвращает (книга, новая ли она).
+
+    Файловые операции — в поток: это async-обработчик, а sha1_of_file читает
+    книгу целиком и import_file её копирует.
+    """
+    fmt = detect_format(path.name)
+    if not fmt:
+        raise HTTPException(400, f"неподдерживаемый формат: {path.name}")
+    sha1 = await anyio.to_thread.run_sync(sha1_of_file, path)
+    # Дедуп: если книга с таким SHA-1 уже есть — вернуть её.
+    existing = session.exec(select(Work).where(Work.sha1 == sha1)).first()
+    if existing:
+        return existing, False
+    dest, _ = await anyio.to_thread.run_sync(import_file, path, sha1)
+    return _add_work(session, title or "Без названия", fmt, dest, sha1), True
+
+
+async def _import_zip(session: Session, zip_path: Path) -> dict:
+    """Импортировать книги из zip: один файл внутри — одна книга, много — много."""
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            paths = await anyio.to_thread.run_sync(
+                extract_books_from_zip, zip_path, Path(td)
+            )
+        except zipfile.BadZipFile:
+            raise HTTPException(400, "файл не открывается как zip-архив") from None
+        except ValueError as e:
+            # Единственный ValueError отсюда — превышен лимит распаковки.
+            raise HTTPException(400, str(e)) from None
+        if not paths:
+            raise HTTPException(400, "в архиве нет книг (.epub, .fb2, .pdf)")
+        added: list[Work] = []
+        duplicates: list[Work] = []
+        for p in paths:
+            work, is_new = await _import_one(session, p, p.stem)
+            (added if is_new else duplicates).append(work)
+    return {
+        "ok": True,
+        "added": len(added),
+        "duplicates": len(duplicates),
+        "works": [{"id": w.id, "title": w.title, "new": True} for w in added]
+        + [{"id": w.id, "title": w.title, "new": False} for w in duplicates],
+    }
+
+
+@router.post("/upload", response_model=None)
+async def upload_book(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+) -> Work | dict:
+    """Ручная загрузка EPUB/FB2/PDF либо zip-архива с книгами внутри."""
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    is_zip = suffix == ".zip"
+    if not detect_format(filename) and not is_zip:
+        raise HTTPException(
+            400, "поддерживаются только .epub, .fb2, .pdf и .zip с книгами внутри"
+        )
+
+    # Сохраняем во временный файл: и sha1, и распаковка работают по файлу.
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    async with await anyio.open_file(tmp_path, "wb") as tmp:
+        while chunk := await file.read(1 << 20):
+            await tmp.write(chunk)
+    try:
+        if is_zip:
+            return await _import_zip(session, tmp_path)
+        work, _ = await _import_one(session, tmp_path, Path(filename).stem)
+        return work
+    finally:
+        await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
 
 
 class HiddenIn(BaseModel):

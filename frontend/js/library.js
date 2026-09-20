@@ -686,7 +686,14 @@ $('#upload-input').addEventListener('change', async (e) => {
   try {
     const r = await fetch('/api/library/upload', { method: 'POST', body: fd })
     if (!r.ok) throw new Error(await r.text())
-    setIngestStatus('Файл добавлен.')
+    // zip отдаёт сводку по архиву, одиночный файл — саму книгу.
+    const res = await r.json().catch(() => null)
+    if (res && typeof res.added === 'number') {
+      const dup = res.duplicates ? `, уже были: ${res.duplicates}` : ''
+      setIngestStatus(res.added ? `Добавлено книг: ${res.added}${dup}` : `Новых книг нет${dup}`)
+    } else {
+      setIngestStatus('Файл добавлен.')
+    }
     await loadLibrary()
   } catch (err) {
     setIngestStatus('Ошибка загрузки: ' + err.message.slice(0, 160), { error: true })

@@ -290,6 +290,11 @@ def _pick_cover(new_cover, new_src: str, work: Work) -> tuple[str, str] | None:
     """
     if not new_cover:
         return None
+    # Обложка, выбранная вручную (serg/tasks#1055), перекачкой не заменяется — даже настоящей
+    # новой: правило «обложка живёт своей жизнью» относится к выбору человека вдвойне.
+    # Файла нет — выбора уже нет, тогда замена допустима.
+    if work.cover_source == "manual" and work.cover_path and Path(work.cover_path).exists():
+        return None
     if _is_placeholder_cover(new_cover):
         return None
     return str(new_cover), new_src

@@ -431,6 +431,9 @@ def _apply_at_cover(session: Session, work: Work, cover_bytes: bytes | None) -> 
     """Сохранить обложку и пометить work грязным (без commit — вызывающий коммитит)."""
     if not cover_bytes:
         return
+    # Ручная обложка (serg/tasks#1055) — выбор человека, докачка её не меняет.
+    if work.cover_source == "manual":
+        return
     from ..app import covers as _cov
 
     p = _cov.save_cover_bytes(cover_bytes, work.sha1)

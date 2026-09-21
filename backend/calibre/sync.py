@@ -452,6 +452,13 @@ def ensure_cover(work_id: int) -> Path | None:
         work = s.get(Work, work_id)
         if not work:
             return None
+        # Ручную обложку (serg/tasks#1055) отдаём как есть, без проверки на «баннер».
+        if (
+            work.cover_source == "manual"
+            and work.cover_path
+            and Path(work.cover_path).exists()
+        ):
+            return Path(work.cover_path)
         if work.cover_path and Path(work.cover_path).exists():
             # Кешированный файл принимаем, только если он похож на обложку:
             # сохранённый когда-то баннер/логотип иначе навсегда вытесняет

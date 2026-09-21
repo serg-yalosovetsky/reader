@@ -4,7 +4,9 @@
 import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { openReader } from './reader-core.js'
-import { libProgress, libMonitored } from './core/state.js'
+import { libProgress, libMonitored, libWorks } from './core/state.js'
+import { uploadCoverFlow, copyCoverFlow } from './cover-picker.js'
+import { coverUrl } from './core/coverpick.js'
 import {
   offlineSupported, isOffline, downloadBook, removeBook, refreshBook, offlineMeta,
 } from './core/offline.js'
@@ -35,6 +37,22 @@ function sourceLabel(w) {
     } catch { /* битый URL — падаем на site ниже */ }
   }
   return (w.site && SITE_LABEL[w.site]) || ''
+}
+
+// Новая обложка книги: перерисовать её на странице и обновить cover_v в списке
+// библиотеки — иначе после «назад» сетка показала бы старую картинку из кеша
+// (обложки кешируются по URL с ?v=, service worker отдаёт их cache-first).
+function applyCover(w, version) {
+  w.cover_v = version
+  if (curWork && curWork.id === w.id) curWork.cover_v = version
+  const listed = libWorks.find((x) => x.id === w.id)
+  if (listed) listed.cover_v = version
+  const cov = $('.bp-cover')
+  if (cov) {
+    cov.innerHTML =
+      `<img src="${coverUrl(w.id, version)}" alt="" onerror="this.remove()" />`
+      + `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
+  }
 }
 
 function parseList(s) {
@@ -194,6 +212,8 @@ function renderBookPage(w) {
           ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
           ${origBtn}
           <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
+          <button id="bp-uploadcover" class="btn-ghost bp-btn" title="Выбрать картинку (JPEG, PNG, WebP до 10 МБ) с этого устройства">🖼 Загрузить обложку</button>
+          <button id="bp-copycover" class="btn-ghost bp-btn" title="Скопировать обложку другой книги из библиотеки">📚 Взять обложку из другой книги</button>
           <button id="bp-hide" class="btn-ghost bp-btn" title="${w.hidden ? 'Вернуть книгу в библиотеку' : 'Убрать из библиотеки: останется доступной поиском'}">${w.hidden ? '👁 Показать в библиотеке' : '🙈 Скрыть из библиотеки'}</button>
           <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
         </div>
@@ -288,13 +308,7 @@ function renderBookPage(w) {
       const r = await fetch(`/api/reader/${w.id}/cover/generate?force=1`, { method: 'POST' })
       if (r.ok) {
         const d = await r.json()
-        w.cover_v = d.cover_v
-        const cov = $('.bp-cover')
-        if (cov) {
-          cov.innerHTML =
-            `<img src="/api/reader/${w.id}/cover?v=${d.cover_v}" alt="" onerror="this.remove()" />`
-            + `<span class="bp-cover-fallback">${escapeHtml(w.title || 'Без названия')}</span>`
-        }
+        applyCover(w, d.cover_v)
       } else {
         alert('Не удалось сгенерировать обложку')
       }
@@ -305,6 +319,9 @@ function renderBookPage(w) {
       btn.textContent = orig
     }
   })
+  // Ручная обложка (serg/tasks#1055): файл с устройства или обложка другой книги.
+  $('#bp-uploadcover')?.addEventListener('click', () => uploadCoverFlow(w, (v) => applyCover(w, v)))
+  $('#bp-copycover')?.addEventListener('click', () => copyCoverFlow(w, (v) => applyCover(w, v)))
   // PDF и прочая фиксированная вёрстка: EPUB-версия книги (перетекающий текст).
   // Кнопка показывает состояние и позволяет пересобрать, если вышло криво.
   const epubBtn = $('#bp-epub')

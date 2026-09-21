@@ -20,6 +20,7 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
+from ..upload_identity import extract_identity
 from ..storage import (
     detect_format,
     extract_books_from_zip,
@@ -309,6 +310,8 @@ def _do_refresh_covers() -> None:
         for w in works:
             if not w.title or not w.source_url or not _host_ok(w.source_url):
                 continue
+            if w.cover_source == "manual":  # выбор человека (serg/tasks#1055)
+                continue
             try:
                 at_url = _at.search_work(w.title, w.author or "")
                 if not at_url:
@@ -411,10 +414,13 @@ def _completeness(work: Work, session: Session) -> dict:
     }
 
 
-def _add_work(session: Session, title: str, fmt: str, dest: Path, sha1: str) -> Work:
+def _add_work(
+    session: Session, title: str, fmt: str, dest: Path, sha1: str, author: str = ""
+) -> Work:
     """Завести запись о загруженной книге."""
     work = Work(
         title=title,
+        author=author,
         site="upload",
         file_path=str(dest),
         file_format=fmt,
@@ -443,7 +449,17 @@ async def _import_one(session: Session, path: Path, title: str) -> tuple[Work, b
     if existing:
         return existing, False
     dest, _ = await anyio.to_thread.run_sync(import_file, path, sha1)
-    return _add_work(session, title or "Без названия", fmt, dest, sha1), True
+    # Название и автор — из самого файла (serg/tasks#1055); имя файла — последний
+    # запасной вариант. Разбор читает файл → в поток, а не в event loop; сбой не роняет загрузку.
+    found_title, found_author = await anyio.to_thread.run_sync(
+        extract_identity, path, fmt, title
+    )
+    return (
+        _add_work(
+            session, found_title or title or "Без названия", fmt, dest, sha1, found_author
+        ),
+        True,
+    )
 
 
 async def _import_zip(session: Session, zip_path: Path) -> dict:

@@ -7,11 +7,12 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import Request, APIRouter, Depends, HTTPException
+from fastapi import Request, APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from sqlmodel import Session
 
-from .. import config, covers, imagegen
+from .. import config, covers, imagegen, manual_cover
 from ..db.models import Work
 from ..db.session import get_session
 
@@ -98,6 +99,11 @@ def _usable_cover(work: Work) -> Path | None:
     if work and work.cover_path:
         p = Path(work.cover_path)
         if p.exists():
+            # Выбор человека критерию «баннер» не подлежит: широкая картинка,
+            # которую он загрузил сам, иначе отвечала бы 404. Границы задаёт
+            # приём файла (manual_cover.inspect_image), а не показ.
+            if work.cover_source == "manual":
+                return p
             try:
                 if covers.is_generic_cover(p.read_bytes(), check_aspect=True):
                     return None
@@ -395,6 +401,92 @@ def get_cover(work_id: int, w: int = 0) -> FileResponse:
     # Обложка появится при следующем открытии библиотеки.
     _schedule_generation_by_id(work_id)
     raise HTTPException(404, "обложки нет")
+
+
+def _store_manual_cover(work_id: int, data: bytes, *, allow_gif: bool = False) -> dict:
+    """Проверить картинку и сделать её ручной обложкой книги.
+
+    Порядок важен: файл целиком → строка БД → только потом удаление прежнего
+    ручного файла. Любая ошибка до конца оставляет прежнюю обложку нетронутой.
+    Под тем же локом, что и генерация: фоновая ИИ-генерация, начатая раньше, не
+    сможет дописать свою обложку поверх ручной.
+    """
+    from ..db.session import engine
+
+    try:
+        ext = manual_cover.inspect_image(data, allow_gif=allow_gif)
+    except manual_cover.CoverRejected as e:
+        raise HTTPException(e.status, e.message) from None
+    with _lock_for(work_id), Session(engine) as session:
+        work = session.get(Work, work_id)
+        if not work:
+            raise HTTPException(404, "книги нет")
+        old = work.cover_path
+        dest = manual_cover.write_manual_file(data, ext, work_id, work.sha1, old)
+        # updated_at не трогаем: он задаёт порядок библиотеки (как у скрытия, #923).
+        work.cover_path = str(dest)
+        work.cover_source = "manual"
+        try:
+            session.add(work)
+            session.commit()
+        except BaseException:
+            session.rollback()
+            if str(dest) != old:  # новый файл без записи в БД — мусор
+                dest.unlink(missing_ok=True)
+            raise
+        manual_cover.discard_old(old, dest)
+        return {"ok": True, "cover_v": int(dest.stat().st_mtime), "cover_source": "manual"}
+
+
+@router.post("/{work_id}/cover/upload")
+async def upload_cover(work_id: int, file: UploadFile = File(...)) -> dict:
+    """Обложка из файла с устройства (кнопка «Загрузить обложку»).
+
+    JPEG/PNG/WebP до 10 МБ, тип определяется по содержимому. Читаем не больше
+    лимита + 1 байт: клиенту, приславшему гигабайт, память сервиса не отдаём.
+    """
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(1 << 20):
+        size += len(chunk)
+        if size > manual_cover.MAX_BYTES:
+            raise HTTPException(413, f"файл больше {manual_cover.MAX_BYTES // (1024 * 1024)} МБ")
+        chunks.append(chunk)
+    return await run_in_threadpool(_store_manual_cover, work_id, b"".join(chunks))
+
+
+@router.post("/{work_id}/cover/copy-from/{src_id}")
+def copy_cover_from(work_id: int, src_id: int) -> dict:
+    """Взять обложку другой книги (кнопка «Взять обложку из другой книги»).
+
+    Копируется ФАЙЛ: у книги появляется своя обложка, а исходная книга не меняется.
+    Источник должен иметь настоящую обложку — ту же, что показывает /cover.
+    """
+    from ..db.session import engine
+
+    if work_id == src_id:
+        raise HTTPException(400, "нельзя взять обложку у самой этой книги")
+    with Session(engine) as session:
+        if not session.get(Work, work_id):
+            raise HTTPException(404, "книги нет")
+        src = session.get(Work, src_id)
+        if not src:
+            raise HTTPException(404, "книга-источник не найдена")
+        path = _usable_cover(src)
+        is_calibre = src.site == "calibre" and bool(src.calibre_id)
+    if not path and is_calibre:
+        # Обложка Calibre подтягивается по требованию — как в /cover.
+        from ...calibre import sync as csync
+
+        path = csync.ensure_cover(src_id)
+    if not path or not Path(path).exists():
+        raise HTTPException(409, "у выбранной книги нет обложки")
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        raise HTTPException(409, "обложку выбранной книги не удалось прочитать") from None
+    # GIF у источника бывает (`_img_ext` его знает), и копировать его можно.
+    return _store_manual_cover(work_id, data, allow_gif=True)
 
 
 @router.post("/{work_id}/cover/generate")

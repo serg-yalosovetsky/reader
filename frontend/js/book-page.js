@@ -12,6 +12,7 @@ import {
 } from './core/offline.js'
 import { filterBy, toggleHidden } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
+import { logErr } from './core/log.js'
 
 let curWork = null
 
@@ -220,7 +221,13 @@ function renderBookPage(w) {
       </div>
     </div>
     ${chipsHtml ? `<div class="bp-section"><div class="bp-section-h">Жанры и метки</div><div class="bp-chips">${chipsHtml}</div></div>` : ''}
-    ${descHtml ? `<div class="bp-section"><div class="bp-section-h">Описание</div>${descHtml}</div>` : ''}`
+    ${descHtml ? `<div class="bp-section"><div class="bp-section-h">Описание</div>${descHtml}</div>` : ''}
+    <div class="bp-section" id="bp-toc-sec">
+      <div class="bp-section-h">Оглавление <span id="bp-toc-count" class="bp-toc-count"></span></div>
+      <input id="bp-toc-filter" class="bp-toc-filter" type="search" placeholder="Найти главу…"
+             autocomplete="off" hidden aria-label="Поиск по оглавлению" />
+      <div id="bp-toc" class="bp-toc">Загружаю оглавление…</div>
+    </div>`
 
   $('#bp-body').querySelectorAll('[data-flt-author]').forEach((el) =>
     el.addEventListener('click', () => goFilter(w.author)))
@@ -364,6 +371,11 @@ function renderBookPage(w) {
       ? 'Вернуть книгу в библиотеку'
       : 'Убрать из библиотеки: останется доступной поиском'
   })
+  // Оглавление подтягивается отдельным запросом: страница книги не должна
+  // ждать разбора EPUB, а у файла в 181 главу список приходит не мгновенно.
+  renderToc(w.id)
+  loadToc(w.id)
+  $('#bp-toc-filter')?.addEventListener('input', () => renderToc(w.id))
   $('#bp-del').addEventListener('click', async () => {
     if (!confirm(`Удалить «${w.title || 'книгу'}»?`)) return
     try {
@@ -372,6 +384,93 @@ function renderBookPage(w) {
       else alert('Ошибка удаления')
     } catch (e) { alert('Ошибка удаления: ' + e.message) }
   })
+}
+
+// ===================== Оглавление книги =====================
+// Список глав строит СЕРВЕР (backend/app/booktoc.py): тянуть ради заголовков
+// весь файл книги на страницу-сводку — это мегабайты, особенно с телефона.
+// Клик открывает читалку сразу на выбранной главе, а сохранённая позиция
+// уезжает в историю переходов, чтобы её не потерять (serg/tasks#1078).
+let tocCache = { id: null, items: null, error: '' }
+
+async function loadToc(id) {
+  if (tocCache.id === id && (tocCache.items || tocCache.error)) return
+  tocCache = { id, items: null, error: '' }
+  try {
+    const data = await api.get(`/api/reader/${id}/toc`)
+    if (tocCache.id !== id) return          // ушли на другую книгу
+    tocCache.items = data?.items || []
+  } catch (e) {
+    if (tocCache.id !== id) return
+    // Пустое оглавление и НЕДОСТУПНОЕ оглавление — разные вещи: молча показать
+    // «глав нет» значило бы соврать про книгу, у которой они есть.
+    tocCache.error = e.name === 'AuthRequiredError'
+      ? 'сессия истекла — войдите заново'
+      : (e.message || 'не удалось получить')
+    logErr('оглавление книги не загрузилось', e)
+  }
+  renderToc(id)
+}
+
+function openChapter(item) {
+  if (!curWork) return
+  $('#book-page').hidden = true
+  document.body.classList.remove('bookpage-open')
+  openReader(curWork, {
+    jump: { href: item.href || '', index: item.index, label: item.label || '' },
+  })
+}
+
+function renderToc(id) {
+  const box = $('#bp-toc')
+  if (!box || !curWork || curWork.id !== id) return
+  const countEl = $('#bp-toc-count')
+  const filterEl = $('#bp-toc-filter')
+
+  if (tocCache.id !== id || (!tocCache.items && !tocCache.error)) {
+    box.textContent = 'Загружаю оглавление…'
+    return
+  }
+  if (tocCache.error) {
+    box.innerHTML = `<div class="bp-toc-empty">Оглавление не получено: ${escapeHtml(tocCache.error)}</div>`
+    return
+  }
+  const items = tocCache.items || []
+  if (!items.length) {
+    box.innerHTML = '<div class="bp-toc-empty">У этого файла нет оглавления —'
+      + ' главы можно листать в самой читалке.</div>'
+    if (countEl) countEl.textContent = ''
+    return
+  }
+  if (countEl) countEl.textContent = `${items.length} ${plural(items.length)}`
+  if (filterEl) filterEl.hidden = items.length < 20   // на 7 главах поиск лишний
+
+  const q = (filterEl?.value || '').trim().toLowerCase()
+  const shown = q
+    ? items.filter((it) => (it.label || '').toLowerCase().includes(q))
+    : items
+  if (!shown.length) {
+    box.innerHTML = '<div class="bp-toc-empty">Ничего не нашлось</div>'
+    return
+  }
+  box.innerHTML = ''
+  shown.forEach((it, i) => {
+    const a = document.createElement('a')
+    a.href = '#'
+    a.className = it.level ? 'bp-toc-item bp-toc-sub' : 'bp-toc-item'
+    a.innerHTML = `<span class="bp-toc-n">${items.indexOf(it) + 1}</span>`
+      + `<span class="bp-toc-label">${escapeHtml(it.label || '—')}</span>`
+    a.addEventListener('click', (ev) => { ev.preventDefault(); openChapter(it) })
+    box.append(a)
+  })
+}
+
+function plural(n) {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return 'глава'
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'главы'
+  return 'глав'
 }
 
 // Кнопка «назад» на странице книги.

@@ -58,6 +58,12 @@ export function setBookMeta(work) {
   renderTitle()
 }
 
+// Название текущей главы для тех, кому нужен не заголовок, а сам факт: подпись
+// к позиции в истории переходов (js/jumps.js).
+export function chapterTitle() {
+  return meta.chapter || ''
+}
+
 // Вызывается на каждый relocate. Режим НЕ трогаем.
 export function setChapterTitle(label) {
   meta.chapter = (label || '').trim()

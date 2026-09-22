@@ -5,6 +5,7 @@ import { logErr } from './core/log.js'
 import { goToLocator } from './core/locator.js'
 import { currentWork, view, lastCfi } from './core/state.js'
 import { openPanel, closePanels } from './navigation.js'
+import { recordJump } from './jumps.js'
 
 // ===================== Закладки (синк с сервером + Android) =====================
 // Сервер хранит locator как непрозрачную строку. Веб пишет foliate-CFI, Android —
@@ -26,6 +27,7 @@ async function loadBookmarks() {
     a.textContent = `${bm.label || 'Закладка'} · ${pct}%`
     a.addEventListener('click', async (ev) => {
       ev.preventDefault()
+      recordJump('bookmark')
       await goToLocator(view, bm.locator, bm.ratio)
       closePanels()
     })

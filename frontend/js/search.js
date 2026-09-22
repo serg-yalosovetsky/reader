@@ -2,6 +2,7 @@
 import { $, escapeHtml } from './core/dom.js'
 import { view } from './core/state.js'
 import { closePanels } from './navigation.js'
+import { recordJump } from './jumps.js'
 
 // ===================== Поиск по книге =====================
 // foliate view.search() — асинхронный генератор: по секциям выдаёт совпадения
@@ -54,6 +55,8 @@ function searchResult(label, sub) {
   a.innerHTML =
     (label ? `<span class="sr-label">${escapeHtml(label)}</span>` : '') +
     `<span class="sr-ex">${escapeHtml(ex.pre || '')}<mark>${escapeHtml(ex.match || '')}</mark>${escapeHtml(ex.post || '')}</span>`
-  a.addEventListener('click', (ev) => { ev.preventDefault(); view.goTo(sub.cfi); closePanels() })
+  // Переход к найденному — прыжок: место, из которого искали, должно
+  // остаться в истории переходов (serg/tasks#1078).
+  a.addEventListener('click', (ev) => { ev.preventDefault(); recordJump('search'); view.goTo(sub.cfi); closePanels() })
   return a
 }

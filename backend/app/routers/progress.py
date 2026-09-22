@@ -10,16 +10,82 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from ..db.models import Progress, Work, utcnow
+from ..db.models import PositionHistory, Progress, Work, utcnow
 from ..db.session import get_session
 
 router = APIRouter(prefix="/api/progress", tags=["progress"])
+
+
+# Сколько прошлых позиций держим на книгу. Список переходов — рабочий
+# инструмент, а не архив: глубже нескольких десятков в него не заглядывают,
+# зато каждая запись стоит строки в БД на каждую книгу библиотеки.
+MAX_HISTORY = 50
+# Насколько должна измениться доля, чтобы сохранение считалось ПРЫЖКОМ, а не
+# обычным чтением. 0.005 книги — это примерно одна глава у фанфика на 200 глав:
+# листание страниц историю не засоряет, а «вкладка со страницей 1 затёрла главу
+# 100» попадает в неё гарантированно.
+JUMP_RATIO = 0.005
+
+
+def _push_history(
+    session: Session,
+    prog: Progress,
+    *,
+    chapter: str = "",
+    reason: str = "jump",
+) -> None:
+    """Сохранить ТЕКУЩУЮ позицию в историю (до того, как её перезапишут)."""
+    if not (prog.locator or prog.text_anchor or prog.ratio):
+        return  # пустая позиция: возвращаться в неё некуда
+    last = session.exec(
+        select(PositionHistory)
+        .where(PositionHistory.work_id == prog.work_id)
+        .order_by(PositionHistory.created_at.desc(), PositionHistory.id.desc())
+    ).first()
+    # Тот же locator подряд — это не новый переход, а повтор.
+    if last and last.locator == prog.locator and last.text_anchor == prog.text_anchor:
+        return
+    session.add(
+        PositionHistory(
+            work_id=prog.work_id,
+            ratio=float(prog.ratio or 0.0),
+            locator=prog.locator or "",
+            text_anchor=prog.text_anchor or "",
+            chapter=chapter,
+            reason=reason,
+        )
+    )
+    _trim_history(session, prog.work_id)
+
+
+def _trim_history(session: Session, work_id: int) -> None:
+    """Оставить последние MAX_HISTORY записей книги."""
+    rows = session.exec(
+        select(PositionHistory)
+        .where(PositionHistory.work_id == work_id)
+        .order_by(PositionHistory.created_at.desc(), PositionHistory.id.desc())
+    ).all()
+    for extra in rows[MAX_HISTORY:]:
+        session.delete(extra)
 
 
 class ProgressIn(BaseModel):
     ratio: float = Field(ge=0.0, le=1.0)
     locator: str = ""
     text_anchor: str = ""
+    # Название главы на момент сохранения: в Progress не хранится (там только
+    # координаты), но нужно истории позиций — подписью к записи.
+    chapter: str = ""
+
+
+class HistoryIn(BaseModel):
+    """Снимок позиции, который фронт кладёт в историю ПЕРЕД прыжком."""
+
+    ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    locator: str = ""
+    text_anchor: str = ""
+    chapter: str = ""
+    reason: str = "jump"
 
 
 def effective_ratio(prog: Progress, chapters_now: int) -> float:
@@ -83,12 +149,25 @@ def set_progress(
 
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
     if prog:
+        # Позицию вот-вот перезапишут. Если новая далеко от старой — это не
+        # чтение, а прыжок (или затирание чужой вкладкой, открытой в начале
+        # книги): прежнее место уезжает в историю, чтобы «Назад» в читалке
+        # было куда нажимать.
+        jumped = abs(float(prog.ratio or 0.0) - float(body.ratio)) >= JUMP_RATIO
+        if jumped:
+            _push_history(session, prog, chapter=prog.chapter, reason="overwrite")
         prog.ratio = body.ratio
         prog.locator = body.locator
         # Пустой якорь не затираем сохранённым: релокейт без видимого текста
         # (пустая/картиночная страница) не должен стирать рабочий якорь.
         if body.text_anchor:
             prog.text_anchor = body.text_anchor
+        # Глава пришла — пишем. Пришла пустая (обложка, титул или
+        # релокейт без tocItem) — сохраняем прежнюю подпись ТОЛЬКО пока читают
+        # то же место. При прыжке прежняя глава уже не про эту позицию —
+        # лучше пустая подпись, чем чужая.
+        if body.chapter or jumped:
+            prog.chapter = body.chapter
         prog.last_read_time = utcnow()
         prog.chapters_at_read = int(work.chapters_count or 0)
         prog.source = "web"
@@ -98,6 +177,7 @@ def set_progress(
             ratio=body.ratio,
             locator=body.locator,
             text_anchor=body.text_anchor,
+            chapter=body.chapter,
             chapters_at_read=int(work.chapters_count or 0),
             source="web",
         )
@@ -110,3 +190,54 @@ def set_progress(
     session.commit()
     session.refresh(prog)
     return prog
+
+
+@router.get("/{work_id}/history")
+def get_history(
+    work_id: int, session: Session = Depends(get_session)
+) -> list[PositionHistory]:
+    """Прошлые позиции книги, новые первыми."""
+    return list(
+        session.exec(
+            select(PositionHistory)
+            .where(PositionHistory.work_id == work_id)
+            .order_by(PositionHistory.created_at.desc(), PositionHistory.id.desc())
+            .limit(MAX_HISTORY)
+        ).all()
+    )
+
+
+@router.post("/{work_id}/history")
+def add_history(
+    work_id: int,
+    body: HistoryIn,
+    session: Session = Depends(get_session),
+) -> PositionHistory:
+    """Положить позицию в историю (читалка зовёт это перед прыжком)."""
+    if not session.get(Work, work_id):
+        raise HTTPException(404, "work not found")
+    row = PositionHistory(
+        work_id=work_id,
+        ratio=body.ratio,
+        locator=body.locator,
+        text_anchor=body.text_anchor,
+        chapter=body.chapter,
+        reason=body.reason or "jump",
+    )
+    session.add(row)
+    _trim_history(session, work_id)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+@router.delete("/{work_id}/history")
+def clear_history(work_id: int, session: Session = Depends(get_session)) -> dict:
+    """Очистить историю переходов книги."""
+    rows = session.exec(
+        select(PositionHistory).where(PositionHistory.work_id == work_id)
+    ).all()
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return {"deleted": len(rows)}

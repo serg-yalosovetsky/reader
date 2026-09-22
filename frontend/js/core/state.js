@@ -6,6 +6,10 @@ export let bookDoc = null
 export let lastCfi = ''
 export let lastAnchor = ''
 export let lastIdx = null
+// Доля прочитанного на последнем релокейте. Раньше её нигде не держали —
+// она уходила прямо в PUT прогресса, и снимок позиции для истории
+// переходов было не из чего собрать.
+export let lastFraction = 0
 export let _selIndex = -1
 export let libWorks = [], libCalibre = [], libProgress = {}
 // Скрытые книги (serg/tasks#923): в сетке библиотеки их нет, грузятся лениво
@@ -20,6 +24,7 @@ export const setBookDoc = (d) => { bookDoc = d }
 export const setLastCfi = (c) => { lastCfi = c }
 export const setLastAnchor = (a) => { lastAnchor = a }
 export const setLastIdx = (i) => { lastIdx = i }
+export const setLastFraction = (f) => { lastFraction = f }
 export const setSelIndex = (i) => { _selIndex = i }
 export const setLibWorks = (v) => { libWorks = v }
 export const setLibCalibre = (v) => { libCalibre = v }

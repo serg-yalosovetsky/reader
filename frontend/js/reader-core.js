@@ -5,8 +5,9 @@ import { logErr } from './core/log.js'
 import { prefs, MARGIN_INLINE, MARGIN_SIDE_PCT, MARGIN_GAP, FONT_STACKS,
          gfontsFor } from './core/prefs.js'
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
-         setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx } from './core/state.js'
-import { restorePosition, captureAnchor } from './core/position.js'
+         setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx,
+         setLastFraction } from './core/state.js'
+import { restorePosition, captureAnchor, gotoPosition } from './core/position.js'
 import { inlineImagesOnLoad } from './core/inline-images.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
@@ -16,6 +17,7 @@ import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
+import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
@@ -100,7 +102,19 @@ export async function openReader(work, opts = {}) {
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
   const prog = await progP
-  await restorePosition(view, prog)
+  // Позиция, с которой книга открывается, — точка отсчёта для признака прыжка:
+  // иначе первый же релокейт после восстановления выглядел бы скачком с нуля.
+  setLastFraction(prog?.ratio || 0)
+  await resetJumps(work.id, prog?.ratio || 0)
+  if (opts.jump) {
+    // Пришли из оглавления на странице книги: открываем НЕ сохранённую
+    // позицию, а выбранную главу. Сохранённую кладём в историю переходов —
+    // иначе клик по главе стирал бы место, с которого человек читал.
+    pushServerJump(prog, 'open')
+    await openAtChapter(view, opts.jump)
+  } else {
+    await restorePosition(view, prog)
+  }
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
   loadHighlightsWeb()
@@ -121,18 +135,24 @@ function onRelocate(e) {
   // Текстовый якорь верха экрана — основа устойчивого восстановления позиции.
   const anchor = captureAnchor(range)
   if (anchor) setLastAnchor(anchor)
+  setLastFraction(fraction || 0)
   // Шкала (доля, «страница», текущая глава) — в progress-bar.js.
   updateProgress(e.detail)
   // Название текущей главы — в заголовке сверху (внизу больше не дублируется).
   setChapterTitle(tocItem?.label || '')
+  markCurrentToc(tocItem)
   // Долистали до непереведённых абзацев — подтянуть их (дебаунс внутри).
   onTranslateRelocate()
   // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     if (!currentWork) return
+    // Далёкое от прошлого сохранения место = сервер положит прежнее в историю
+    // переходов; кнопка «Назад» должна ожить сразу (serg/tasks#1078).
+    noteProgressSaved(fraction || 0)
     api.put(`/api/progress/${currentWork.id}`,
-      { ratio: fraction || 0, locator: cfi || '', text_anchor: anchor || '' })
+      { ratio: fraction || 0, locator: cfi || '', text_anchor: anchor || '',
+        chapter: tocItem?.label || '' })
       .catch((e) => logErr('save progress', e))
   }, 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
@@ -224,6 +244,58 @@ export function applyViewStyles() {
   r.setStyles?.(bookCSS())
 }
 
+// Открыть книгу сразу на выбранной главе (оглавление на странице книги,
+// serg/tasks#1077). jump: { href, index, label } — координаты от сервера
+// (backend/app/booktoc.py), href в формате самого foliate.
+async function openAtChapter(view, jump) {
+  const { href, index, label } = jump || {}
+  try {
+    await view.init({})
+  } catch (e) {
+    logErr('init перед переходом к главе не удался', e)
+  }
+  // href — то, чем адресует оглавление сам foliate (для FB2 это номер секции).
+  if (href) {
+    try {
+      await view.goTo(href)
+      return
+    } catch (e) {
+      logErr(`не открыл главу по href ${href}`, e)
+    }
+  }
+  // Заголовок главы есть в тексте книги — ищем его тем же механизмом, что
+  // восстанавливает позицию. Это переживает и расхождение нумерации секций.
+  if (label) {
+    const ok = await gotoPosition(view, { text_anchor: label, ratio: 0 })
+    if (ok) return
+  }
+  if (typeof index === 'number' && index >= 0) {
+    try {
+      await view.goTo(index)
+      return
+    } catch (e) {
+      logErr(`не открыл главу по индексу ${index}`, e)
+    }
+  }
+  toast('Не нашёл эту главу в книге — открыл с начала', 'err')
+}
+
+// Подсветить в оглавлении главу, в которой стоит читатель. Панель открывается
+// на ней (см. navigation.js), поэтому без отметки список бесполезен.
+export function markCurrentToc(tocItem) {
+  const list = $('#toc-list')
+  if (!list) return
+  const href = tocItem?.href || ''
+  const label = (tocItem?.label || '').trim()
+  let current = null
+  for (const a of list.querySelectorAll('a')) {
+    const hit = (href && a.dataset.href === href)
+      || (!href && label && a.textContent.trim() === label)
+    if (hit && !current) { a.setAttribute('aria-current', 'true'); current = a }
+    else a.removeAttribute('aria-current')
+  }
+}
+
 function buildTOC() {
   const toc = view?.book?.toc || []
   const list = $('#toc-list'); list.innerHTML = ''
@@ -234,10 +306,14 @@ function buildTOC() {
       a.textContent = it.label || '—'
       if (sub) a.className = 'toc-sub'
       a.href = '#'
+      a.dataset.href = it.href || ''
       const _isFirst = _firstToc && !sub
       if (!sub) _firstToc = false
       a.addEventListener('click', (ev) => {
         ev.preventDefault()
+        // Уход по оглавлению — прыжок: откуда ушли, туда должно возвращать
+        // «Назад» в тулбаре (serg/tasks#1078).
+        recordJump('toc')
         if (_isFirst) view.goToFraction(0); else view.goTo(it.href)
         closePanels()
       })

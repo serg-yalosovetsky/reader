@@ -15,6 +15,7 @@ import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
 import { initTranslate, onTranslateDocLoaded } from './translate.js'
 import { exitFullscreen, exitMeansBack, takeButtonExit } from './core/fullscreen.js'
 import { keyNavAction } from './core/keynav.js'
+import { initJumps } from './jumps.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
@@ -80,6 +81,7 @@ $('#next-btn').addEventListener('click', goNext)
 // касания, и системный свайп «снизу вверх» уносил позицию чтения.
 initProgressBar()
 initChrome()
+initJumps()
 initTranslate()
 
 // Зоны клика по краям — перелистывание.
@@ -228,9 +230,33 @@ window.addEventListener('resize', () => {
 export function openPanel(id) {
   closePanels(); $(id).hidden = false; $('#panel-overlay').hidden = false
   if (id === '#more-panel') setMoreExpanded(true)
+  if (id === '#toc-panel') scrollTocToCurrent()
+}
+
+// Оглавление открывается НА ТЕКУЩЕЙ главе (serg/tasks#1079). На книге в 181
+// главу список всегда начинался с титульной страницы, и читающий двенадцатую
+// главу искал себя прокруткой. Считаем через getBoundingClientRect, а не
+// scrollIntoView: нужен именно центр панели, и скроллиться должна панель.
+function scrollTocToCurrent() {
+  const list = $('#toc-list')
+  if (!list) return
+  const center = () => {
+    const cur = list.querySelector('a[aria-current="true"]')
+    if (!cur) { list.scrollTop = 0; return }
+    const box = list.getBoundingClientRect()
+    const item = cur.getBoundingClientRect()
+    list.scrollTop += (item.top - box.top) - (box.height - item.height) / 2
+  }
+  // Сразу — hidden снят синхронно, и getBoundingClientRect уже честный.
+  // Повтор через setTimeout, а НЕ requestAnimationFrame: в неактивной вкладке
+  // rAF не вызывается вообще, и оглавление оставалось в начале списка;
+  // второй проход ловит доехавшие шрифты/высоты строк.
+  center()
+  setTimeout(center, 0)
 }
 export function closePanels() {
   $('#toc-panel').hidden = true; $('#settings-panel').hidden = true
+  $('#jumps-panel').hidden = true
   $('#search-panel').hidden = true; $('#bm-panel').hidden = true
   $('#hl-panel').hidden = true; $('#more-panel').hidden = true
   $('#panel-overlay').hidden = true

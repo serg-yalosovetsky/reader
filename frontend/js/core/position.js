@@ -143,6 +143,41 @@ async function settleAndReanchor(view, target) {
   } catch {}
 }
 
+// Перейти к сохранённой позиции в УЖЕ открытой книге (история переходов,
+// serg/tasks#1078). Тот же порядок точности, что и при открытии: якорь → CFI →
+// доля. Возвращает true, если куда-то доехали: провал должен быть видимым —
+// иначе нажатие «Назад» выглядит как ничего не делающее.
+export async function gotoPosition(view, pos) {
+  const sections = view?.book?.sections || []
+  const anchor = pos?.text_anchor || ''
+  const ratio = pos?.ratio || 0
+
+  let target = null
+  if (anchor && sections.length) {
+    const hint = ratio > 0 ? Math.round(ratio * sections.length) : 0
+    target = await findAnchorCfi(view, anchor, hint)
+  }
+  if (!target && pos?.locator) target = pos.locator
+  if (target) {
+    try {
+      await view.goTo(target)
+      await settleAndReanchor(view, target)
+      return true
+    } catch (e) {
+      logErr('переход к сохранённой позиции не удался, иду по доле', e)
+    }
+  }
+  if (ratio > 0) {
+    try {
+      await view.goToFraction(ratio)
+      return true
+    } catch (e) {
+      logErr('переход по доле не удался', e)
+    }
+  }
+  return false
+}
+
 // Восстановить позицию при открытии книги: якорь → CFI → доля → начало.
 // view уже .open()-нут (book.sections доступны), но ещё не .init()-нут (ничего
 // не отрендерено) — здесь и выбираем, куда рендерить первый кадр.

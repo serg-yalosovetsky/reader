@@ -12,7 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from sqlmodel import Session
 
-from .. import config, covers, imagegen, manual_cover
+from .. import booktoc, config, covers, imagegen, manual_cover
 from ..db.models import Work
 from ..db.session import get_session
 
@@ -366,6 +366,55 @@ def get_book_file(
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Book-Format"] = file_format or ""
     return resp
+
+
+def _book_path(work_id: int) -> tuple[Path, str]:
+    """Путь к файлу книги и его формат — тот же выбор, что у GET /file.
+
+    EPUB-версия (конвертация PDF) приоритетнее оригинала: читают её, значит и
+    оглавление должно быть от неё, иначе номера секций разъедутся с читалкой.
+    """
+    from ..db.session import engine
+
+    with Session(engine) as session:
+        work = session.get(Work, work_id)
+        if not work:
+            raise HTTPException(404, "книги нет")
+        is_calibre_link = work.site == "calibre" and not work.file_path
+        file_path = work.file_path
+        file_format = (work.file_format or "").lower()
+        converted = work.converted_path if work.converted_status == "ready" else ""
+
+    if converted:
+        cpath = Path(converted)
+        if cpath.exists():
+            return cpath, "epub"
+    if is_calibre_link:
+        from ...calibre import sync as csync
+
+        cached = csync.ensure_cached(work_id)
+        if not cached:
+            raise HTTPException(502, "не удалось получить файл из Calibre")
+        path = Path(cached)
+        return path, (path.suffix.lstrip(".").lower() or file_format)
+    if not file_path:
+        raise HTTPException(404, "файл книги не найден")
+    path = Path(file_path)
+    if not path.exists():
+        raise HTTPException(410, "файл книги отсутствует на диске")
+    return path, file_format
+
+
+@router.get("/{work_id}/toc")
+async def get_toc(work_id: int) -> dict:
+    """Оглавление книги для страницы книги (serg/tasks#1077).
+
+    Разбор файла (zip + XML) блокирующий, а книга бывает толстой — уводим в
+    пул, чтобы список глав не занимал поток event loop целиком.
+    """
+    path, fmt = await run_in_threadpool(_book_path, work_id)
+    items = await run_in_threadpool(booktoc.toc_for, work_id, path, fmt)
+    return {"format": fmt, "count": len(items), "items": items}
 
 
 @router.get("/{work_id}/cover")

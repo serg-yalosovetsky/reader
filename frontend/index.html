@@ -168,6 +168,9 @@
       <button id="reader-title" class="reader-title" type="button"
               data-mode="chapter" title="Глава / книга / автор"></button>
       <div class="reader-top-actions">
+        <button id="jump-back-btn" class="icon-btn" type="button" disabled
+                title="Переходов пока не было"
+                aria-label="Вернуться к прошлой позиции; удерживайте для списка переходов">↩</button>
         <button id="toc-btn" class="icon-btn" title="Оглавление">☰</button>
         <button id="search-btn" class="icon-btn" title="Поиск по книге">🔍</button>
         <button id="settings-btn" class="icon-btn" title="Вид">Aa</button>
@@ -235,6 +238,15 @@
     </aside>
 
     <!-- Панель закладок (синхронизируются с сервером и Android) -->
+    <aside id="jumps-panel" class="panel" hidden>
+      <div class="panel-head">
+        <span>Переходы</span>
+        <button id="jumps-clear" class="btn-ghost btn-sm" type="button"
+                title="Забыть все прошлые позиции этой книги">Очистить</button>
+      </div>
+      <nav id="jumps-list" class="toc-list jumps-list"></nav>
+    </aside>
+
     <aside id="bm-panel" class="panel" hidden>
       <div class="panel-head">
         <span>Закладки</span>

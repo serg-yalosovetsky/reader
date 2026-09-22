@@ -887,3 +887,46 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
   .cp-thumb { width: 96px; }
   .cp-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
 }
+
+
+/* --- Оглавление на странице книги (serg/tasks#1077) ----------------------- */
+/* Список ограничен по высоте и прокручивается внутри себя: 181 глава подряд
+   превратила бы страницу книги в бесконечную ленту, а кнопки «Читать» и
+   «Скачать» уехали бы за горизонт. */
+.bp-toc-count { font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--fg-dim); }
+.bp-toc-filter {
+  width: 100%; box-sizing: border-box; min-height: 44px; padding: 8px 12px; margin-bottom: 10px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  font-size: 16px;
+}
+.bp-toc {
+  max-height: 60vh; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg-soft);
+}
+.bp-toc-item {
+  display: flex; gap: 10px; align-items: baseline; min-height: 44px;
+  padding: 10px 12px; color: var(--fg); text-decoration: none; font-size: 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+.bp-toc-item:last-child { border-bottom: none; }
+.bp-toc-item:hover, .bp-toc-item:focus-visible { background: var(--bg); outline: none; color: var(--accent); }
+.bp-toc-sub { padding-left: 28px; font-size: 14px; color: var(--fg-dim); }
+.bp-toc-n { min-width: 2.5em; text-align: right; color: var(--fg-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.bp-toc-label { flex: 1; }
+.bp-toc-empty { padding: 14px 12px; color: var(--fg-dim); font-size: 14px; }
+
+/* --- Список переходов в читалке (serg/tasks#1078) ------------------------- */
+.jumps-list .jump-item {
+  display: flex; flex-direction: column; gap: 2px; min-height: 44px; justify-content: center;
+  padding: 8px 6px; color: var(--fg); text-decoration: none; border-radius: var(--radius-sm);
+}
+.jumps-list .jump-item:hover, .jumps-list .jump-item:focus-visible { background: var(--bg-soft); outline: none; }
+.jump-ch { font-size: 14px; font-weight: 600; }
+.jump-meta { font-size: 12px; color: var(--fg-dim); }
+.jumps-empty { font-size: 13px; color: var(--fg-dim); line-height: 1.5; }
+/* Маленькая кнопка в шапке панели всё равно остаётся тач-целью: 44px по
+   высоте, а компактность даёт шрифт и горизонтальный паддинг. */
+.btn-sm { padding: 4px 12px; font-size: 12px; min-height: 44px; }
+/* Кнопка «Назад по переходам» гаснет, когда возвращаться некуда: нажатие,
+   которое ничего не делает, читается как поломка. */
+#jump-back-btn:disabled { opacity: .35; cursor: default; }

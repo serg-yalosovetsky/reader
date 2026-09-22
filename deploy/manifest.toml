@@ -1,0 +1,48 @@
+# Как раскатывается reader. Читает meshdeploy
+# (https://forgejo.ibotz.fun/serg/meshdeploy).
+
+service = "reader"
+kind    = "systemd"
+repo    = "https://github.com/serg-yalosovetsky/reader.git"
+
+# ring 2: читалкой пользуется человек, чужих сессий рестарт не задевает.
+ring = 2
+
+[hosts.vps]
+path = "/opt/reader"
+unit = "reader.service"
+# Процесс работает не от root: дерево переехало сюда из /root именно ради этого
+# (serg/tasks#1082).
+user = "reader"
+
+[env]
+# Секреты приходят из /opt/reader/.env (0600, в .gitignore), а не из шлюза.
+# Проверять по именам нечего — pre-flight так и скажет в отчёте.
+secret_names = []
+
+# [build] НЕ ОБЪЯВЛЕНА, и это проверено сухим прогоном, а не предположено.
+#
+#   uv sync --frozen                          → удалит 55 пакетов, поставит 0
+#   uv sync --frozen --all-extras             → удалит 55
+#   uv sync --frozen --all-extras --all-groups→ удалит 44
+#
+# Среди удаляемых torch 2.12 и wrapt, а юнит стартует через
+# .venv/bin/opentelemetry-instrument. То есть любая сборка здесь сносит часть
+# работающего окружения, а в худшем случае и сам бинарь запуска — как 22.09.2026
+# у mono-flow. Пока зависимости не приведены в соответствие с pyproject
+# (serg/tasks#1085), сборка невозможна.
+
+[activate]
+restart = ["reader.service"]
+
+# reader-scan-books.service НЕ объявлен задачей по двум причинам сразу: его
+# таймер сейчас inactive, а ExecStart указывает на /root/reader/scan_local_books.py —
+# то есть на старый путь через симлинк, оставшийся от переезда дерева. Объявить
+# его значило бы обещать проверку, которой не будет.
+
+[health]
+url           = "http://127.0.0.1:8123/api/health"
+expect_status = 200
+# Не просто двухсотка: сервис обязан сам назвать себя здоровым.
+body_contains = '"status":"ok"'
+timeout_s     = 60

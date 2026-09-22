@@ -12,7 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from sqlmodel import Session
 
-from .. import booktoc, config, covers, imagegen, manual_cover
+from .. import booktoc, chapterdates, config, covers, imagegen, manual_cover
 from ..db.models import Work
 from ..db.session import get_session
 
@@ -405,16 +405,95 @@ def _book_path(work_id: int) -> tuple[Path, str]:
     return path, file_format
 
 
+# Сбор дат глав ходит в сеть (страница произведения у источника) и может занять
+# десятки секунд. Отдельный однопоточный пул: оглавление должно отдаваться
+# сразу, а даты — появляться к следующему открытию книги.
+_DATES_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="chapdates"
+)
+
+
+def _attach_dates(work_id: int, items: list[dict]) -> tuple[list[dict], int]:
+    """Проставить датам глав место в пунктах оглавления. Возвращает (items, сколько с датой).
+
+    Сопоставляем по ссылке на главу у источника, а при её отсутствии (FB2,
+    книги не из сети) — по номеру: в оглавлении EPUB встречаются служебные
+    страницы, и позиция в списке не равна номеру главы.
+    """
+    from ..db.session import engine
+
+    with Session(engine) as session:
+        by_url, by_number = chapterdates.dates_for_work(session, work_id)
+    if not by_url and not by_number:
+        # Поле ставим всегда: отсутствие ключа и «даты нет» — разные вещи
+        # для фронта, а разбираться с этим на его стороне незачем.
+        for it in items:
+            it["date"] = None
+        return items, 0
+
+    dated = 0
+    # Номер главы у источника считаем по пунктам верхнего уровня, у которых
+    # есть свой файл: служебные страницы без ссылки в счёт не идут.
+    number = 0
+    for it in items:
+        url = (it.get("url") or "").strip()
+        when = by_url.get(url) if url else None
+        if url:
+            number += 1
+        elif not by_url:
+            number += 1
+        if when is None and not by_url:
+            when = by_number.get(number)
+        it["date"] = when.isoformat() if when else None
+        if when:
+            dated += 1
+    return items, dated
+
+
+def _schedule_dates(work_id: int) -> None:
+    """Фоново собрать даты глав, чтобы к следующему открытию они были."""
+    def run() -> None:
+        try:
+            chapterdates.fetch_for_work(work_id)
+        except Exception:  # noqa: BLE001 — фон: молча падать нельзя
+            log.exception("сбор дат глав %s сорвался", work_id)
+
+    _DATES_EXECUTOR.submit(run)
+
+
 @router.get("/{work_id}/toc")
-async def get_toc(work_id: int) -> dict:
-    """Оглавление книги для страницы книги (serg/tasks#1077).
+async def get_toc(work_id: int, refresh: bool = False) -> dict:
+    """Оглавление книги для страницы книги (serg/tasks#1077) с датами глав (#1080).
 
     Разбор файла (zip + XML) блокирующий, а книга бывает толстой — уводим в
-    пул, чтобы список глав не занимал поток event loop целиком.
+    пул, чтобы список глав не занимал поток event loop целиком. Даты берутся из
+    таблицы ChapterMeta; если их ещё нет, запускаем сбор в фоне и говорим об
+    этом фронту — отдавать оглавление с задержкой на сетевой запрос к сайту
+    нельзя.
     """
     path, fmt = await run_in_threadpool(_book_path, work_id)
     items = await run_in_threadpool(booktoc.toc_for, work_id, path, fmt)
-    return {"format": fmt, "count": len(items), "items": items}
+    items, dated = await run_in_threadpool(_attach_dates, work_id, items)
+
+    pending = False
+    if (refresh or not dated) and items:
+        from ..db.session import engine
+
+        with Session(engine) as session:
+            work = session.get(Work, work_id)
+            has_source = bool(work and work.source_url)
+        if has_source:
+            _schedule_dates(work_id)
+            pending = True
+
+    return {
+        "format": fmt,
+        "count": len(items),
+        "dated": dated,
+        # true — даты сейчас собираются, имеет смысл перезапросить оглавление.
+        "dates_pending": pending,
+        "items": items,
+    }
 
 
 @router.get("/{work_id}/cover")

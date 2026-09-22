@@ -18,6 +18,7 @@ import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
+import { chapterDate } from './core/chapterdate.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
@@ -97,6 +98,7 @@ export async function openReader(work, opts = {}) {
   view.addEventListener('draw-annotation', onDrawAnnotation)
   applyViewStyles()
   buildTOC()
+  loadTocDates(work.id)
   buildChapterMarks()
 
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
@@ -290,9 +292,37 @@ export function markCurrentToc(tocItem) {
   let current = null
   for (const a of list.querySelectorAll('a')) {
     const hit = (href && a.dataset.href === href)
-      || (!href && label && a.textContent.trim() === label)
+      || (!href && label && (a.querySelector('.toc-label')?.textContent || '').trim() === label)
     if (hit && !current) { a.setAttribute('aria-current', 'true'); current = a }
     else a.removeAttribute('aria-current')
+  }
+}
+
+// Даты глав приходят отдельным запросом (их собирает сервер, см.
+// app/chapterdates.py), поэтому дорисовываем их к уже построенному списку —
+// ждать сеть перед показом оглавления незачем.
+async function loadTocDates(workId) {
+  let data = null
+  try {
+    data = await api.get(`/api/reader/${workId}/toc`)
+  } catch (e) {
+    logErr('даты глав не загрузились', e)
+    return
+  }
+  if (!currentWork || currentWork.id !== workId) return
+  const byHref = new Map()
+  for (const it of data?.items || []) {
+    if (it.date && it.href) byHref.set(it.href, it.date)
+  }
+  if (!byHref.size) return
+  for (const a of $('#toc-list')?.querySelectorAll('a') || []) {
+    if (a.querySelector('.toc-date')) continue
+    const when = chapterDate(byHref.get(a.dataset.href))
+    if (!when) continue
+    const badge = document.createElement('span')
+    badge.className = 'toc-date'
+    badge.textContent = when
+    a.append(badge)
   }
 }
 
@@ -303,7 +333,10 @@ function buildTOC() {
   const add = (items, sub) => {
     for (const it of items) {
       const a = document.createElement('a')
-      a.textContent = it.label || '—'
+      const text = document.createElement('span')
+      text.className = 'toc-label'
+      text.textContent = it.label || '—'
+      a.append(text)
       if (sub) a.className = 'toc-sub'
       a.href = '#'
       a.dataset.href = it.href || ''

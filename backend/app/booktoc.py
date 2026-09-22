@@ -177,6 +177,28 @@ def _parse_ncx(doc: Element, ncx_path: str) -> list[dict]:
     return items
 
 
+# FanFicFare пишет в <head> каждой главы ссылку на неё у источника. По этой
+# ссылке даты глав (таблица ChapterMeta) сопоставляются с пунктами оглавления:
+# номер для этого не годится — в оглавлении бывают служебные страницы вроде
+# «Title Page», из-за которых нумерация съезжает.
+_CHAPTER_URL_RE = re.compile(
+    rb'<meta\s+name="chapterurl"\s+content="([^"]*)"', re.I
+)
+# Ссылка лежит в <head>, читать файл целиком незачем.
+HEAD_BYTES = 4096
+
+
+def _chapter_url(zf: zipfile.ZipFile, path: str) -> str:
+    try:
+        with zf.open(path) as fh:
+            head = fh.read(HEAD_BYTES)
+    except (KeyError, OSError) as e:
+        log.warning("не прочитал шапку секции %s: %s", path, e)
+        return ""
+    m = _CHAPTER_URL_RE.search(head)
+    return m.group(1).decode("utf-8", "replace") if m else ""
+
+
 def _spine_title(zf: zipfile.ZipFile, path: str) -> str:
     """Заголовок секции из самого XHTML: <title>, иначе первый h1–h6."""
     try:
@@ -255,9 +277,15 @@ def _epub_toc(path: Path) -> list[dict]:
                 log.warning("ncx %s не разобран: %s", ncx_path, e)
 
         if items:
+            # Ссылку на главу у источника читаем один раз на файл секции:
+            # пунктов оглавления бывает больше, чем файлов (подглавы).
+            url_cache: dict[str, str] = {}
             for it in items:
                 base = (it.get("href") or "").split("#", 1)[0]
                 it["index"] = index_of.get(base, -1)
+                if base not in url_cache:
+                    url_cache[base] = _chapter_url(zf, base) if base else ""
+                it["url"] = url_cache[base]
             return items
 
         # Ни nav, ни NCX (или они пустые): оглавление из самого spine —
@@ -273,6 +301,7 @@ def _epub_toc(path: Path) -> list[dict]:
                     "href": href,
                     "index": i,
                     "level": 0,
+                    "url": _chapter_url(zf, href),
                 }
             )
         return items
@@ -304,6 +333,7 @@ def _fb2_toc(path: Path) -> list[dict]:
                 "href": str(i),
                 "index": i,
                 "level": 0,
+                "url": "",
             }
         )
         # Вложенные главы. Нумерация k — по ТЕМ вложенным секциям, у которых
@@ -325,6 +355,7 @@ def _fb2_toc(path: Path) -> list[dict]:
                     "href": f"{i}#{k}",
                     "index": i,
                     "level": 1,
+                    "url": "",
                 }
             )
             k += 1

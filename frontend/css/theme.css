@@ -930,3 +930,23 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 /* Кнопка «Назад по переходам» гаснет, когда возвращаться некуда: нажатие,
    которое ничего не делает, читается как поломка. */
 #jump-back-btn:disabled { opacity: .35; cursor: default; }
+
+
+/* --- Даты глав в оглавлении (serg/tasks#1080) ------------------------- */
+/* Время — справа от названия и приглушённым: у продолжающегося
+   фанфика это ориентир «что вышло после того, где я остановился»,
+   но не главное в строке. Цифры моноширинные — иначе столбец дат пляшет. */
+.bp-toc-item { flex-wrap: wrap; }
+.bp-toc-date {
+  margin-left: auto; color: var(--fg-dim); font-size: 12px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.toc-list a .toc-label { display: block; }
+.toc-date {
+  display: block; margin-top: 2px; color: var(--fg-dim); font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 560px) {
+  /* Узкий экран: дата уезжает под название, а не жмёт его в столбик. */
+  .bp-toc-date { width: 100%; margin-left: 2.9em; }
+}

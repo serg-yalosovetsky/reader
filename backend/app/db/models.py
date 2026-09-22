@@ -139,6 +139,35 @@ class PositionHistory(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class ChapterMeta(SQLModel, table=True):
+    """Главы книги с датами публикации — для оглавления (serg/tasks#1080).
+
+    В самих файлах книг дат нет: FanFicFare пишет в EPUB только chapterurl и
+    заголовки. Зато при запросе метаданных (`--json-meta`) он отдаёт `zchapters`
+    с датой на каждую главу — у форумов (SufficientVelocity, SpaceBattles) с
+    точностью до секунды, у ficbook до минуты. Эти даты и складываем сюда: файл
+    книги не трогаем, а оглавление получает время выхода каждой главы.
+
+    Ключ для сопоставления с оглавлением — url главы: номер ненадёжен, потому
+    что в оглавлении EPUB бывают служебные страницы («Title Page»), из-за
+    которых нумерация съезжает.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_id: int = Field(foreign_key="work.id", index=True)
+    # Номер главы у источника (1..N), а не позиция в оглавлении файла.
+    number: int = 0
+    title: str = ""
+    url: str = Field(default="", index=True)
+    # Когда глава опубликована на сайте. None — источник даты не отдал; это
+    # ОТДЕЛЬНОЕ состояние, а не «сегодня»: в оглавлении такая глава просто
+    # остаётся без даты.
+    published_at: Optional[datetime] = None
+    # Кто дал данные: fff (FanFicFare) | at (свой загрузчик author.today).
+    source: str = ""
+    fetched_at: datetime = Field(default_factory=utcnow)
+
+
 class Account(SQLModel, table=True):
     """Аккаунт пользователя на сайте-источнике (этап 4). Секрет зашифрован Fernet."""
 

@@ -13,6 +13,7 @@ import {
 import { filterBy, toggleHidden } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 import { logErr } from './core/log.js'
+import { chapterDate } from './core/chapterdate.js'
 
 let curWork = null
 
@@ -393,13 +394,20 @@ function renderBookPage(w) {
 // уезжает в историю переходов, чтобы её не потерять (serg/tasks#1078).
 let tocCache = { id: null, items: null, error: '' }
 
-async function loadToc(id) {
-  if (tocCache.id === id && (tocCache.items || tocCache.error)) return
+async function loadToc(id, { force = false } = {}) {
+  if (!force && tocCache.id === id && (tocCache.items || tocCache.error)) return
   tocCache = { id, items: null, error: '' }
   try {
     const data = await api.get(`/api/reader/${id}/toc`)
     if (tocCache.id !== id) return          // ушли на другую книгу
     tocCache.items = data?.items || []
+    // Дат ещё нет — сервер пошёл за ними к источнику (это сетевой запрос на
+    // десятки секунд). Один повтор: к этому времени они обычно уже в базе.
+    if (data?.dates_pending && !force) {
+      setTimeout(() => {
+        if (curWork && curWork.id === id) loadToc(id, { force: true })
+      }, 25000)
+    }
   } catch (e) {
     if (tocCache.id !== id) return
     // Пустое оглавление и НЕДОСТУПНОЕ оглавление — разные вещи: молча показать
@@ -458,8 +466,10 @@ function renderToc(id) {
     const a = document.createElement('a')
     a.href = '#'
     a.className = it.level ? 'bp-toc-item bp-toc-sub' : 'bp-toc-item'
+    const when = chapterDate(it.date)
     a.innerHTML = `<span class="bp-toc-n">${items.indexOf(it) + 1}</span>`
       + `<span class="bp-toc-label">${escapeHtml(it.label || '—')}</span>`
+      + (when ? `<span class="bp-toc-date">${escapeHtml(when)}</span>` : '')
     a.addEventListener('click', (ev) => { ev.preventDefault(); openChapter(it) })
     box.append(a)
   })

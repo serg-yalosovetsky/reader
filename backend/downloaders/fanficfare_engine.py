@@ -79,13 +79,26 @@ def _creds_config(creds: tuple[str, str] | None):
             os.remove(path)
 
 
-def get_meta(url: str, *, creds: tuple[str, str] | None = None, timeout: int = 120) -> dict:
+def get_meta(
+    url: str,
+    *,
+    creds: tuple[str, str] | None = None,
+    timeout: int = 120,
+    extra: dict | None = None,
+) -> dict:
     """Метаданные без скачивания глав (FanFicFare --meta-only --json). Для детекта
-    обновлений: возвращает dict с numChapters и пр. Пусто при ошибке."""
+    обновлений: возвращает dict с numChapters и пр. Пусто при ошибке.
+
+    В ответе есть и `zchapters` — главы с датами публикации (по ним строятся
+    даты в оглавлении, см. app/chapterdates.py). `extra` — опции `-o`, которыми
+    вызывающий уточняет поведение (например формат даты главы).
+    """
     cmd = _ff_executable() + [
         "-m", "--json-meta", "--non-interactive",
         "-o", "is_adult=true",
     ]
+    for key, value in (extra or {}).items():
+        cmd += ["-o", f"{key}={value}"]
     if _needs_cloudscraper(url):
         cmd += ["-o", "use_cloudscraper=true"]
     try:

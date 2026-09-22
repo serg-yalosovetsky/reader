@@ -18,8 +18,10 @@
   → `POST /user_notifications/get_new` → notifications с `url=/readfic/<id>`
   (type 17 = обновления избранных авторов). get_new **эфемерный** (только непрочитанные).
 - **author.today** (`_at_feed`): если есть cookie-сессия — используем её (без входа);
-  иначе вход через `loginForm` (`__RequestVerificationToken` из формы, ответ JSON
-  `isSuccessful`; вход с нового устройства требует email-код — см. ADR-012). Затем
+  иначе вход через `accounts/at_auto.py` (`loginForm` → `__RequestVerificationToken`;
+  вход с нового устройства требует email-код — см. ADR-012/ADR-013, ответ шага 1
+  ВСЕГДА `isSuccessful: true` при верном пароле, завершённость входа проверяется
+  по `data.confirmEmailEnabled`, а не по `isSuccessful`). Затем
   `GET /feed` → `article.feed-row` «обновил произведение»/«опубликовал новое» → `/work/<id>`.
 - **fanfics** (`_fanfics_feed`): логин `POST /autent.php` работает; страница подписок —
   TODO (заглушка `[]`).

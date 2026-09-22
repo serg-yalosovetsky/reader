@@ -1,0 +1,104 @@
+# Раскатка reader. Агент пушит в main — дальше всё само.
+#
+# Гейт идёт на ОБЛАЧНОМ раннере GitHub, а job раскатки — на self-hosted раннере
+# на VPS. Причина ровно одна и проверяемая: приёмник meshdeploy слушает только
+# tailnet, и облачный раннер до него не достаёт. Наружу дверь деплоя при этом
+# не открывается.
+#
+# Права раскатывать у CI нет и здесь: он отправляет ПОДПИСАННЫЙ запрос, а
+# раскатку, проверку и откат делает узел (serg/meshdeploy).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: ревизия для раскатки
+        required: false
+
+env:
+  SERVICE: reader
+  RECEIVER: http://100.66.108.118:9001/hooks/deploy
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Компиляция (блокирующая)
+        # Гейт намеренно скромный, но НАСТОЯЩИЙ: синтаксически сломанный код
+        # дальше не проходит. Линтеры в режиме annotate-only гейтом быть не
+        # могут — они заканчиваются `|| true`, и зелёный прогон там ничего
+        # не обещает.
+        run: python -m compileall -q .
+
+      - name: "Shell-скрипты — без CRLF и синтаксически целые"
+        # Возврат каретки ломает запуск скрипта молча, и в codehealth это было
+        # невидимо двое суток. Проверка стоит здесь, потому что позже её уже
+        # некому делать: узел выполнит то, что приедет.
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh' '*.bash')
+          if [ ${#scripts[@]} -eq 0 ]; then echo "shell-скриптов нет"; exit 0; fi
+          for f in "${scripts[@]}"; do
+            if file "$f" | grep -q CRLF; then
+              echo "ОТКАЗ: $f с CRLF — на узле он не запустится" >&2
+              exit 1
+            fi
+            bash -n "$f"
+          done
+
+  deploy:
+    needs: gate
+    # Метка mesh-vps — это раннер на VPS, поднятый специально для этого
+    # репозитория. Раннер уровня организации на личном аккаунте невозможен,
+    # поэтому у каждого сервиса он свой.
+    runs-on: [self-hosted, mesh-vps]
+    steps:
+      - name: Запросить раскатку у узла
+        env:
+          SECRET: ${{ secrets.MESHDEPLOY_HOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$SECRET" || { echo "ОТКАЗ: не задан секрет MESHDEPLOY_HOOK_SECRET" >&2; exit 1; }
+
+          REF="${{ inputs.ref || github.sha }}"
+          BODY=$(printf '{"service":"%s","ref":"%s","trigger":"github"}' "$SERVICE" "$REF")
+          SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
+
+          # Приёмник отвечает 409, если на узле УЖЕ идёт раскатка: он отказывает,
+          # а не встаёт в очередь — и это правильно для узла. А вот для CI 409 — это
+          # ВРЕМЕННОЕ состояние, а не ошибка пуша: без повтора одновременные пуши
+          # в два разных репозитория дают красный прогон на исправном сервисе
+          # (поймано 22.09.2026: mesh-broker и hermes-voice так и не раскатались).
+          #
+          # --fail-with-body: ненулевой код при HTTP 5xx И печать тела ответа.
+          # В теле приходит весь отчёт раскатки — он и есть строка доказательства.
+          # Приёмник отвечает 403 на неверную подпись (а не 200), поэтому
+          # испорченный секрет тоже красит прогон, а не притворяется успехом.
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /tmp/deploy-out.txt -w '%{http_code}' -m 900 -X POST \
+              -H 'Content-Type: application/json' \
+              -H "X-Mesh-Signature: sha256=$SIG" \
+              -d "$BODY" \
+              "$RECEIVER") || true
+            cat /tmp/deploy-out.txt
+            if [ "$code" = "409" ]; then
+              echo "узел занят другой раскаткой (попытка $attempt), жду 30 с"
+              sleep 30
+              continue
+            fi
+            [ "$code" = "200" ] && exit 0
+            echo "приёмник ответил $code" >&2
+            exit 1
+          done
+          echo "узел оставался занят все попытки — раскатки не было" >&2
+          exit 1

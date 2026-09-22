@@ -248,13 +248,24 @@ def _login_full() -> dict | None:
             return None
         token = tm.group(1)
         res = _post_login(c, token, user, pw, code=None, send_email=True)
-        if not res.get("isSuccessful"):
+        # AT отвечает isSuccessful=true УЖЕ на первом шаге (пароль верный),
+        # когда включено подтверждение почтой: настоящий вход ещё не завершён,
+        # куки без кода не несут авторизацию (нет TrustedToken/LoginCookie), и
+        # каждая книга 18+ выглядела как «вход не удался» навсегда, а ретрай на
+        # каждой попытке жёг лимит попыток входа AT (serg/tasks: «Мясник из
+        # Готэма» застрял на 70/72 главах). Признак незавершённого входа —
+        # data.confirmEmailEnabled, он не зависит от isSuccessful и приходит и
+        # на успешном, и на отказанном ответе.
+        step1_data = res.get("data") or {}
+        need_code = bool(step1_data.get("confirmEmailEnabled"))
+        if not need_code and not res.get("isSuccessful"):
             msg = "; ".join(res.get("messages") or [])
             low = msg.lower()
             need_code = any(w in low for w in ("код", "code", "почт", "email", "e-mail", "подтвер"))
             if not need_code:
                 log.warning("at_auto: вход отклонён: %s", msg[:200])
                 return None
+        if need_code:
             if mark is None:
                 # Отметку снять не удалось — свежесть кода ничем не подтверждена.
                 # Лучше не войти, чем отправить протухший код из старого письма.

@@ -6,6 +6,13 @@
 с телефона. Здесь тот же список собирается из метаданных файла: для EPUB это
 nav/NCX + spine, для FB2 — прямые потомки первого <body>.
 
+Файл книги — НЕДОВЕРЕННЫЙ ввод: книги приезжают автозагрузкой со сторонних
+фанфик-сайтов и вручную. Поэтому разбор идёт через defusedxml, а не через
+stdlib: он запрещает DTD-сущности, на которых строится «billion laughs», и
+внешние ссылки (XXE). Текущий libexpat (2.6+) такую бомбу отбивает и сам
+лимитом амплификации — но это свойство системной библиотеки в образе, а не
+нашего кода, и меняется оно без нашего ведома.
+
 Соответствие клиенту — не случайность, а требование: клик по главе открывает
 читалку и переходит по тем же координатам, которыми оперирует foliate-js.
 - `href` для EPUB — путь внутри архива, разрешённый относительно nav/NCX, ровно
@@ -25,7 +32,12 @@ import re
 import threading
 import zipfile
 from pathlib import Path
-from xml.etree import ElementTree as ET
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import ParseError, fromstring, parse
+
+# Только ради типа Element в аннотациях: разбора этим модулем здесь нет,
+# он весь идёт через defusedxml выше.
+from xml.etree.ElementTree import Element  # nosec B405
 
 log = logging.getLogger("reader.toc")
 
@@ -48,7 +60,7 @@ def _norm(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def _text_of(el: ET.Element | None) -> str:
+def _text_of(el: Element | None) -> str:
     if el is None:
         return ""
     return _norm("".join(el.itertext()))
@@ -70,7 +82,7 @@ def _local(tag: str) -> str:
 # --------------------------------------------------------------------------- EPUB
 
 
-def _parse_nav(doc: ET.Element, nav_path: str) -> list[dict]:
+def _parse_nav(doc: Element, nav_path: str) -> list[dict]:
     """EPUB3 nav.xhtml → плоский список {label, href, level}."""
     nav_el = None
     for el in doc.iter():
@@ -85,7 +97,7 @@ def _parse_nav(doc: ET.Element, nav_path: str) -> list[dict]:
 
     items: list[dict] = []
 
-    def walk(ol: ET.Element, level: int) -> None:
+    def walk(ol: Element, level: int) -> None:
         for li in ol:
             if _local(li.tag) != "li" or len(items) >= MAX_ITEMS:
                 continue
@@ -127,7 +139,7 @@ def _full_href(base: str, raw: str) -> str:
     return f"{resolved}#{frag}" if frag else resolved
 
 
-def _parse_ncx(doc: ET.Element, ncx_path: str) -> list[dict]:
+def _parse_ncx(doc: Element, ncx_path: str) -> list[dict]:
     """EPUB2 toc.ncx → плоский список."""
     nav_map = None
     for el in doc.iter():
@@ -140,13 +152,13 @@ def _parse_ncx(doc: ET.Element, ncx_path: str) -> list[dict]:
     items: list[dict] = []
 
     def _walk_point(
-        point: ET.Element, level: int, out: list[dict], base: str
+        point: Element, level: int, out: list[dict], base: str
     ) -> None:
         if len(out) >= MAX_ITEMS:
             return
         label = ""
         href = ""
-        children: list[ET.Element] = []
+        children: list[Element] = []
         for child in point:
             name = _local(child.tag)
             if name == "navLabel":
@@ -172,8 +184,8 @@ def _spine_title(zf: zipfile.ZipFile, path: str) -> str:
     except KeyError:
         return ""
     try:
-        doc = ET.fromstring(raw)
-    except ET.ParseError:
+        doc = fromstring(raw)
+    except (ParseError, DefusedXmlException):
         # XHTML у фанфиков бывает не строгим XML — тогда дешёвый regex.
         text = raw.decode("utf-8", "replace")
         m = re.search(r"<h[1-6][^>]*>(.*?)</h[1-6]>", text, re.S | re.I)
@@ -194,12 +206,12 @@ def _spine_title(zf: zipfile.ZipFile, path: str) -> str:
 
 def _epub_toc(path: Path) -> list[dict]:
     with zipfile.ZipFile(path) as zf:
-        container = ET.fromstring(zf.read("META-INF/container.xml"))
+        container = fromstring(zf.read("META-INF/container.xml"))
         rootfile = container.find(f".//{NS_CONTAINER}rootfile")
         opf_path = (rootfile.get("full-path") if rootfile is not None else "") or ""
         if not opf_path:
             return []
-        opf = ET.fromstring(zf.read(opf_path))
+        opf = fromstring(zf.read(opf_path))
 
         manifest: dict[str, tuple[str, str, str]] = {}
         for item in opf.iter(f"{NS_OPF}item"):
@@ -233,13 +245,13 @@ def _epub_toc(path: Path) -> list[dict]:
         items: list[dict] = []
         if nav_path:
             try:
-                items = _parse_nav(ET.fromstring(zf.read(nav_path)), nav_path)
-            except (KeyError, ET.ParseError) as e:
+                items = _parse_nav(fromstring(zf.read(nav_path)), nav_path)
+            except (KeyError, ParseError, DefusedXmlException) as e:
                 log.warning("nav %s не разобран: %s", nav_path, e)
         if not items and ncx_path:
             try:
-                items = _parse_ncx(ET.fromstring(zf.read(ncx_path)), ncx_path)
-            except (KeyError, ET.ParseError) as e:
+                items = _parse_ncx(fromstring(zf.read(ncx_path)), ncx_path)
+            except (KeyError, ParseError, DefusedXmlException) as e:
                 log.warning("ncx %s не разобран: %s", ncx_path, e)
 
         if items:
@@ -270,7 +282,7 @@ def _epub_toc(path: Path) -> list[dict]:
 
 
 def _fb2_toc(path: Path) -> list[dict]:
-    root = ET.parse(path).getroot()
+    root = parse(path).getroot()
     bodies = [el for el in root if _local(el.tag) == "body"]
     if not bodies:
         return []
@@ -337,7 +349,8 @@ def extract_toc(path: Path, fmt: str) -> list[dict]:
             return _epub_toc(path)
         if fmt == "fb2":
             return _fb2_toc(path)
-    except (OSError, ET.ParseError, zipfile.BadZipFile, KeyError) as e:
+    except (OSError, ParseError, DefusedXmlException,
+            zipfile.BadZipFile, KeyError) as e:
         # Пустой список — это «оглавления нет», а тут ДРУГОЕ: файл не разобран.
         # Молчать нельзя, иначе битая книга неотличима от книги без оглавления.
         log.warning("оглавление %s (%s) не разобрано: %s", path, fmt, e)

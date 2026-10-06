@@ -79,6 +79,44 @@ def _creds_config(creds: tuple[str, str] | None):
             os.remove(path)
 
 
+# Инструментовка сервера, которая через окружение едет в КАЖДЫЙ дочерний
+# python-процесс (serg/tasks#1525). Сервис стартует под `opentelemetry-instrument`:
+# тот кладёт каталог `auto_instrumentation` (с sitecustomize) в PYTHONPATH, а в
+# venv лежит `zzz_sentry_bootstrap.pth`, который поднимает sentry_sdk при
+# непустом SENTRY_DSN. Дочерний FanFicFare наследовал всё это и на старте
+# каждого запуска импортировал OTel-дистро со всеми инструментаторами и Sentry:
+# одна ficbook-ссылка get_meta стоила 3.94 с CPU против 1.39 с в чистом env,
+# тик монитора — 240 с CPU. Трейсы дочерних процессов никто не смотрит, а ошибки
+# FanFicFare и так доходят до сервера (код возврата, stderr) и логируются им.
+#
+# Список ЗАПРЕЩАЮЩИЙ, а не разрешающий: прокси (HTTP(S)_PROXY), READER_*, HOME,
+# локаль и прочее окружение дочерний процесс получает как раньше. Именно
+# очистка, а не OTEL_SDK_DISABLED: флаг выключает SDK, но импорт дистро и
+# инструментаторов (основная стоимость) всё равно происходит.
+_CHILD_ENV_DROP = frozenset({"SENTRY_DSN"})
+_CHILD_ENV_DROP_PREFIXES = ("OTEL_",)
+_CHILD_PYTHONPATH_DROP = "auto_instrumentation"
+
+
+def _child_env() -> dict[str, str]:
+    """Окружение дочернего процесса FanFicFare без инструментовки сервера."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in _CHILD_ENV_DROP and not k.startswith(_CHILD_ENV_DROP_PREFIXES)
+    }
+    pythonpath = env.get("PYTHONPATH")
+    if pythonpath is not None:
+        kept = [
+            part for part in pythonpath.split(os.pathsep)
+            if _CHILD_PYTHONPATH_DROP not in part
+        ]
+        if any(kept):
+            env["PYTHONPATH"] = os.pathsep.join(kept)
+        else:
+            del env["PYTHONPATH"]
+    return env
+
+
 def get_meta(
     url: str,
     *,
@@ -102,9 +140,14 @@ def get_meta(
     if _needs_cloudscraper(url):
         cmd += ["-o", "use_cloudscraper=true"]
     try:
-        with _creds_config(creds) as cred_args:
+        # `-m` всё равно пишет ПУСТОЙ EPUB в рабочий каталог процесса: запуск из
+        # cwd сервиса копил `*-fbn_*.epub` прямо в /opt/reader (77 штук на
+        # 2026-10-06, serg/tasks#1525). Временный каталог убирается сам.
+        with _creds_config(creds) as cred_args, \
+                tempfile.TemporaryDirectory(prefix="fff_meta_") as meta_cwd:
             proc = subprocess.run(cmd + cred_args + [url],
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, text=True, timeout=timeout,
+                                  env=_child_env(), cwd=meta_cwd)
     except subprocess.TimeoutExpired:
         # Молчание здесь стоило часов разбора: задание продолжало работу без
         # числа глав, и никто не знал, что метаданные вообще не получены.
@@ -215,6 +258,7 @@ def _run_fff(cmd: list[str], cwd: Path, timeout: int, *, total: int | None) -> t
         proc = subprocess.Popen(
             cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=errf,
             text=True, encoding="utf-8", errors="replace",
+            env=_child_env(),
         )
 
         def pump() -> None:

@@ -102,3 +102,70 @@ jobs:
           done
           echo "узел оставался занят все попытки — раскатки не было" >&2
           exit 1
+
+  mirror-forgejo:
+    # Копия кода в Forgejo serg/reader (serg/tasks#1549). Источник правды — этот
+    # репозиторий на GitHub; Forgejo читают приёмщики, MCP tasks/forgejo и
+    # /opt/reader на узле — без зеркала они видят историю недельной давности.
+    #
+    # needs: deploy — зеркалим то, что РЕАЛЬНО раскатано. Упала раскатка —
+    # Forgejo не трогаем: копия не должна обгонять прод. Это осознанно.
+    # Только push: ручной запуск с произвольным ref раскатывает не обязательно
+    # голову main, и тащить такую ревизию в main копии нельзя.
+    needs: deploy
+    if: github.event_name == 'push'
+    # Тот же раннер, что у раскатки: он в меше и видит forgejo.ibotz.fun:2222.
+    # Облачный раннер Forgejo по SSH может и не увидеть, а проверять это на
+    # каждом пуше — значит получить флак вместо зеркала.
+    runs-on: [self-hosted, mesh-vps]
+    env:
+      # Host key встроенного SSH-сервера Forgejo (RSA, порт 2222), снят
+      # ssh-keyscan с узла и сверен с 127.0.0.1:2222 на самом Forgejo:
+      # SHA256:MaPhkHmgoLB4q+lBCgJaZjnWjeac8uNyvkoK+3QrM/c.
+      # Зафиксирован здесь, а не принимается на лету: StrictHostKeyChecking=no
+      # отдал бы deploy key любому, кто встанет посередине. Сменился ключ
+      # Forgejo — job красный, и это правильно: обновить строку руками.
+      FORGEJO_HOSTKEY: "[forgejo.ibotz.fun]:2222 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDpzOLH5cnfLjdA2DKh6v95MWjwCMzptR/+Z0Q/nfb38gUUdRoOKVtcdBxczkMQ4sDHOS3Ig1cSIjET+vrgZyCW5xyZuOSTtZBmqkuOvF7FCCLe+0Fyu5GhtRsyzsGSEbgbMEtfWaMZ0iu7wtU9Nk3H2y1+E6CX1zT1QpuCAzVA8k+giL1dFpDiJovN0qaj9b9ZxltmhnTl9CF8aPKtuNg4AZYuU5lOcZjne9CETcrMpQGTaISh/YgZijD9z1TXhzIDHOJtnoNSGLbFWVSixSaOI5b3ZHjBeo9UyM33RCr6CjgKE9MrQ5mpQlwEvO8RO+wVqZpbhzfxFpQwRslsli1HZbIW3sn8VNr01C7AjDmKxR5LbGqknnfxMh8YvhRPM+ax4otWsj/cjQMV9rLzC+MYdq6JKRcEa8pzAcb7VvG08I64aukKyOo+dDrvbIY0lGMYfl2BnI3Tmg01sh/wZiJA1ctKG1iu8uK6y9jJxopv02sgTTgnjSULwR11uUcq99/ZFIkWFbug/ahs8bm43Vf0WfX1xJnQhpXz9DtRbsfokEITf+/VBtuGbln6k9OgaESGANaqpQ550fP00sbePw9Iw8n3eB/FLIO5deE0AiWi0Rryw6K+wRyujktdGRaWzVjpjy7q7NrxEAgOyO/fP/+JXKbBqaZk1u1dWGV8S/l5fw=="
+      FORGEJO_URL: ssh://git@forgejo.ibotz.fun:2222/serg/reader.git
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Полная история: иначе push мелкого клона упирается в «shallow
+          # update not allowed», и это выглядит как отказ Forgejo.
+          fetch-depth: 0
+
+      - name: Пуш в Forgejo — только fast-forward
+        env:
+          # Deploy key на ОДИН репозиторий serg/reader, а не общий токен
+          # Forgejo: утечка секрета отсюда даёт запись в копию reader и больше
+          # никуда. Значение GitHub маскирует в логе; в файл — только 0600.
+          DEPLOY_KEY: ${{ secrets.FORGEJO_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" || { echo "ОТКАЗ: не задан секрет FORGEJO_DEPLOY_KEY" >&2; exit 1; }
+
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/forgejo_key"
+          printf '%s\n' "$FORGEJO_HOSTKEY" > "$RUNNER_TEMP/forgejo_known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/forgejo_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/forgejo_known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes"
+
+          git remote remove forgejo 2>/dev/null || true
+          git remote add forgejo "$FORGEJO_URL"
+
+          # БЕЗ --force и без --force-with-lease. Если в Forgejo появился коммит,
+          # которого нет здесь (кто-то закоммитил в копию), push получит
+          # non-fast-forward и job покраснеет. Перезаписать чужую историю молча
+          # хуже, чем один красный прогон: его видно, и разбирается он руками.
+          git push forgejo "HEAD:refs/heads/main"
+
+          remote_sha=$(git ls-remote forgejo refs/heads/main | cut -f1)
+          echo "GitHub ${GITHUB_SHA} -> Forgejo main ${remote_sha}"
+          # Код 0 у push — намерение, а не результат: read-back того, куда
+          # теперь указывает main в Forgejo.
+          [ "$remote_sha" = "$GITHUB_SHA" ] || { echo "ОТКАЗ: Forgejo main != $GITHUB_SHA" >&2; exit 1; }
+
+      - name: Убрать ключ с раннера
+        # always(): ключ не должен пережить job, даже упавший. Раннер
+        # постоянный, следующий job на нём — чужой репозиторий.
+        if: always()
+        run: rm -f "$RUNNER_TEMP/forgejo_key" "$RUNNER_TEMP/forgejo_known_hosts"

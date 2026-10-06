@@ -126,6 +126,34 @@ def _set_seen(
     mon.last_seen_source = _host(url)
 
 
+def _set_seen_no_update(mon: Monitored, best_cur: int, best_url: str) -> None:
+    """«Видели» после проверки, решившей «качать нечего».
+
+    Пишется ТА ЖЕ величина, по которой решали (`best_cur` из `best_url` — самый
+    полный источник тика), и та же, что пишет ветка докачки
+    (`_download_and_write_impl` → `_set_seen(best_cur, best_url)`).
+
+    Раньше здесь писался счёт СОБСТВЕННОГО источника подписки (`cur` по
+    `mon.source_url`), и у книги, чьё зеркало полнее своего источника, было два
+    писателя с разными числами — качели (serg/tasks#1525). Живой случай:
+    work 3508 / mon 454, author.today 650739 + searchfloor 18580 с 20 главами, в
+    файле 21. Докачка писала 20 (зеркало), следующий тик «нет обновления» писал
+    счёт AT (меньше 20), и ещё через тик 20 > seen снова запускало полную
+    перекачку — каждый второй тик, 9 раз за 6 часов.
+
+    authoritative сохраняется (serg/tasks#983: завышенное «видели» обязано
+    опускаться, иначе книга глохнет навсегда). `best_cur >= cur`, поэтому опускаем
+    не ниже, чем раньше. Единицы — по `best_url`, `_set_seen` сам не смешивает
+    страницы readli с главами.
+
+    Остаточный риск, принятый осознанно: если на одном тике зонд зеркал не
+    ответил (провал не кэшируется, `_at_task`), `best_cur` равен счёту своего
+    источника, «видели» опустится до него, и следующий тик с ответившим
+    зеркалом сделает ОДНУ лишнюю перекачку — не качели каждый второй тик.
+    """
+    _set_seen(mon, best_cur or 0, best_url, authoritative=True)
+
+
 def _has_new_content(
     *,
     best_cur: int,
@@ -852,10 +880,7 @@ def check_all(
         if mon is None:  # мог быть удалён параллельным дедупом
             continue
         if not mon.has_update:
-            # cur посчитан по mon.source_url — в его единицах и записываем.
-            # authoritative: свой источник, поэтому число может и уменьшиться
-            # (serg/tasks#983 — иначе завышенное «видели» глушит книгу навсегда).
-            _set_seen(mon, cur or 0, mon.source_url, authoritative=True)
+            _set_seen_no_update(mon, best_cur, best_url)
         mon.last_checked = utcnow()
         session.add(mon)
         session.commit()
@@ -952,10 +977,7 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
     if has_new:
         mon.has_update = True
     else:
-        # cur посчитан по mon.source_url — в его единицах и записываем.
-        # authoritative: свой источник, поэтому число может и уменьшиться
-        # (serg/tasks#983 — иначе завышенное «видели» глушит книгу навсегда).
-        _set_seen(mon, cur or 0, mon.source_url, authoritative=True)
+        _set_seen_no_update(mon, best_cur, best_url)
     mon.last_checked = utcnow()
     session.add(mon)
     session.commit()

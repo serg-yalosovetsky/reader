@@ -206,9 +206,15 @@ def _file_chapters(work_obj) -> int:
         return 0
 
 
-def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | None:
+def _chapter_count(
+    url: str, host: str, creds: tuple[str, str] | None, meta_driver=None,
+) -> int | None:
     """Число глав без записи в БД (creds пробрасываем заранее — функция вызывается
-    из потоков, своей сессии у неё нет)."""
+    из потоков, своей сессии у неё нет).
+
+    meta_driver — `fff.MetaDriver` серии (фаза счёта глав check_all): FanFicFare
+    идёт через один долгоживущий процесс, паузу между ficbook-заданиями держит
+    драйвер. Без него — отдельный процесс на ссылку, как раньше."""
     # docs.python.org: «главы» = НОМЕР ВЕРСИИ документации (см. _metric_kind)
     if host.endswith("docs.python.org"):
         from ..downloaders import pythondocs as _pd
@@ -232,9 +238,12 @@ def _chapter_count(url: str, host: str, creds: tuple[str, str] | None) -> int | 
     # ficbook: считаем через FanFicFare (свой cloudscraper в подпроцессе). Лёгкий
     # in-process cloudscraper-счётчик пробовали — DDoS-Guard жёстко блокирует
     # переиспользуемую сессию после ~десятка запросов, так что это тупик.
-    meta = fff.get_meta(url, creds=creds)
-    if host.endswith("ficbook.net"):
-        time.sleep(0.25)  # вежливость к DDoS-Guard: он тригеристый, не частим
+    if meta_driver is not None:
+        meta = meta_driver.get_meta(url, creds=creds)
+    else:
+        meta = fff.get_meta(url, creds=creds)
+        if host.endswith("ficbook.net"):
+            time.sleep(0.25)  # вежливость к DDoS-Guard: он тригеристый, не частим
     if not meta:
         return None
     try:
@@ -394,10 +403,11 @@ _AT_WORKERS = 5
 # НЕЛЬЗЯ гонять одновременно — эмпирически душат друг друга (контеншн CPU/сети на
 # маленьком VPS: anti-bot ficbook + конкурентные httpx), общий прогон раздувается
 # ~втрое. Поэтому фазы РАЗДЕЛЕНЫ: сперва счёт глав, потом отдельный пул на at_source.
-def _count_chapters_task(task: dict) -> int | None:
+def _count_chapters_task(task: dict, meta_driver=None) -> int | None:
     try:
-        return _chapter_count(task["url"], task["host"], task["creds"])
-    except Exception:  # noqa: BLE001 — фон, не валим прогон
+        return _chapter_count(task["url"], task["host"], task["creds"], meta_driver)
+    except Exception as e:  # noqa: BLE001 — фон, не валим прогон, но и не молчим (serg/tasks#1537)
+        _log.warning("счёт глав %s упал: %s: %s", task["url"], type(e).__name__, e)
         return None
 
 
@@ -718,21 +728,33 @@ def check_all(
     # 1a) Счёт глав — ПОСЛЕДОВАТЕЛЬНО (ficbook через cloudscraper, нельзя смешивать
     #     с пулом httpx — душат друг друга на маленьком VPS).
     #     Пропускаем если обновление уже известно (has_update=True).
+    #     FanFicFare-ссылки идут через ОДИН процесс-драйвер на фазу (serg/tasks#1541):
+    #     старт интерпретатора на каждую ссылку был главной статьёй CPU тика.
+    #     Драйвер закрывается до фазы 1b — с пулом зеркал он не пересекается.
     cur_by: dict[int, int | None] = {}
     total_tasks = len(tasks)
     _t0 = time.time()
-    for i, t in enumerate(tasks):
-        if progress_cb:
-            progress_cb(i + 1, total_tasks, t["title"] or t["url"], t["host"])
-        if t.get("has_update") and not t.get("last_seen"):
-            # Initial/сирота: сравнивать не с чем — прямая докачка в фазе 2.
-            cur_by[t["mon_id"]] = None
-        else:
-            # Для has_update с известным last_seen СЧИТАЕМ главы: ficbook-лента
-            # метит любую активность автора, и без сверки ложный флаг гонял
-            # полную перекачку каждый тик.
-            cur_by[t["mon_id"]] = _count_chapters_task(t)
+    _count_fails = 0
+    with fff.MetaDriver() as _drv:
+        for i, t in enumerate(tasks):
+            if progress_cb:
+                progress_cb(i + 1, total_tasks, t["title"] or t["url"], t["host"])
+            if t.get("has_update") and not t.get("last_seen"):
+                # Initial/сирота: сравнивать не с чем — прямая докачка в фазе 2.
+                cur_by[t["mon_id"]] = None
+            else:
+                # Для has_update с известным last_seen СЧИТАЕМ главы: ficbook-лента
+                # метит любую активность автора, и без сверки ложный флаг гонял
+                # полную перекачку каждый тик.
+                cur_by[t["mon_id"]] = _count_chapters_task(t, _drv)
+                _count_fails += cur_by[t["mon_id"]] is None
     _t_count = time.time() - _t0
+    _log.info(
+        "check_all: счёт глав без ответа %d; fff-драйвер: заданий %d, стартов %d, "
+        "сбоев %d, отдельным процессом %d, RSS макс %.0f МБ",
+        _count_fails, _drv.stats["jobs"], _drv.stats["starts"], _drv.stats["failures"],
+        _drv.stats["fallback"], _drv.stats["max_rss_kb"] / 1024,
+    )
     # 1b) Поиск зеркал — ПАРАЛЛЕЛЬНО (анонимные httpx-запросы).
     _t1 = time.time()
     at_by: dict[int, tuple[str, int] | None] = {}

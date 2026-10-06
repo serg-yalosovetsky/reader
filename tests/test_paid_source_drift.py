@@ -240,7 +240,7 @@ def test_backoff_stops_the_carousel_when_the_site_keeps_showing_more(
     session.commit()
 
     # Сайт стабильно показывает 78 глав — best_cur (78) > seen (77) каждый тик.
-    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t: 78)
+    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t, *a: 78)
     monkeypatch.setattr(monitor, "_at_task", lambda t: None)
     monkeypatch.setattr(monitor.store, "creds_for_host", lambda s, h: None)
 
@@ -275,7 +275,7 @@ def test_download_still_runs_below_the_backoff_threshold(session: Session, monke
     )
     session.commit()
 
-    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t: 78)
+    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t, *a: 78)
     monkeypatch.setattr(monitor, "_at_task", lambda t: None)
     monkeypatch.setattr(monitor.store, "creds_for_host", lambda s, h: None)
 

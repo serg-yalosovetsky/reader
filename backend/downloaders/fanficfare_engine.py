@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import os
+import queue
 import subprocess
 import time
 import threading
@@ -117,6 +118,46 @@ def _child_env() -> dict[str, str]:
     return env
 
 
+def _meta_args(url: str, extra: dict | None) -> list[str]:
+    """Аргументы FanFicFare для `--json-meta` (без исполняемого файла, кредов и URL).
+
+    Общие для отдельного процесса (`get_meta`) и драйвера (`MetaDriver`): оба
+    пути обязаны спрашивать FanFicFare ОДНО И ТО ЖЕ.
+    """
+    args = [
+        "-m", "--json-meta", "--non-interactive",
+        "-o", "is_adult=true",
+    ]
+    for key, value in (extra or {}).items():
+        args += ["-o", f"{key}={value}"]
+    if _needs_cloudscraper(url):
+        args += ["-o", "use_cloudscraper=true"]
+    return args
+
+
+def _parse_meta(url: str, rc: int | None, stdout: str | None, stderr: str | None) -> dict:
+    """Ответ FanFicFare `--json-meta` → dict. Пусто при ошибке, и каждая ошибка в логе."""
+    out = (stdout or "").strip()
+    if not out:
+        log.warning(
+            "метаданные %s пусты: код возврата %s; stderr: %s",
+            url, rc, _strip_noise(stderr)[-200:] or "(пусто)",
+        )
+        return {}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        # На случай мусора до/после JSON — выдрать первый объект.
+        start, end = out.find("{"), out.rfind("}")
+        if 0 <= start < end:
+            try:
+                return json.loads(out[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+    log.warning("метаданные %s не разобраны: код возврата %s; stdout: %s", url, rc, out[:200])
+    return {}
+
+
 def get_meta(
     url: str,
     *,
@@ -130,15 +171,11 @@ def get_meta(
     В ответе есть и `zchapters` — главы с датами публикации (по ним строятся
     даты в оглавлении, см. app/chapterdates.py). `extra` — опции `-o`, которыми
     вызывающий уточняет поведение (например формат даты главы).
+
+    Отдельный процесс на вызов. Для серии ссылок (фаза счёта глав монитора) —
+    `MetaDriver`: тот же ответ без старта интерпретатора на каждую ссылку.
     """
-    cmd = _ff_executable() + [
-        "-m", "--json-meta", "--non-interactive",
-        "-o", "is_adult=true",
-    ]
-    for key, value in (extra or {}).items():
-        cmd += ["-o", f"{key}={value}"]
-    if _needs_cloudscraper(url):
-        cmd += ["-o", "use_cloudscraper=true"]
+    cmd = _ff_executable() + _meta_args(url, extra)
     try:
         # `-m` всё равно пишет ПУСТОЙ EPUB в рабочий каталог процесса: запуск из
         # cwd сервиса копил `*-fbn_*.epub` прямо в /opt/reader (77 штук на
@@ -153,24 +190,247 @@ def get_meta(
         # числа глав, и никто не знал, что метаданные вообще не получены.
         log.warning("метаданные %s не получены за %s с (таймаут)", url, timeout)
         return {}
-    out = (proc.stdout or "").strip()
-    if not out:
-        log.warning(
-            "метаданные %s пусты: код возврата %s; stderr: %s",
-            url, proc.returncode, _strip_noise(proc.stderr)[-200:] or "(пусто)",
+    return _parse_meta(url, proc.returncode, proc.stdout, proc.stderr)
+
+
+# --- Драйвер: один процесс FanFicFare на серию ссылок (serg/tasks#1541) ---------
+#
+# Отдельный процесс на ссылку стоил ~1 с CPU только на старт интерпретатора и
+# импорт FanFicFare/cloudscraper, а через FanFicFare в тике идут ~50 подписок.
+# Драйвер (fff_meta_driver.py) импортирует всё один раз и на каждое задание
+# зовёт `fanficfare.cli.main(argv)` — со СВЕЖИМ Configuration и fetcher, так что
+# сессия к DDoS-Guard между ссылками не переиспользуется.
+
+_DRIVER_SCRIPT = Path(__file__).with_name("fff_meta_driver.py")
+# Плановый перезапуск: память драйвера растёт от задания к заданию (52→91 МБ RSS
+# за 12 вызовов в замере #1525) — каждые N заданий процесс начинается заново.
+DRIVER_MAX_JOBS = int(os.environ.get("READER_FFF_DRIVER_MAX_JOBS", "10") or 10)
+# Потолок адресного пространства драйвера: утечка превращается в MemoryError
+# в драйвере, а не в OOM-kill внутри MemoryMax сервиса (там и uvicorn).
+# Замер 06.10: VmPeak 110 МБ к 10-му заданию, поэтому 512 — с запасом впятеро.
+DRIVER_AS_MB = int(os.environ.get("READER_FFF_DRIVER_AS_MB", "512") or 0)
+# Явная пауза между заданиями одного сайта. Раньше её давал старт процесса
+# (~1.5–3 с) плюс sleep 0.25; в одном процессе запросы шли бы впритык, а
+# DDoS-Guard ficbook тригеристый. Тратим wall, не CPU.
+DRIVER_PAUSE_SEC = {"ficbook.net": 2.5}
+
+_TIMEOUT = object()
+
+
+class DriverStartError(RuntimeError):
+    """Драйвер не поднялся: импорт упал, процесс умер или молчит."""
+
+
+class MetaDriver:
+    """Серия `get_meta` через один долгоживущий процесс FanFicFare.
+
+    Контракт ответа — как у `get_meta`: dict метаданных, `{}` при любом отказе,
+    и каждый отказ виден в логе с URL. Зависшее задание (нет строки ответа за
+    `timeout`) убивает драйвер; следующее задание поднимает новый. Драйвер,
+    который не стартует трижды подряд, выключается до конца серии, и ссылки
+    считаются старым путём — отдельным процессом (с warning).
+
+    Использовать как контекстный менеджер: процесс живёт ровно серию.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_jobs: int | None = None,
+        timeout: int = 120,
+        start_timeout: int = 60,
+        as_mb: int | None = None,
+        pause: dict[str, float] | None = None,
+        cmd: list[str] | None = None,
+    ) -> None:
+        self.max_jobs = max(1, max_jobs or DRIVER_MAX_JOBS)
+        self.timeout = timeout
+        self.start_timeout = start_timeout
+        self.as_mb = DRIVER_AS_MB if as_mb is None else as_mb
+        self.pause = dict(DRIVER_PAUSE_SEC if pause is None else pause)
+        self._cmd = cmd or [sys.executable, str(_DRIVER_SCRIPT)]
+        self._proc: subprocess.Popen | None = None
+        self._lines: queue.Queue | None = None
+        self._reader: threading.Thread | None = None
+        self._errf = None
+        self._cwd: tempfile.TemporaryDirectory | None = None
+        self._jobs = 0
+        self._seq = 0
+        self._rss_kb = 0
+        self._start_failures = 0
+        self._disabled = False
+        self._last_at: dict[str, float] = {}
+        self.stats = {"jobs": 0, "starts": 0, "failures": 0, "fallback": 0, "max_rss_kb": 0}
+
+    # -- жизненный цикл --------------------------------------------------------
+
+    def __enter__(self) -> "MetaDriver":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._stop("серия закончена")
+
+    def _start(self) -> None:
+        self._cwd = tempfile.TemporaryDirectory(prefix="fff_meta_")
+        self._errf = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+        env = _child_env()
+        if self.as_mb:
+            env["READER_FFF_DRIVER_AS_MB"] = str(self.as_mb)
+        self._proc = subprocess.Popen(
+            self._cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._errf,
+            text=True, encoding="utf-8", errors="replace", env=env, cwd=self._cwd.name,
         )
+        self._lines = queue.Queue()
+        self._reader = threading.Thread(
+            target=self._pump, args=(self._proc, self._lines), daemon=True, name="fff-driver",
+        )
+        self._reader.start()
+        ready = self._next(self.start_timeout)
+        if not isinstance(ready, dict) or not ready.get("ready"):
+            why = "молчит" if ready is _TIMEOUT else "умер" if ready is None else f"ответил {ready!r}"
+            tail = self._stderr_tail()
+            self._stop("не стартовал", kill=True)
+            raise DriverStartError(f"драйвер {why} за {self.start_timeout} с; stderr: {tail}")
+        self.stats["starts"] += 1
+        self._rss_kb = int(ready.get("rss_kb") or 0)
+        log.info("fff-драйвер pid=%s запущен (RSS %.0f МБ)", self._proc.pid, self._rss_kb / 1024)
+
+    @staticmethod
+    def _pump(proc: subprocess.Popen, lines: queue.Queue) -> None:
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)  # EOF: процесс закрыл протокол (вышел или умер)
+
+    def _next(self, timeout: float):
+        """Следующая строка протокола: dict, None (EOF) или _TIMEOUT."""
+        try:
+            line = self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return _TIMEOUT
+        if line is None:
+            return None
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            return {"_garbage": line[:200]}
+
+    def _stderr_tail(self) -> str:
+        if self._errf is None:
+            return "(нет)"
+        try:
+            self._errf.flush()
+            self._errf.seek(0)
+            return _strip_noise(self._errf.read())[-300:] or "(пусто)"
+        except (OSError, ValueError) as e:
+            return f"(не прочитан: {e})"
+
+    def _stop(self, reason: str, *, kill: bool = False) -> None:
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            if not kill:
+                try:
+                    proc.stdin.close()
+                    proc.wait(timeout=10)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    log.warning("fff-драйвер pid=%s не вышел сам (%s) — убиваю", proc.pid, e)
+                    kill = True
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            if self._reader is not None:
+                self._reader.join(timeout=2)
+            log.info(
+                "fff-драйвер pid=%s остановлен (%s): заданий %d, RSS %.0f МБ, код %s",
+                proc.pid, reason, self._jobs, self._rss_kb / 1024, proc.returncode,
+            )
+        if self._errf is not None:
+            self._errf.close()
+            self._errf = None
+        if self._cwd is not None:
+            self._cwd.cleanup()
+            self._cwd = None
+        self._jobs = 0
+
+    # -- задания ---------------------------------------------------------------
+
+    def _pace(self, url: str) -> str | None:
+        host = (urlparse(url).hostname or "").lower()
+        for site, gap in self.pause.items():
+            if host.endswith(site):
+                last = self._last_at.get(site)
+                if last is not None:
+                    wait = gap - (time.monotonic() - last)
+                    if wait > 0:
+                        time.sleep(wait)
+                return site
+        return None
+
+    def get_meta(
+        self, url: str, *, creds: tuple[str, str] | None = None, extra: dict | None = None,
+    ) -> dict:
+        site = self._pace(url)
+        try:
+            return self._get_meta(url, creds, extra)
+        finally:
+            if site:
+                self._last_at[site] = time.monotonic()
+
+    def _fallback(self, url, creds, extra) -> dict:
+        self.stats["fallback"] += 1
+        return get_meta(url, creds=creds, timeout=self.timeout, extra=extra)
+
+    def _fail(self, url: str, what: str) -> dict:
+        self.stats["failures"] += 1
+        pid = self._proc.pid if self._proc else None
+        tail = self._stderr_tail()
+        log.warning("метаданные %s не получены: fff-драйвер pid=%s %s; stderr: %s", url, pid, what, tail)
+        self._stop(what, kill=True)
         return {}
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        # На случай мусора до/после JSON — выдрать первый объект.
-        start, end = out.find("{"), out.rfind("}")
-        if 0 <= start < end:
+
+    def _get_meta(self, url, creds, extra) -> dict:
+        if self._proc is None:
+            if self._disabled:
+                return self._fallback(url, creds, extra)
             try:
-                return json.loads(out[start : end + 1])
-            except json.JSONDecodeError:
-                return {}
-        return {}
+                self._start()
+            except (DriverStartError, OSError) as e:
+                self._start_failures += 1
+                log.warning("fff-драйвер не запустился (%s) — %s считаю отдельным процессом", e, url)
+                if self._start_failures >= 3:
+                    self._disabled = True
+                    log.warning("fff-драйвер выключен до конца серии: %d неудачных стартов подряд",
+                                self._start_failures)
+                return self._fallback(url, creds, extra)
+        self._start_failures = 0
+        self._seq += 1
+        with _creds_config(creds) as cred_args:
+            job = {"id": self._seq, "argv": _meta_args(url, extra) + cred_args + [url]}
+            try:
+                self._proc.stdin.write(json.dumps(job, ensure_ascii=False) + "\n")
+                self._proc.stdin.flush()
+            except OSError as e:
+                return self._fail(url, f"не принял задание ({e})")
+            res = self._next(self.timeout)
+        if res is _TIMEOUT:
+            return self._fail(url, f"не ответил за {self.timeout} с (завис), убит")
+        if res is None:
+            self._proc.poll()
+            return self._fail(url, f"умер посреди задания (код {self._proc.returncode})")
+        if res.get("id") != self._seq:
+            return self._fail(url, f"рассинхрон протокола: {str(res)[:200]}")
+        self._jobs += 1
+        self.stats["jobs"] += 1
+        self._rss_kb = int(res.get("rss_kb") or 0)
+        self.stats["max_rss_kb"] = max(self.stats["max_rss_kb"], self._rss_kb)
+        meta = _parse_meta(url, res.get("rc"), res.get("stdout"), res.get("stderr"))
+        if "MemoryError" in (res.get("error") or ""):
+            self._fail(url, "упёрся в RLIMIT_AS")
+        elif self._jobs >= self.max_jobs:
+            self._stop(f"плановый перезапуск каждые {self.max_jobs}")
+        return meta
 
 
 def download(url: str, *, is_adult: bool = True, extra_options: dict | None = None) -> DownloadResult:

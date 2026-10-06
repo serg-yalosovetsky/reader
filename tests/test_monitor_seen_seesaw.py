@@ -33,7 +33,7 @@ def _setup(session: Session, monkeypatch, *, file_chapters: int, own: int, mirro
                           last_seen_source=seen_source))
     session.commit()
 
-    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t: own)
+    monkeypatch.setattr(monitor, "_count_chapters_task", lambda t, *a: own)
     monkeypatch.setattr(monitor, "_at_task", lambda t: (SF, mirror))
     monkeypatch.setattr(monitor, "_file_chapters", lambda w_: file_chapters)
     monkeypatch.setattr(monitor.store, "creds_for_host", lambda s, h: None)

@@ -1,0 +1,9 @@
+# Конфигурация actionlint.
+# mesh-vps — метка self-hosted раннера меша (раннер agents-mesh на узле
+# agents-vps, /opt/gh-runner-reader), на нём идут job'ы deploy и
+# mirror-forgejo. Метку знает только GitHub этого репозитория, а не actionlint:
+# без объявления здесь каждый такой job даёт ложное «label "mesh-vps" is
+# unknown», и review_gate codehealth считает это bug (serg/tasks#1549).
+self-hosted-runner:
+  labels:
+    - mesh-vps

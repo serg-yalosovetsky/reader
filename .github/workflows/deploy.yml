@@ -18,6 +18,9 @@ on:
         description: ревизия для раскатки
         required: false
 
+permissions:
+  contents: read
+
 env:
   SERVICE: reader
   RECEIVER: http://100.66.108.118:9001/hooks/deploy
@@ -58,6 +61,10 @@ jobs:
 
   deploy:
     needs: gate
+    # serg/tasks#1692: этот job идёт на self-hosted раннере меша, а репозиторий
+    # публичный. Только push / ручной запуск И только из default-ветки: ни PR из
+    # форка, ни ручной запуск с чужой ветки не исполняют код на машине меша.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     # Метка mesh-vps — это раннер на VPS, поднятый специально для этого
     # репозитория. Раннер уровня организации на личном аккаунте невозможен,
     # поэтому у каждого сервиса он свой.
@@ -119,7 +126,7 @@ jobs:
     # Только push: ручной запуск с произвольным ref раскатывает не обязательно
     # голову main, и тащить такую ревизию в main копии нельзя.
     needs: deploy
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # Тот же раннер, что у раскатки: он в меше и видит forgejo.ibotz.fun:2222.
     # Облачный раннер Forgejo по SSH может и не увидеть, а проверять это на
     # каждом пуше — значит получить флак вместо зеркала.

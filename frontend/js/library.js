@@ -100,7 +100,9 @@ function renderPendingPill(monitored) {
   const n = (monitored || []).filter((m) => m.has_update).length
   pill.hidden = n === 0
   if (n) {
-    pill.textContent = `⬇ ${n}`
+    const word = n % 10 === 1 && n % 100 !== 11 ? 'обновление'
+      : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'обновления' : 'обновлений'
+    pill.textContent = `⬇ ${n} ${word}`
     pill.title = `Обновлений ждут скачивания: ${n} — открыть «Аккаунты»`
     pill.onclick = () => $('#accounts-btn')?.click()
   }

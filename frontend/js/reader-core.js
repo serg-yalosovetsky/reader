@@ -200,9 +200,16 @@ async function openReaderImpl(work, opts = {}) {
     if (cachedTarget?.locator === target) break
   }
   if (samePosition && cachedSnapshot && cachedKey === resumeKey(work, prefs, $('#view-host'))) {
-    const doc = readerView.renderer.getContents?.()[0]?.doc
-    if (doc?.fonts?.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 2500))])
-    if (!current()) return
+    let target
+    do {
+      target = cachedTarget.locator
+      await readerView.goTo(target)
+      const doc = readerView.renderer.getContents?.()[0]?.doc
+      if (doc?.fonts?.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 2500))])
+      // Keep the cache visible through the paginator's 80ms resize debounce.
+      await new Promise(r => setTimeout(r, 120))
+      if (!current()) return
+    } while (target !== cachedTarget.locator)
     await readerView.renderer.restoreSnapshot?.(cachedSnapshot)
     if (!current()) return
   }

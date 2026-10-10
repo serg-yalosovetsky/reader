@@ -13,7 +13,7 @@ let generation = 0
 let warmer = null
 
 export function resumeKey(work, prefs, host, original = false) {
-  return JSON.stringify([1, String(work.id), work.content_updated_at || '',
+  return JSON.stringify([2, String(work.id), work.content_updated_at || '',
     work.chapters_count || 0, original, prefs.theme, prefs.fontFamily,
     prefs.fontScale, prefs.marginLevel, prefs.flow, prefs.columns || 1,
     Math.round(host.clientWidth), Math.round(host.clientHeight)])

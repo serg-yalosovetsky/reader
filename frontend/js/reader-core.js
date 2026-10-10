@@ -271,6 +271,7 @@ function resolvedColor(varName) {
 }
 function bookCSS() {
   const fg = resolvedColor('--fg'), bg = resolvedColor('--bg'), accent = resolvedColor('--accent')
+  const codeBg = resolvedColor('--bg-soft')
   const isDark = ['dusk', 'night', 'terminal', 'black', 'phosphor'].includes(prefs.theme)
   const colorScheme = isDark ? 'dark' : 'light'
   const fam = FONT_STACKS[prefs.fontFamily] || FONT_STACKS['pt-sans']
@@ -300,6 +301,14 @@ function bookCSS() {
     /* Книги часто задают свой color на абзацах/спанах — он перебивает тему
        и в тёмных темах даёт нечитаемый серый. Форсируем наследование от body. */
     body *:not(a):not(mark) { color: inherit !important; }
+    /* Фон примеров из EPUB должен соответствовать принудительному цвету текста.
+       Вложенная подсветка тоже часто приносит белые подложки. */
+    pre, code, kbd, samp, .highlight {
+      background: ${codeBg} !important; color: ${fg} !important;
+    }
+    pre *, code *, kbd *, samp *, .highlight * {
+      background: transparent !important; color: inherit !important;
+    }
     a:link, a:visited { color: ${accent}; }
     html, body { text-align: left !important; }
     p, li, blockquote, dd { line-height: 1.55; text-align: left !important; }

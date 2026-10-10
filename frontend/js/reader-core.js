@@ -18,15 +18,62 @@ import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
+import { collapse } from '../vendor/foliate-js/epubcfi.js'
 import { chapterDate } from './core/chapterdate.js'
+import { showResume, hideResume, stopResume, resumePosition, resumeBasePosition,
+         scheduleResume, resumeKey } from './core/resume-cache.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
+let openGeneration = 0
+let opening = false
+let openedFile = null
+let originalFile = false
+
+const progressWrites = new Map()
+function savePosition(pos) {
+  if (!currentWork || !pos) return
+  const id = currentWork.id
+  const write = (progressWrites.get(id) || Promise.resolve()).then(() =>
+    api.put(`/api/progress/${id}`, pos)).catch(e => logErr('save progress', e))
+  progressWrites.set(id, write)
+  write.finally(() => { if (progressWrites.get(id) === write) progressWrites.delete(id) })
+}
+export function disposeReader() {
+  clearTimeout(saveTimer)
+  const cached = resumePosition()
+  if (cached) savePosition(cached)
+  else if (!opening && view?.lastLocation) {
+    const loc = view.lastLocation
+    savePosition({ ratio: loc.fraction || 0, locator: loc.cfi || '',
+      text_anchor: captureAnchor(loc.range), chapter: loc.tocItem?.label || '' })
+  }
+  openGeneration++
+  stopResume()
+  try { view?.close() } catch {}
+  view?.book?.destroy?.()
+  openedFile = null
+}
 
 // opts.original=true — открыть исходный файл (PDF как макет), минуя EPUB-версию.
 export async function openReader(work, opts = {}) {
+  const attempt = openGeneration + 1
+  try { await openReaderImpl(work, opts) }
+  catch (e) {
+    if (attempt !== openGeneration) return
+    logErr('open reader', e)
+    toast(resumePosition() ? 'Показываю сохранённые страницы. Книга пока не загрузилась.' : 'Не удалось открыть книгу: ' + e.message, 'err', 6000)
+  }
+}
+async function openReaderImpl(work, opts = {}) {
   ttsStop()
+  disposeReader()
+  const generation = openGeneration
+  opening = true
+  originalFile = !!opts.original
+  const current = () => generation === openGeneration
   setCurrentWork(work)
+  setLastIdx(null); setLastCfi(''); setLastAnchor('')
   document.body.classList.add('reader-open')
   $('#library').hidden = true
   $('#reader').hidden = false
@@ -62,6 +109,7 @@ export async function openReader(work, opts = {}) {
   $('#view-host').innerHTML = ''
   setView(document.createElement('foliate-view'))
   $('#view-host').append(view)
+  const readerView = view
 
   // Загружаем файл как Blob → File с корректным именем (для детекта FB2).
   // Cache-first: если книга сохранена офлайн — читаем из кэша (без сети),
@@ -69,8 +117,21 @@ export async function openReader(work, opts = {}) {
   // Прогресс не зависит от файла книги, а раньше запрашивался ПОСЛЕ его
   // открытия — лишний круг по сети посреди пути к первому кадру. Запускаем
   // сразу, ждём ниже, там где он реально нужен.
-  const progP = api.get(`/api/progress/${work.id}`).catch(() => null)
-  let resp = await cachedBook(work.id)
+  const progP = (progressWrites.get(work.id) || Promise.resolve())
+    .then(() => api.get(`/api/progress/${work.id}`)).catch(() => null)
+  let cachedTarget = null, cachedSnapshot = null, cachedMoved = false
+  const cachedKey = resumeKey(work, prefs, $('#view-host'))
+  await showResume(work, prefs, $('#view-host'), opts, (pos, moved, snapshot) => {
+    cachedTarget = pos; cachedSnapshot = snapshot; cachedMoved ||= moved
+    setLastCfi(pos.locator); setLastAnchor(pos.text_anchor); setLastFraction(pos.ratio)
+    setChapterTitle(pos.chapter)
+    updateProgress({ fraction: pos.ratio })
+    if (moved) savePosition(pos)
+  })
+  if (!current()) return
+  const cachedBase = resumeBasePosition()
+  let resp = opts.original ? null : await cachedBook(work.id)
+  if (!current()) return
   // PDF читаем как EPUB (перетекающий текст). Первое открытие ждёт конвертацию
   // (секунды–минуты на толстой книге), дальше файл готов и отдаётся сразу.
   if (!resp && !opts.original && convertible(work) && pdfAsEpub()) {
@@ -82,17 +143,21 @@ export async function openReader(work, opts = {}) {
     }
   }
   if (!resp) resp = await fetch(`/api/reader/${work.id}/file` + (opts.original ? '?original=1' : ''))
+  if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
   const blob = await resp.blob()
+  if (!current()) return
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
   // каким движком foliate будет рендерить).
   const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
   const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 
-  await view.open(file)
+  openedFile = file
+  await readerView.open(file)
+  if (!current()) { try { readerView.close() } catch {} readerView.book?.destroy?.(); return }
   navStack.length = 0
   document.getElementById('reader')?.classList.remove('chrome-hidden')
-  view.addEventListener('relocate', onRelocate)
+  view.addEventListener('relocate', e => { if (current() && !opening) onRelocate(e) })
   view.addEventListener('load', attachKeysToDoc)
   view.addEventListener('load', inlineImagesOnLoad)
   view.addEventListener('draw-annotation', onDrawAnnotation)
@@ -104,25 +169,53 @@ export async function openReader(work, opts = {}) {
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
   const prog = await progP
+  if (!current()) return
+  const base = cachedBase
+  // A newer position on another device takes precedence over the local window.
+  const samePosition = base && (cachedMoved || !prog || ((prog.locator && collapse(prog.locator) === collapse(base.locator))
+    && (!prog.text_anchor || prog.text_anchor === base.text_anchor)))
+  if (base && !samePosition) hideResume()
   // Позиция, с которой книга открывается, — точка отсчёта для признака прыжка:
   // иначе первый же релокейт после восстановления выглядел бы скачком с нуля.
   setLastFraction(prog?.ratio || 0)
   await resetJumps(work.id, prog?.ratio || 0)
+  if (!current()) return
   if (opts.jump) {
     // Пришли из оглавления на странице книги: открываем НЕ сохранённую
     // позицию, а выбранную главу. Сохранённую кладём в историю переходов —
     // иначе клик по главе стирал бы место, с которого человек читал.
     pushServerJump(prog, 'open')
     await openAtChapter(view, opts.jump)
+  } else if (samePosition && cachedTarget) {
+    await readerView.init({ lastLocation: cachedTarget.locator })
   } else {
-    await restorePosition(view, prog)
+    await restorePosition(readerView, prog)
   }
+  if (!current()) return
+  // The reader may have turned cached pages while the live view was loading.
+  while (samePosition && cachedTarget && (readerView.lastLocation?.cfi && collapse(readerView.lastLocation.cfi)) !== collapse(cachedTarget.locator)) {
+    const target = cachedTarget.locator
+    await readerView.goTo(target)
+    if (!current()) return
+    if (cachedTarget?.locator === target) break
+  }
+  if (samePosition && cachedSnapshot && cachedKey === resumeKey(work, prefs, $('#view-host'))) {
+    const doc = readerView.renderer.getContents?.()[0]?.doc
+    if (doc?.fonts?.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 2500))])
+    if (!current()) return
+    await readerView.renderer.restoreSnapshot?.(cachedSnapshot)
+    if (!current()) return
+  }
+  hideResume()
+  opening = false
+  if (readerView.lastLocation) onRelocate({ detail: readerView.lastLocation })
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
   loadHighlightsWeb()
 }
 
 function onRelocate(e) {
+  if (openedFile) scheduleResume(view, currentWork, prefs, $('#view-host'), applyViewStyles, originalFile)
   hideSelPopup()
   const { fraction, cfi, index, range, tocItem, section } = e.detail
   setLastCfi(cfi || lastCfi)
@@ -152,10 +245,9 @@ function onRelocate(e) {
     // Далёкое от прошлого сохранения место = сервер положит прежнее в историю
     // переходов; кнопка «Назад» должна ожить сразу (serg/tasks#1078).
     noteProgressSaved(fraction || 0)
-    api.put(`/api/progress/${currentWork.id}`,
+    savePosition(
       { ratio: fraction || 0, locator: cfi || '', text_anchor: anchor || '',
         chapter: tocItem?.label || '' })
-      .catch((e) => logErr('save progress', e))
   }, 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
   // Дочитан до конца — сбросить флаг обновления
@@ -209,9 +301,9 @@ function bookCSS() {
     ::highlight(tts-word) { background-color: ${accent}; color: #fff; border-radius: 2px; }
   `
 }
-export function applyViewStyles() {
-  if (!view || !view.renderer) return
-  const r = view.renderer
+export function applyViewStyles(target = view) {
+  if (!target || !target.renderer) return
+  const r = target.renderer
   // Сначала раскладка (flow/колонки), потом стили: render() триггерится атрибутами,
   // и к моменту его вызова наш bookCSS уже не перетирается лишним «paginated-кадром».
   if (prefs.flow === 'scrolled') {

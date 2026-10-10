@@ -963,3 +963,9 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
   /* Узкий экран: дата уезжает под название, а не жмёт его в столбик. */
   .bp-toc-date { width: 100%; margin-left: 2.9em; }
 }
+
+/* Resume pages use the exact iframe/clip geometry recorded by the paginator. */
+.resume-page { position: absolute; inset: 0; z-index: 4; overflow: hidden; background: var(--bg); }
+.resume-clip { position: absolute; overflow: hidden; }
+.resume-clip iframe { position: absolute; border: 0; display: block; }
+.resume-warmer { position: fixed; left: -100000px; top: 0; opacity: 0; pointer-events: none; contain: strict; }

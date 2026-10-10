@@ -1288,6 +1288,34 @@ export class Paginator extends HTMLElement {
         }]
         return []
     }
+    // A frozen page for the reader's persistent resume window. Coordinates are
+    // relative to this renderer, so the same API works in the offscreen warmer.
+    snapshot() {
+        const doc = this.#view?.document
+        const iframe = doc?.defaultView?.frameElement
+        if (!iframe) return null
+        const origin = this.getBoundingClientRect()
+        const clip = this.#container.getBoundingClientRect()
+        const frame = iframe.getBoundingClientRect()
+        return {
+            index: this.#index,
+            offset: this.scrolled ? this.start : this.#container[this.scrollProp],
+            doc,
+            clip: { x: clip.x - origin.x, y: clip.y - origin.y,
+                width: clip.width, height: clip.height },
+            frame: { x: frame.x - clip.x, y: frame.y - clip.y,
+                width: frame.width, height: frame.height },
+        }
+    }
+    async restoreSnapshot(snapshot) {
+        if (!snapshot || Number(snapshot.document) !== this.#index) return false
+        const current = this.snapshot()
+        // Changed font/image layout: prefer the CFI rather than a pixel offset.
+        if (!current || Math.abs(current.frame.width - snapshot.frame.width) > 1
+            || Math.abs(current.frame.height - snapshot.frame.height) > 1) return false
+        await this.#scrollTo(snapshot.offset, 'scroll')
+        return true
+    }
     setStyles(styles) {
         this.#styles = styles
         const $$styles = this.#styleMap.get(this.#view?.document)

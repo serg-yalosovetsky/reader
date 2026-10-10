@@ -6,7 +6,7 @@ import { view, currentWork, bookDoc, lastIdx, libWorks, navStack,
          setView, setCurrentWork, setBookDoc, setSelIndex } from './core/state.js'
 import { ttsStop } from './tts.js'
 import { loadLibrary } from './library.js'
-import { openReader, applyViewStyles } from './reader-core.js'
+import { openReader, applyViewStyles, disposeReader } from './reader-core.js'
 import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
 import { initProgressBar } from './progress-bar.js'
@@ -16,11 +16,13 @@ import { initTranslate, onTranslateDocLoaded } from './translate.js'
 import { exitFullscreen, exitMeansBack, takeButtonExit } from './core/fullscreen.js'
 import { keyNavAction } from './core/keynav.js'
 import { initJumps } from './jumps.js'
+import { turnResume } from './core/resume-cache.js'
 
 // ===================== Навигация и панели =====================
 // Закрытие читалки → возврат в библиотеку (общая логика для кнопки и popstate).
 function closeReader() {
   ttsStop()
+  disposeReader()
   // Библиотека не должна остаться в полноэкранном режиме читалки (serg/tasks#902).
   exitFullscreen()
   document.body.classList.remove('reader-open')
@@ -71,8 +73,8 @@ function pageStep() {
   const overlap = Math.min(Math.max(lh ? lh * 1.6 : size * 0.1, size * 0.06), size * 0.2)
   return Math.round(size - overlap)
 }
-function goNext() { view?.next(pageStep()) }
-function goPrev() { view?.prev(pageStep()) }
+function goNext() { if (!turnResume(1)) view?.next(pageStep()) }
+function goPrev() { if (!turnResume(-1)) view?.prev(pageStep()) }
 
 $('#prev-btn').addEventListener('click', goPrev)
 $('#next-btn').addEventListener('click', goNext)

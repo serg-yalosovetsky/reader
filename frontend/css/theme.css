@@ -594,6 +594,24 @@ body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
   .ingest-status { margin: 8px 14px 0; }
 }
 
+/* Планшет: полный набор кнопок + поле поиска не помещаются, и шапка расползалась
+   на три строки. Здесь две строки: [заголовок · ↻ · ⇄ · ◑ · Ещё] и поиск на всю ширину;
+   «Загрузить файл», «Из статей», «Аккаунты» — под «Ещё», как на телефоне. */
+@media (min-width: 561px) and (max-width: 960px) {
+  .lib-header { gap: 12px 10px; padding: 14px 20px; }
+  .lib-actions { display: contents; }
+  .lib-title { order: 0; flex: 1 1 auto; font-size: 20px; }
+  .lib-actions .btn-ghost { padding: 8px 12px; font-size: 13px; }
+  .lib-actions .lib-theme-btn { font-size: 16px; }
+  #check-updates-main { order: 1; }
+  #readera-sync       { order: 2; }
+  #lib-theme-btn      { order: 3; }
+  .more-toggle        { order: 4; display: inline-flex; align-items: center; }
+  .ingest { order: 10; flex: 1 1 100%; max-width: none; }
+  .lib-secondary:not(#lib-theme-btn) { display: none; order: 11; }
+  .lib-actions.more-open .lib-secondary:not(#lib-theme-btn) { display: inline-flex; align-items: center; }
+}
+
 /* ---- reader: кнопка ↻ обновления ---- */
 #update-btn[data-state="checking"] { opacity: .55; cursor: default; }
 #update-btn[data-state="ok"]  .more-state { color: #2ea86b; }

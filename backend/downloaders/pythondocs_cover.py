@@ -26,8 +26,22 @@ BG_BOTTOM = (23, 36, 51)
 TEXT = (240, 244, 248)
 MUTED = (138, 154, 172)
 
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+# Сначала системный DejaVu (на VPS он есть, обложки в проде не меняются), затем
+# копия в репозитории (fonts/, лицензия рядом): без неё на машине без пакета
+# шрифтов обложка молча не рисовалась, а тест test_part_has_embedded_cover падал.
+_FONT_DIRS = (
+    Path("/usr/share/fonts/truetype/dejavu"),
+    Path(__file__).with_name("fonts"),
+)
+
+
+def _fonts() -> tuple[str, str] | None:
+    """Пути (жирный, обычный) из первого каталога, где есть оба файла."""
+    for d in _FONT_DIRS:
+        bold, regular = d / "DejaVuSans-Bold.ttf", d / "DejaVuSans.ttf"
+        if bold.exists() and regular.exists():
+            return str(bold), str(regular)
+    return None
 
 # Цвет-акцент на раздел: единственное, что различает карточки в сетке
 # библиотеки на расстоянии, — не название мелким шрифтом, а полоса и подпись.
@@ -82,9 +96,11 @@ def render(title: str, version: str, part_key: str, logo_png: bytes | None = Non
     except ImportError:  # pragma: no cover — Pillow объявлен в зависимостях
         log.warning("Pillow не установлен — обложка не будет нарисована")
         return None
-    if not Path(FONT_BOLD).exists() or not Path(FONT_REGULAR).exists():
-        log.warning("нет шрифтов DejaVu (%s) — обложка не будет нарисована", FONT_BOLD)
+    fonts = _fonts()
+    if fonts is None:
+        log.warning("нет шрифтов DejaVu (%s) — обложка не будет нарисована", _FONT_DIRS)
         return None
+    font_bold, font_regular = fonts
 
     accent = ACCENTS.get(part_key, DEFAULT_ACCENT)
     img = Image.new("RGB", (WIDTH, HEIGHT), BG_TOP)
@@ -110,10 +126,10 @@ def render(title: str, version: str, part_key: str, logo_png: bytes | None = Non
         except Exception as e:  # noqa: BLE001 — обложка не критична
             log.warning("логотип не вставился: %s", e)
 
-    f_version = ImageFont.truetype(FONT_BOLD, 22)
-    f_title = ImageFont.truetype(FONT_BOLD, 46)
-    f_foot = ImageFont.truetype(FONT_REGULAR, 20)
-    f_url = ImageFont.truetype(FONT_REGULAR, 18)
+    f_version = ImageFont.truetype(font_bold, 22)
+    f_title = ImageFont.truetype(font_bold, 46)
+    f_foot = ImageFont.truetype(font_regular, 20)
+    f_url = ImageFont.truetype(font_regular, 18)
 
     label = f"PYTHON {version}"
     label_w = draw.textlength(label, font=f_version) + 4.0 * (len(label) - 1)

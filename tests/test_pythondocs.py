@@ -431,3 +431,12 @@ def test_chunk_name_stays_stable_when_key_is_not_ascii(caplog):
     assert a != b, "разные ключи дали одно имя куска"
     assert a == pd._slug("Что нового"), "имя куска не воспроизводится"
     assert any("хэш" in r.getMessage() for r in caplog.records), "подмена имени молчит"
+
+
+def test_cover_falls_back_to_bundled_fonts(monkeypatch, tmp_path):
+    """Без системного DejaVu обложка рисуется шрифтами из репозитория, а не пропадает."""
+    from backend.downloaders import pythondocs_cover as pc
+
+    monkeypatch.setattr(pc, "_FONT_DIRS", (tmp_path / "нет", pc._FONT_DIRS[-1]))
+    png = pc.render("Python — Tutorial", "3.14.7", "tutorial")
+    assert png and png.startswith(b"\x89PNG")

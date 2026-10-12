@@ -184,14 +184,26 @@ def _from_author_pages(
     return None
 
 
+# Коды, на которые readli отвечает под нагрузкой, а не по существу: 503/429
+# приходят пачкой посреди длинной книги и через пару секунд проходят.
+_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
 def _get(c: httpx.Client, url: str, attempts: int = 4) -> httpx.Response:
+    """GET с повтором на сетевых сбоях И на временных 5xx/429.
+
+    Последний ответ с плохим кодом возвращается как есть — решает вызывающий."""
     last = None
     for i in range(attempts):
         try:
-            return c.get(url)
+            r = c.get(url)
         except httpx.HTTPError as e:
             last = e
-            time.sleep(0.6 * (i + 1))
+        else:
+            if r.status_code not in _TRANSIENT_STATUS or i == attempts - 1:
+                return r
+            last = f"HTTP {r.status_code}"
+        time.sleep(1.5 * (i + 1))
     raise DownloaderError(f"readli: сетевая ошибка на {url}: {last}")
 
 
@@ -241,7 +253,16 @@ def download(url: str) -> DownloadResult:
         # тянутся через несколько страниц. Резать по страницам = терять главы.
         pages_html: list[str] = [_page_html(soup)]
         for n in range(2, total + 1):
-            pages_html.append(_page_html(BeautifulSoup(_get(c, page_url(n)).text, "lxml")))
+            r = _get(c, page_url(n))
+            # Раньше код не проверялся: страница-заглушка 503 давала пустой текст,
+            # и книга собиралась без хвоста — последние главы молча пропадали
+            # («Вечно голодный студент»). Лучше честная ошибка: «вернула 503»
+            # ingestjob считает разовой и повторяет задание.
+            if r.status_code != 200:
+                raise DownloaderError(
+                    f"readli: страница {n}/{total} вернула {r.status_code}"
+                )
+            pages_html.append(_page_html(BeautifulSoup(r.text, "lxml")))
             progress.report(n, total, "pages")
             time.sleep(0.2)
 

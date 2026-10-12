@@ -79,9 +79,14 @@ def check_status() -> dict:
 
 
 @router.post("/monitored/check/{work_id}")
-def check_one_now(work_id: int, session: Session = Depends(get_session)) -> dict:
-    """Проверить обновления для одной книги и немедленно вернуть результат."""
-    return monitor.check_one(session, work_id)
+def check_one_now(
+    work_id: int, force: bool = True, session: Session = Depends(get_session)
+) -> dict:
+    """Проверить обновления для одной книги и немедленно вернуть результат.
+
+    Это ручная кнопка, поэтому по умолчанию force: человек нажал «проверить» —
+    значит, перекачать со всех зеркал, а не верить счётчикам (monitor.check_one)."""
+    return monitor.check_one(session, work_id, force=force)
 
 
 # ---- интерактивный вход author.today (2FA email-код) ----

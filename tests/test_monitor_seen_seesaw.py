@@ -40,7 +40,7 @@ def _setup(session: Session, monkeypatch, *, file_chapters: int, own: int, mirro
 
     calls: list[tuple[str, int]] = []
 
-    def _download(session_, mon, work_obj, best_url, best_cur):
+    def _download(session_, mon, work_obj, best_url, best_cur, **_kw):
         """Ровно то, что пишет настоящая докачка на ветке got_all."""
         calls.append((best_url, best_cur))
         mon = session_.get(Monitored, mon.id)

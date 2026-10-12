@@ -74,13 +74,26 @@ def download(url: str) -> DownloadResult:
     raise UnsupportedURL(f"searchfloor: неизвестный тип ссылки {url}")
 
 
+# Коды, которыми searchfloor отвечает на скачивание ВРЕМЕННО. 401 — не протухший
+# вход (качаем анонимно, и через минуту та же ссылка отдаёт 200): так сайт
+# отвечает, пока пересобирает файл тома (живой случай 12.10 00:08 — «Вечно
+# голодный студент 10», last-modified файла 00:21). Без повтора зеркало
+# выпадало из выбора самой полной копии на весь тик.
+_DL_TRANSIENT = {401, 403, 429, 500, 502, 503, 504}
+_DL_RETRY_DELAYS = (5, 20)
+
+
 def _download_book(book_id: str, src_url: str) -> DownloadResult:
     """Скачать книгу целиком: GET /book/<id> -> FB2.zip -> распаковать .fb2."""
     title, author = _book_meta(book_id)
     with _client() as c:
-        r = c.get(f"{_BASE}/book/{book_id}")
-        if r.status_code != 200 or not r.content:
-            raise DownloaderError(f"searchfloor: скачивание книги вернуло {r.status_code}")
+        for attempt in range(len(_DL_RETRY_DELAYS) + 1):
+            r = c.get(f"{_BASE}/book/{book_id}")
+            if r.status_code == 200 and r.content:
+                break
+            if r.status_code not in _DL_TRANSIENT or attempt == len(_DL_RETRY_DELAYS):
+                raise DownloaderError(f"searchfloor: скачивание книги вернуло {r.status_code}")
+            time.sleep(_DL_RETRY_DELAYS[attempt])
         blob = r.content
 
     out_dir = Path(tempfile.mkdtemp(prefix="sf_"))

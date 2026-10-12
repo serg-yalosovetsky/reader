@@ -287,7 +287,19 @@ function renderBookPage(w) {
       if (res.error) { toast(`Ошибка: ${res.error}`, 'err'); return }
       const full = await api.get(`/api/library/${w.id}`).catch(() => null)
       if (full) { curWork = { ...w, ...full }; w = curWork }
-      if (res.downloaded) {
+      // Ручная проверка перекачивает со всех зеркал (refetched): говорим, что
+      // реально вышло, а не «новых глав нет» — счётчики сайта тут не показатель.
+      const gained = res.refetched && (res.chapters || 0) > (res.chapters_before || 0)
+      if (res.kept_existing) {
+        toast('Зеркала не дали копии полнее — книга оставлена как есть', 'info')
+      } else if (gained) {
+        toast(`Докачано со всех зеркал: было ${res.chapters_before} гл., стало ${res.chapters}`, 'ok')
+        if (isOffline(w.id)) {
+          try { await refreshBook(w.id, null, Number(w.chapters_have) || 0) } catch { /* копия осталась старой */ }
+        }
+      } else if (res.refetched && !res.has_update && !res.error) {
+        toast(`Проверены все зеркала — в книге ${res.chapters || w.chapters_have} гл., полнее нет`, 'info')
+      } else if (res.downloaded) {
         toast(`Загружено — теперь ${res.chapters || w.chapters_have} гл.`, 'ok')
         // Офлайн-копия обязана догнать: иначе cache-first отдаст старый файл.
         if (isOffline(w.id)) {

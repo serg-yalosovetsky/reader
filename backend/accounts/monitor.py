@@ -486,6 +486,7 @@ def _download_and_write(
     work_obj: "Work | None",
     best_url: str,
     best_cur: int,
+    keep_if_worse: bool = False,
 ) -> dict:
     """Докачка с логами старта и итога (spec.reader.update-pipeline v12).
 
@@ -501,7 +502,9 @@ def _download_and_write(
         wid, title, best_url, best_cur,
     )
     try:
-        out = _download_and_write_impl(session, mon, work_obj, best_url, best_cur)
+        out = _download_and_write_impl(
+            session, mon, work_obj, best_url, best_cur, keep_if_worse=keep_if_worse
+        )
     except Exception as e:
         _log.warning(
             "докачка не удалась за %.1f с: work=%s «%s» из %s — %s: %s",
@@ -517,14 +520,41 @@ def _download_and_write(
     return out
 
 
+def _poorer_than_current(res, descriptor: dict) -> bool:
+    """Скачанная копия хуже лежащего файла: меньше текста и не больше глав.
+
+    Меры те же, что у chain.fetch_fullest при выборе между зеркалами, — иначе
+    «лучшее из зеркал» и «лучше нашего файла» спорили бы между собой."""
+    from types import SimpleNamespace
+
+    if not descriptor.get("file_path"):
+        return False
+    cur = SimpleNamespace(
+        file_path=descriptor["file_path"], file_format=descriptor.get("file_format")
+    )
+    cur_rich = chain._richness(cur)
+    if not cur_rich:
+        return False
+    return (
+        chain._richness(res) < cur_rich * 0.98
+        and chain._chapters(res) <= chain._chapters(cur)
+    )
+
+
 def _download_and_write_impl(
     session: Session,
     mon: "Monitored",
     work_obj: "Work | None",
     best_url: str,
     best_cur: int,
+    keep_if_worse: bool = False,
 ) -> dict:
     """Скачать книгу + обложку, записать результат.
+
+    keep_if_worse — для принудительной ручной перекачки: если лучшая копия со
+    всех зеркал БЕДНЕЕ уже лежащего файла (зеркала в эту минуту отдали обрезок),
+    файл не трогаем. Автообновление качает только при новых главах и этой
+    защиты не просит.
 
     Структура гарантирует короткие транзакции:
       1. Читаем creds (быстро) -> commit -> никакой открытой txn.
@@ -558,6 +588,19 @@ def _download_and_write_impl(
     res = chain.fetch_fullest(
         title, author, primary_url=best_url, creds=creds, descriptor=descriptor
     ) or chain.fetch(best_url, creds=creds)
+
+    if keep_if_worse and _poorer_than_current(res, descriptor):
+        mon = session.get(Monitored, mon_id)
+        mon.last_checked = utcnow()
+        session.add(mon)
+        session.commit()
+        have = _file_chapters(work_obj) if work_obj else 0
+        return {
+            "downloaded": False,
+            "kept_existing": True,
+            "source_used": res.source_url or best_url,
+            "chapters": have,
+        }
 
     # Быстрая запись (< секунды)
     work = register_download(res, session)  # внутренний commit
@@ -915,8 +958,17 @@ def check_all(
     }
 
 
-def check_one(session: Session, work_id: int, auto_download: bool = True) -> dict:
-    """Проверить обновления для одной книги (по work_id). Синхронно."""
+def check_one(
+    session: Session, work_id: int, auto_download: bool = True, force: bool = False
+) -> dict:
+    """Проверить обновления для одной книги (по work_id). Синхронно.
+
+    force — ручная проверка с кнопки книги: качаем со ВСЕХ зеркал и берём самую
+    полную копию, даже если по счётчикам «новых глав нет». Счётчики врут как раз
+    в нужных случаях: платный хвост на author.today при полной копии на readli
+    или зеркало, отдавшее в прошлый раз обрезок (живой случай — «Вечно голодный
+    студент 10»: на сайте 30, «видели» 30, в файле 28, кнопка отвечала
+    «актуально»). Копия беднее нашего файла его не заменяет."""
     from ..app import blacklist as _bl
 
     mon = session.exec(select(Monitored).where(Monitored.work_id == work_id)).first()
@@ -985,10 +1037,16 @@ def check_one(session: Session, work_id: int, auto_download: bool = True) -> dic
         "chapters_found": best_cur,
     }
 
-    if has_new and auto_download:
+    if (has_new or force) and auto_download:
         try:
-            dl = _download_and_write(session, mon, _w, best_url, best_cur)
+            before = _file_chapters(_w)
+            dl = _download_and_write(
+                session, mon, _w, best_url, best_cur, keep_if_worse=force and not has_new
+            )
             detail.update(dl)
+            if force:
+                detail["refetched"] = True
+                detail["chapters_before"] = before
             return detail
         except Exception as e:  # noqa: BLE001
             detail["error"] = str(e)[:200]

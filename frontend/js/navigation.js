@@ -332,9 +332,14 @@ $('#update-btn').addEventListener('click', async () => {
       setTimeout(updReset, 3500)
       return
     }
-    if (res.downloaded) {
-      updState('new', `+${res.chapters_found} гл.`, `Загружено (${res.chapters_found} гл.)`)
-      toast(`Загружено новых глав до ${res.chapters_found} — открываю обновлённую книгу`, 'ok')
+    const gained = res.refetched && (res.chapters || 0) > (res.chapters_before || 0)
+    if (res.kept_existing) {
+      updState('ok', 'актуально', 'Зеркала не дали копии полнее')
+      toast('Зеркала не дали копии полнее — книга оставлена как есть', 'info')
+    } else if (gained || res.downloaded) {
+      const n = gained ? res.chapters : res.chapters_found
+      updState('new', `${n} гл.`, `Загружено (${n} гл.)`)
+      toast(`Загружено глав: ${n} — открываю обновлённую книгу`, 'ok')
       // Освежаем офлайн-копию: openReader читает cache-first, и без
       // переустановки записи открылся бы СТАРЫЙ файл, а не докачанный.
       if (isOffline(workId)) {
@@ -343,6 +348,9 @@ $('#update-btn').addEventListener('click', async () => {
     } else if (res.has_update) {
       updState('err', 'ошибка', 'Обновление есть, но скачать не удалось')
       toast('Обновление есть, но скачать не удалось. Попробуйте позже.', 'err')
+    } else if (res.refetched) {
+      updState('ok', 'актуально', 'Проверены все зеркала')
+      toast('Проверены все зеркала — полнее копии нет', 'info')
     } else {
       updState('ok', 'актуально', 'Новых глав нет')
       toast('Новых глав нет — книга актуальна', 'info')

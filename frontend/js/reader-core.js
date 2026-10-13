@@ -20,7 +20,7 @@ import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
 import { collapse } from '../vendor/foliate-js/epubcfi.js'
 import { chapterDate } from './core/chapterdate.js'
-import { showResume, hideResume, stopResume, resumePosition, resumeBasePosition,
+import { showResume, hideResume, stopResume, resumePosition, resumeBasePosition, layoutSettled,
          scheduleResume, resumeKey } from './core/resume-cache.js'
 
 // ===================== ЧИТАЛКА =====================
@@ -208,6 +208,7 @@ async function openReaderImpl(work, opts = {}) {
       if (doc?.fonts?.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 2500))])
       // Keep the cache visible through the paginator's 80ms resize debounce.
       await new Promise(r => setTimeout(r, 120))
+      await layoutSettled(readerView)
       if (!current()) return
     } while (target !== cachedTarget.locator)
     await readerView.renderer.restoreSnapshot?.(cachedSnapshot)

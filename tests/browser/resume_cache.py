@@ -4,7 +4,6 @@ Run with Playwright installed: python tests/browser/resume_cache.py
 import asyncio
 import io
 import json
-import re
 import threading
 import os
 import zipfile
@@ -89,12 +88,6 @@ async def run(flow='paginated', font='system'):
                 content_type='text/css', headers={'Access-Control-Allow-Origin':'*'}))
             await context.route('https://fonts.gstatic.com/**', lambda r: r.fulfill(
                 body=FONT_DATA, content_type='font/ttf', headers={'Access-Control-Allow-Origin':'*'}))
-        else:
-            # Без подмены страница тянула настоящий PT Sans с Google Fonts, и от
-            # скорости сети зависело, каким шрифтом свёрстаны кеш и живая книга.
-            # Разные раскладки — штатный откат handoff на CFI вместо пикселей,
-            # а тест ждёт пиксельно точную страницу (serg/tasks#1836).
-            await context.route(re.compile(r'https://fonts\.(googleapis|gstatic)\.com/.*'), lambda r: r.abort())
         page = await context.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.on('console', lambda m: print('CONSOLE',m.text) if 'resume cache' in m.text else None)
@@ -117,6 +110,12 @@ async def run(flow='paginated', font='system'):
         assert center_start == initial, ('cache center drift',center_start,initial)
         assert window['center'] == 10
         assert len(window['documents']) >= 2, 'window should cross chapter boundary'
+        if flow == 'paginated':
+            # Раскладка, досчитанная paginator.expand(), — целое число страниц.
+            # Иначе снимок снят посреди раскладки и handoff съедет (serg/tasks#1836).
+            unsettled = [(i, p['frame']['width'], p['clip']['width']) for i, p in enumerate(window['pages'])
+                         if abs(p['frame']['width'] / p['clip']['width'] - round(p['frame']['width'] / p['clip']['width'])) > 0.01]
+            assert not unsettled, ('cached pages with unsettled layout', unsettled)
         assert all('blob:' not in d for d in window['documents'].values())
         if font == 'pt-sans': assert all('data:font/ttf' in d for d in window['documents'].values())
         assert await page.evaluate("async () => (await import('/vendor/foliate-js/epubcfi.js')).collapse((await import('/js/core/state.js')).view.lastLocation.cfi)") == initial, 'warmer moved live reader'

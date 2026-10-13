@@ -133,6 +133,23 @@ async function frozenDocument(doc, assets) {
   return '<!doctype html>' + html
 }
 
+// Paginator раскладывает новую главу в два шага: сначала колонки, потом
+// expand() подгоняет ширину iframe под целое число страниц (после шрифтов,
+// через ResizeObserver). Снимок между шагами хранит недосчитанную ширину, и при
+// передаче живому ридеру restoreSnapshot отвергает его (рамки не совпали) —
+// страница съезжает к началу по CFI (serg/tasks#1836). Ждём, пока рамка замрёт.
+export async function layoutSettled(view, limit = 1500) {
+  const width = () => view.renderer?.snapshot?.()?.frame?.width
+  const until = Date.now() + limit
+  let prev = width()
+  while (Date.now() < until) {
+    await new Promise(r => setTimeout(r, 60))
+    const next = width()
+    if (next === prev) return
+    prev = next
+  }
+}
+
 function position(location) {
   return { locator: location?.cfi || '', ratio: location?.fraction || 0,
     text_anchor: (location?.range?.toString() || '').replace(/\s+/g, ' ').trim().split(' ').slice(0, 12).join(' '),
@@ -283,6 +300,7 @@ export function scheduleResume(view, work, prefs, host, applyStyles, original = 
         // Paginator coalesces ResizeObserver renders for 80ms. A freshly
         // loaded section must finish that render before recording/turning it.
         await new Promise(r => setTimeout(r, 120))
+        await layoutSettled(worker)
       }
       await settle()
       if (!valid()) return

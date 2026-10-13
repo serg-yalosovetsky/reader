@@ -102,7 +102,11 @@ function renderPendingPill(monitored) {
   if (n) {
     const word = n % 10 === 1 && n % 100 !== 11 ? 'обновление'
       : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'обновления' : 'обновлений'
-    pill.textContent = `⬇ ${n} ${word}`
+    // слово — отдельным span: на узком планшете CSS его прячет, остаётся «⬇ N»
+    const w = document.createElement('span')
+    w.className = 'pill-word'
+    w.textContent = ` ${word}`
+    pill.replaceChildren(`⬇ ${n}`, w)
     pill.title = `Обновлений ждут скачивания: ${n} — открыть «Аккаунты»`
     pill.onclick = () => $('#accounts-btn')?.click()
   }

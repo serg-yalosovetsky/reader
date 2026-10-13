@@ -611,6 +611,10 @@ body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
   .lib-secondary:not(#lib-theme-btn) { display: none; order: 11; }
   .lib-actions.more-open .lib-secondary:not(#lib-theme-btn) { display: inline-flex; align-items: center; }
 }
+/* Узкий планшет: плашка «⬇ N обновлений» в заголовке выталкивала «Ещё» на третью строку */
+@media (min-width: 561px) and (max-width: 720px) {
+  .pending-pill .pill-word { display: none; }
+}
 
 /* ---- reader: кнопка ↻ обновления ---- */
 #update-btn[data-state="checking"] { opacity: .55; cursor: default; }

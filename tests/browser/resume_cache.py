@@ -4,6 +4,7 @@ Run with Playwright installed: python tests/browser/resume_cache.py
 import asyncio
 import io
 import json
+import re
 import threading
 import os
 import zipfile
@@ -88,6 +89,12 @@ async def run(flow='paginated', font='system'):
                 content_type='text/css', headers={'Access-Control-Allow-Origin':'*'}))
             await context.route('https://fonts.gstatic.com/**', lambda r: r.fulfill(
                 body=FONT_DATA, content_type='font/ttf', headers={'Access-Control-Allow-Origin':'*'}))
+        else:
+            # Без подмены страница тянула настоящий PT Sans с Google Fonts, и от
+            # скорости сети зависело, каким шрифтом свёрстаны кеш и живая книга.
+            # Разные раскладки — штатный откат handoff на CFI вместо пикселей,
+            # а тест ждёт пиксельно точную страницу (serg/tasks#1836).
+            await context.route(re.compile(r'https://fonts\.(googleapis|gstatic)\.com/.*'), lambda r: r.abort())
         page = await context.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.on('console', lambda m: print('CONSOLE',m.text) if 'resume cache' in m.text else None)

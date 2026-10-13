@@ -14,6 +14,9 @@ from playwright.async_api import async_playwright
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = Path(os.environ.get('READER_TEST_ARTIFACTS', '/tmp/reader-resume-1761'))
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
+# Шрифт для подмены Google Fonts — из репозитория (не зависит от системных шрифтов);
+# читается здесь, а не в async-коде теста (ASYNC240).
+FONT_DATA = (ROOT / 'backend/downloaders/fonts/DejaVuSans.ttf').read_bytes()
 WORK = dict(id=1, title='Кеш страниц', author='Тест', file_format='epub',
             chapters_count=3, content_updated_at='2026-10-10T00:00:00')
 
@@ -80,12 +83,11 @@ async def run(flow='paginated', font='system'):
         await context.route('**/api/**', api)
         if font == 'pt-sans':
             # Exercise CSS/WOFF lifetime without relying on Google's availability.
-            font_data = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf').read_bytes()
             await context.route('https://fonts.googleapis.com/**', lambda r: r.fulfill(
                 body="@font-face {font-family:'PT Sans';src:url('https://fonts.gstatic.com/test.ttf')}",
                 content_type='text/css', headers={'Access-Control-Allow-Origin':'*'}))
             await context.route('https://fonts.gstatic.com/**', lambda r: r.fulfill(
-                body=font_data, content_type='font/ttf', headers={'Access-Control-Allow-Origin':'*'}))
+                body=FONT_DATA, content_type='font/ttf', headers={'Access-Control-Allow-Origin':'*'}))
         page = await context.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.on('console', lambda m: print('CONSOLE',m.text) if 'resume cache' in m.text else None)

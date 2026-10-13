@@ -255,7 +255,7 @@ export class View extends HTMLElement {
             await import('./fixed-layout.js')
             this.renderer = document.createElement('foliate-fxl')
         } else {
-            await import('./paginator.js?v=20260709a')
+            await import('./paginator.js?v=20261013a')
             this.renderer = document.createElement('foliate-paginator')
         }
         this.renderer.setAttribute('exportparts', 'head,foot,filter')

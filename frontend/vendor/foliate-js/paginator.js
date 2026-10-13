@@ -1132,6 +1132,10 @@ export class Paginator extends HTMLElement {
             this.start - size, this.end - size, this.#getRectMapper())
     }
     #afterScroll(reason) {
+        // ПАТЧ: отложенный (debounce 80 мс) scroll-обработчик или await внутри
+        // #scrollToPage может доехать сюда уже после destroy(), когда #view = null —
+        // книгу закрыли сразу после прокрутки ленты. Было: TypeError на view.document.
+        if (!this.#view) return
         const range = this.#getVisibleRange()
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor

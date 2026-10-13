@@ -615,6 +615,11 @@ body.is-offline .book-card.no-offline-copy .book-read-btn { display: none; }
 @media (min-width: 561px) and (max-width: 720px) {
   .pending-pill .pill-word { display: none; }
 }
+@media (min-width: 561px) and (max-width: 640px) {
+  .lib-title { font-size: 18px; }
+  .lib-header { padding: 14px 16px; column-gap: 8px; }
+  .lib-actions .btn-ghost { padding: 8px 10px; }
+}
 
 /* ---- reader: кнопка ↻ обновления ---- */
 #update-btn[data-state="checking"] { opacity: .55; cursor: default; }

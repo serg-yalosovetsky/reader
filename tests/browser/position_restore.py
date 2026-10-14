@@ -89,7 +89,7 @@ async def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://127.0.0.1:{server.server_port}'
     data = epub()
-    rev = hashlib.sha1(data).hexdigest()
+    rev = hashlib.sha1(data, usedforsecurity=False).hexdigest()
     # freeze: на время переоткрытия PUT'ы (запись места закрываемой книги) не
     # меняют подготовленную тестом серверную позицию.
     state = {'progress': {'ratio': 0, 'locator': '', 'text_anchor': ''}, 'puts': [], 'fail_put': False, 'freeze': False}

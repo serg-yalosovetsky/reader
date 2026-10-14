@@ -286,12 +286,12 @@ function renderBookPage(w) {
       <div class="bp-actions">
         <button id="bp-read" type="button" class="bp-primary">${btnInner('book-2', readLabel)}</button>
         <div class="bp-sec">
-          <button id="bp-finished" type="button" class="bp-sec-btn${finished ? ' is-on' : ''}" aria-pressed="${finished}" title="${finished ? 'Снять «прочитано»' : 'Отметить прочитанной'}. Отметка ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${btnInner('circle-check', 'Прочитана')}</button>
+          <button id="bp-finished" type="button" class="bp-sec-btn${finished ? ' is-on' : ''}" aria-pressed="${finished}" title="${finished ? 'Снять «прочитано»' : 'Отметить прочитанной'}. Отметка ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${btnInner(finished ? 'circle-check' : 'circle', 'Прочитана')}</button>
           ${w.monitored ? `<button id="bp-check" type="button" class="bp-sec-btn" aria-label="Проверить обновления" title="Спросить сайт, не появились ли новые главы">${btnInner('refresh', 'Проверить')}</button>` : ''}
           ${!w.monitored && canWatch(w) ? `<button id="bp-watch" type="button" class="bp-sec-btn" aria-label="Следить за обновлениями" title="Поставить книгу на автообновление и сразу проверить новые главы">${btnInner('bell', 'Следить')}</button>` : ''}
           <a class="bp-sec-btn" href="/api/reader/${w.id}/file?original=1" download aria-label="Скачать файл книги">${btnInner('download', 'Скачать')}</a>
           <div class="bp-more">
-            <button id="bp-more" type="button" class="bp-sec-btn bp-more-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="bp-menu" aria-label="Другие действия">${btnInner('dots', '<span class="bp-lbl-m">Ещё</span>')}</button>
+            <button id="bp-more" type="button" class="bp-sec-btn bp-more-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="bp-menu" aria-label="Ещё: другие действия">${btnInner('dots', '<span class="bp-lbl-m">Ещё</span>')}</button>
             <div class="bp-scrim"></div>
             <div id="bp-menu" class="bp-menu" role="menu" aria-label="Другие действия с книгой" hidden>
               ${offlineSupported ? `<button id="bp-offline" type="button" class="bp-mi" role="menuitem" data-keep>${btnInner(hasOff ? 'refresh' : 'cloud-download', hasOff ? 'Обновить офлайн-копию' : 'Сохранить офлайн')}</button>` : ''}

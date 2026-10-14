@@ -158,19 +158,17 @@ def _richness(path, fmt: str) -> int:
 
 
 def _unfinish_progress(session: Session, work_id: int, old_len: int, new_len: int) -> None:
-    """Дозагрузились новые главы (текст книги вырос old_len→new_len) — прочитанная
-    книга больше не «дочитана». Масштабируем ratio по длине; если он всё равно
-    остаётся выше порога «прочитано» (0.98) из-за малого прироста — опускаем чуть
-    ниже, чтобы фронт показал плашку «обновление» и не помечал книгу прочитанной.
-    Реальная позиция чтения хранится в locator/text_anchor и не теряется."""
+    """Дозагрузились новые главы (текст книги вырос old_len→new_len): доля
+    прочитанного масштабируется по длине. Кламп «не выше 0.97» убран
+    (serg/tasks#1853): он существовал ради порога «прочитано» по доле, а
+    дочитанность теперь — Progress.finished_at + finished_chapters, и новые главы
+    снимают её сами. Кламп же портил ratio — подсказку секции при восстановлении."""
     if not new_len or new_len <= old_len:
         return
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
     if not prog or prog.ratio <= 0:
         return
     scaled = prog.ratio * (old_len / new_len)
-    if scaled >= 0.98:
-        scaled = 0.97
     if scaled < prog.ratio:
         prog.ratio = scaled
         session.add(prog)

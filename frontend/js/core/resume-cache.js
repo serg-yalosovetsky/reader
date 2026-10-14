@@ -1,4 +1,5 @@
 import { inlineImagesOnLoad } from './inline-images.js'
+import { captureAnchor } from './position.js'
 // Persistent, already laid-out resume pages. The live reader warms a separate
 // view; it never moves the visible reader to produce the ±10 page window.
 const DB = 'reader-resume-v1'
@@ -152,7 +153,9 @@ export async function layoutSettled(view, limit = 1500) {
 
 function position(location) {
   return { locator: location?.cfi || '', ratio: location?.fraction || 0,
-    text_anchor: (location?.range?.toString() || '').replace(/\s+/g, ' ').trim().split(' ').slice(0, 12).join(' '),
+    // Тот же якорь, что пишет живая читалка: иначе кеш и сервер «расходились»
+    // в одной и той же позиции, и кеш проигрывал своей же записи.
+    text_anchor: captureAnchor(location?.range),
     chapter: location?.tocItem?.label || '' }
 }
 
@@ -213,13 +216,17 @@ export async function showResume(work, prefs, host, opts = {}, onPosition) {
     const record = await read(work.id)
     if (token !== generation) return false
     if (!record || record.key !== resumeKey(work, prefs, host) || !record.pages[record.center]) return false
-    active = { record, work, prefs, index: record.center, host, onPosition, base: record.pages[record.center].position }
+    active = { record, work, prefs, index: record.center, host, onPosition, base: record.pages[record.center].position,
+      baseSavedAt: record.savedAt || 0 }
     showPage()
     return true
   } catch { return false }
 }
 export function resumePosition() { return active?.record.pages[active.index]?.position || null }
 export function resumeBasePosition() { return active?.base || null }
+// Когда кешированная позиция была записана (мс): сравнивается с серверной —
+// более новая с другого устройства побеждает кеш (serg/tasks#1853).
+export function resumeBaseSavedAt() { return active?.baseSavedAt || 0 }
 export function turnResume(dir) {
   if (!active) return false
   if (active.record.key !== resumeKey(active.work, active.prefs, active.host)) {

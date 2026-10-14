@@ -11,7 +11,7 @@ from typing import Optional
 
 import uuid
 
-from sqlalchemy import Index, text
+from sqlalchemy import BigInteger, Column, Index, text
 from sqlmodel import Field, SQLModel
 
 
@@ -90,10 +90,23 @@ class Progress(SQLModel, table=True):
     ratio: float = 0.0
     # Точный локатор для foliate-js (CFI/href#frag) для возврата на место в вебе.
     locator: str = ""
-    # Текстовый якорь — первые слова текста вверху экрана. Устойчив к пересборке
-    # книги (FanFicFare добавил главы → CFI съезжает на другую секцию), поэтому
-    # это основной способ восстановления позиции; locator/ratio — фолбэки.
+    # Текстовый якорь — первые слова текста вверху экрана. Нужен, когда книгу
+    # пересобрали (FanFicFare добавил главы → CFI съезжает на другую секцию).
+    # Пока файл тот же (book_rev совпал), позиция восстанавливается по CFI:
+    # якорь бывает неуникален — авторская плашка в конце каждой главы уводила
+    # книгу на главы назад (serg/tasks#1853).
     text_anchor: str = ""
+    # SHA-1 файла, в котором посчитан locator. Совпал с открытым файлом — CFI
+    # точен; нет — книга пересобрана, ищем по якорю. Пусто — старая запись.
+    book_rev: str = ""
+    # Момент сохранения на клиенте, мс от эпохи. Упорядочивает досылку позиций,
+    # сохранённых офлайн: устаревшая не затирает более новую.
+    saved_at: int = Field(default=0, sa_column=Column(BigInteger, default=0, nullable=False, server_default="0"))
+    # Книгу дочитали: читалка показала ПОСЛЕДНЮЮ страницу (renderer.atEnd), а не
+    # «доля больше порога». finished_chapters — сколько глав было в тот момент:
+    # докачались новые главы — книга снова не дочитана, без порчи ratio.
+    finished_at: Optional[datetime] = None
+    finished_chapters: int = 0
     # Время последнего чтения (для last-write-wins при sync с ReadEra).
     last_read_time: datetime = Field(default_factory=utcnow)
     # Сколько глав было в книге, когда эту позицию сохранили. Нужен, чтобы

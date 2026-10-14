@@ -146,10 +146,16 @@ export async function loadLibrary() {
   document.body.classList.toggle('is-offline', offlineMode)
   detectAutoUpdates()
   // Один батч-запрос вместо N последовательных (раньше книги появлялись через 3-5с).
-  const [monitored, progAll] = await Promise.all([
+  const [monitored, progAll, finishedIds] = await Promise.all([
     api.get('/api/monitored').catch(() => []),
     api.get('/api/progress').catch(() => ({})),
+    api.get('/api/progress/finished').catch(() => null),
   ])
+  // Сеть упала — оставляем прошлый набор, а не «ничего не прочитано».
+  if (Array.isArray(finishedIds)) {
+    libFinished = new Set(finishedIds)
+    try { localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds)) } catch { /* квота */ }
+  }
   setLibUpdated(new Set(monitored.filter((m) => m.has_update && m.work_id).map((m) => m.work_id)))
   setLibMonitored(new Set(monitored.filter((m) => m.work_id).map((m) => m.work_id)))
   renderPendingPill(monitored)
@@ -390,29 +396,31 @@ function showHover(card, base) {
 }
 
 
-// Дочитана ли книга. Плоский порог 0.98 годился для коротких книг и врал на
-// длинных: у фанфика в 197 глав это ещё две непрочитанные главы, а карточка уже
-// рисовала 100% и зелёную галочку. Поэтому меряем не долей, а тем, сколько
-// осталось: меньше одной главы — дочитано. Для книг без счётчика глав остаётся
-// прежний порог.
-function isFinished(ratio, chaptersCount) {
-  const chapters = Number(chaptersCount) || 0
-  if (chapters >= 1) return (1 - (ratio || 0)) * chapters < 1
-  return (ratio || 0) >= 0.98
+// Дочитанные книги: читалка показала последнюю страницу, и новых глав с тех пор
+// не прибавилось (сервер: Progress.finished_at, serg/tasks#1853). Раньше это
+// выводилось из доли — «осталось меньше главы» — и книга с непрочитанной
+// половиной последней главы уже стояла прочитанной.
+const FINISHED_KEY = 'reader.finished.v1'
+let libFinished = (() => {
+  // Офлайн-старт: последний известный набор, иначе вся библиотека «не прочитана».
+  try { return new Set(JSON.parse(localStorage.getItem(FINISHED_KEY) || '[]')) } catch { return new Set() }
+})()
+function isFinished(w) {
+  return libFinished.has(w.id)
 }
 
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')
-  const readState = isFinished(ratio, w.chapters_count) ? 'read' : ratio > 0 ? 'partial' : 'unread'
+  const readState = isFinished(w) ? 'read' : ratio > 0 ? 'partial' : 'unread'
   // Дочитано (read) — полоса всегда 100%. foliate почти никогда не даёт ровно
   // 1.0 на последней странице (типично 0.9999…), поэтому «дочитано» — это не
   // строгое ratio>=1, иначе дочитанная книга застревала на визуальном максимуме
-  // недочитанной. Насколько «почти» — считает isFinished по объёму книги.
+  // недочитанной. Дочитанность — факт последней страницы (isFinished).
   const done = readState === 'read'
   // Плашку «обновление» не показываем на дочитанной книге: ficbook-лента метит
   // has_update при любой активности автора (не только новые главы), и дочитанная
   // книга висела с ложной плашкой. Когда реально докачается новая глава,
-  // непрочитанный контент уронит ratio ниже порога — плашка вернётся сама.
+  // сервер снимет дочитанность (глав стало больше) — плашка вернётся сама.
   const showUpdate = hasUpdate && !done
   // Без сети книга без офлайн-копии открыться не сможет — помечаем, чтобы тап
   // по ней не был тупиком (CSS гасит такие карточки только в режиме офлайна).

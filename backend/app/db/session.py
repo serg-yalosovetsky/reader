@@ -52,15 +52,19 @@ def init_db() -> None:
     from . import models  # noqa: F401  (регистрирует таблицы в метаданных)
 
     SQLModel.metadata.create_all(engine)
-    _migrate_add_columns()
+    added = _migrate_add_columns()
     _backfill_content_updated_at()
+    if ("progress", "finished_at") in added:
+        _backfill_finished()
 
 
-def _migrate_add_columns() -> None:
+def _migrate_add_columns() -> set[tuple[str, str]]:
     """Лёгкая авто-миграция: create_all не добавляет колонки в уже существующие
-    таблицы, поэтому для новых полей моделей досоздаём их через ALTER TABLE."""
+    таблицы, поэтому для новых полей моделей досоздаём их через ALTER TABLE.
+    Возвращает добавленные (таблица, колонка) — по ним запускаются разовые бэкфиллы."""
     from sqlalchemy import inspect, text
 
+    added: set[tuple[str, str]] = set()
     insp = inspect(engine)
     existing_tables = set(insp.get_table_names())
     with engine.begin() as conn:
@@ -89,6 +93,27 @@ def _migrate_add_columns() -> None:
                         f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}{default}'
                     )
                 )
+                added.add((table.name, col.name))
+    return added
+
+
+def _backfill_finished() -> None:
+    """Разово, в момент появления Progress.finished_at: перенести «дочитано» со
+    старого признака. Раньше дочитанность выводилась из доли (порог по главам),
+    и он врал на середине последней главы. Переносим только честный финал —
+    ratio ≥ 0.999 (foliate на последней странице даёт 0.9999…), остальное
+    станет «прочитано», когда человек реально дойдёт до последней страницы."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE progress SET finished_at = last_read_time, "
+                "finished_chapters = CASE WHEN chapters_at_read > 0 THEN chapters_at_read "
+                "ELSE COALESCE((SELECT chapters_count FROM work WHERE work.id = progress.work_id), 0) END "
+                "WHERE finished_at IS NULL AND ratio >= 0.999"
+            )
+        )
 
 
 def _backfill_content_updated_at() -> None:

@@ -7,7 +7,8 @@ import { prefs, MARGIN_INLINE, MARGIN_SIDE_PCT, MARGIN_GAP, FONT_STACKS,
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx,
          setLastFraction } from './core/state.js'
-import { restorePosition, captureAnchor, gotoPosition } from './core/position.js'
+import { restorePosition, captureAnchor, gotoPosition, bookRev } from './core/position.js'
+import { commitPosition, pendingFor, serverSavedAt, replayPending } from './core/progress-sync.js'
 import { inlineImagesOnLoad } from './core/inline-images.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
@@ -21,7 +22,7 @@ import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jum
 import { collapse } from '../vendor/foliate-js/epubcfi.js'
 import { chapterDate } from './core/chapterdate.js'
 import { showResume, hideResume, stopResume, resumePosition, resumeBasePosition, layoutSettled,
-         scheduleResume, resumeKey } from './core/resume-cache.js'
+         scheduleResume, resumeKey, resumeBaseSavedAt } from './core/resume-cache.js'
 
 // ===================== ЧИТАЛКА =====================
 let saveTimer = null
@@ -30,24 +31,62 @@ let opening = false
 let openedFile = null
 let originalFile = false
 
+// Якоря одной позиции: старые записи (кеш, сервер) хранят 12 слов, новые — 24.
+function sameAnchor(a, b) {
+  return !a || !b || a.startsWith(b) || b.startsWith(a)
+}
+// SHA-1 открытого файла: к нему привязан сохраняемый CFI (core/position.js).
+let currentRev = ''
+// Листали страницы из кеша, пока живая книга грузилась.
+let cachedTurned = false
+
 const progressWrites = new Map()
-function savePosition(pos) {
+// Позиция уходит через очередь (core/progress-sync.js): сперва localStorage,
+// потом PUT. Записи одной книги идут строго по очереди.
+function savePosition(pos, opts = {}) {
   if (!currentWork || !pos) return
   const id = currentWork.id
-  const write = (progressWrites.get(id) || Promise.resolve()).then(() =>
-    api.put(`/api/progress/${id}`, pos)).catch(e => logErr('save progress', e))
+  const body = { book_rev: currentRev, ...pos }
+  const savedAt = Date.now()
+  if (opts.keepalive) { commitPosition(id, body, { ...opts, savedAt }); return }
+  const write = (progressWrites.get(id) || Promise.resolve())
+    .then(() => commitPosition(id, body, { ...opts, savedAt }))
   progressWrites.set(id, write)
   write.finally(() => { if (progressWrites.get(id) === write) progressWrites.delete(id) })
 }
-export function disposeReader() {
+// Показана ли последняя страница книги. Пагинатор (EPUB/FB2) знает это сам —
+// renderer.atEnd: нет следующей линейной секции и страница последняя. У PDF
+// (fixed-layout) атрибута нет, но там страница = секция.
+function isAtEnd(detail) {
+  const r = view?.renderer
+  if (r && 'atEnd' in r) return !!r.atEnd
+  const sec = detail?.section
+  return !!sec && typeof sec.current === 'number' && sec.total > 0 && sec.current >= sec.total - 1
+}
+// Текущая позиция живой читалки — единственный источник, из которого пишем.
+function livePosition() {
+  const loc = view?.lastLocation
+  if (!loc) return null
+  return { ratio: loc.fraction || 0, locator: loc.cfi || '',
+    text_anchor: captureAnchor(loc.range), chapter: loc.tocItem?.label || '',
+    at_end: isAtEnd(loc) }
+}
+// Немедленно записать место (закрытие книги, уход вкладки в фон).
+function flushPosition(opts = {}) {
   clearTimeout(saveTimer)
-  const cached = resumePosition()
-  if (cached) savePosition(cached)
-  else if (!opening && view?.lastLocation) {
-    const loc = view.lastLocation
-    savePosition({ ratio: loc.fraction || 0, locator: loc.cfi || '',
-      text_anchor: captureAnchor(loc.range), chapter: loc.tocItem?.label || '' })
+  if (opening) {
+    // Живая книга ещё не встала: писать есть что, только если листали кеш.
+    // replay — сервер примет, лишь если на нём позиция не новее.
+    const cached = resumePosition()
+    if (cached && cachedTurned) savePosition({ ...cached, book_rev: '' }, { ...opts, replay: true })
+    return
   }
+  const pos = livePosition()
+  if (pos) savePosition(pos, opts)
+}
+export function disposeReader() {
+  if (currentWork) flushPosition()
+  cachedTurned = false
   openGeneration++
   stopResume()
   try { view?.close() } catch {}
@@ -73,6 +112,7 @@ async function openReaderImpl(work, opts = {}) {
   originalFile = !!opts.original
   const current = () => generation === openGeneration
   setCurrentWork(work)
+  currentRev = ''
   setLastIdx(null); setLastCfi(''); setLastAnchor('')
   document.body.classList.add('reader-open')
   $('#library').hidden = true
@@ -122,14 +162,16 @@ async function openReaderImpl(work, opts = {}) {
   // сразу, ждём ниже, там где он реально нужен.
   const progP = (progressWrites.get(work.id) || Promise.resolve())
     .then(() => api.get(`/api/progress/${work.id}`)).catch(() => null)
-  let cachedTarget = null, cachedSnapshot = null, cachedMoved = false
+  let cachedTarget = null, cachedSnapshot = null, cachedMoved = false, cachedSave = null
   const cachedKey = resumeKey(work, prefs, $('#view-host'))
   await showResume(work, prefs, $('#view-host'), opts, (pos, moved, snapshot) => {
     cachedTarget = pos; cachedSnapshot = snapshot; cachedMoved ||= moved
     setLastCfi(pos.locator); setLastAnchor(pos.text_anchor); setLastFraction(pos.ratio)
     setChapterTitle(pos.chapter)
     updateProgress({ fraction: pos.ratio })
-    if (moved) savePosition(pos)
+    // Перелистывание кеша НЕ пишем сразу: живой ответ сервера может оказаться
+    // новее (дочитали на другом устройстве) — решаем, когда он придёт.
+    if (moved) { cachedTurned = true; cachedSave = pos }
   })
   if (!current()) return
   const cachedBase = resumeBasePosition()
@@ -149,6 +191,7 @@ async function openReaderImpl(work, opts = {}) {
   if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
   const blob = await resp.blob()
   if (!current()) return
+  const revP = bookRev(blob)
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
   // каким движком foliate будет рендерить).
   const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
@@ -171,13 +214,25 @@ async function openReaderImpl(work, opts = {}) {
 
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
-  const prog = await progP
+  let prog = await progP
+  currentRev = await revP
   if (!current()) return
+  // Неотправленная позиция (закрыли без сети, PWA убили до PUT) новее
+  // серверной — она и есть место, где остановились. Досылаем её же.
+  const pend = pendingFor(work.id)
+  if (pend?.body && pend.saved_at > serverSavedAt(prog)) {
+    prog = { ...(prog || {}), ...pend.body }
+    commitPosition(work.id, pend.body, { replay: true, savedAt: pend.saved_at })
+  }
   const base = cachedBase
-  // A newer position on another device takes precedence over the local window.
-  const samePosition = base && (cachedMoved || !prog || ((prog.locator && collapse(prog.locator) === collapse(base.locator))
-    && (!prog.text_anchor || prog.text_anchor === base.text_anchor)))
-  if (base && !samePosition) hideResume()
+  // Более новая позиция с сервера (другое устройство) побеждает кеш страниц,
+  // даже если его успели полистать: кеш старше — его листание тоже.
+  const sameAsServer = prog && prog.locator && base && collapse(prog.locator) === collapse(base.locator)
+    && sameAnchor(prog.text_anchor, base.text_anchor)
+  const serverNewer = prog && serverSavedAt(prog) > resumeBaseSavedAt()
+  const samePosition = base && (!prog || sameAsServer || (cachedMoved && !serverNewer))
+  if (base && !samePosition) { hideResume(); cachedSave = null; cachedTurned = false }
+  if (cachedSave) { savePosition({ ...cachedSave, book_rev: '' }); cachedSave = null }
   // Позиция, с которой книга открывается, — точка отсчёта для признака прыжка:
   // иначе первый же релокейт после восстановления выглядел бы скачком с нуля.
   setLastFraction(prog?.ratio || 0)
@@ -192,7 +247,7 @@ async function openReaderImpl(work, opts = {}) {
   } else if (samePosition && cachedTarget) {
     await readerView.init({ lastLocation: cachedTarget.locator })
   } else {
-    await restorePosition(readerView, prog)
+    await restorePosition(readerView, prog, currentRev)
   }
   if (!current()) return
   // The reader may have turned cached pages while the live view was loading.
@@ -219,6 +274,7 @@ async function openReaderImpl(work, opts = {}) {
   }
   hideResume()
   opening = false
+  cachedTurned = false
   if (readerView.lastLocation) onRelocate({ detail: readerView.lastLocation })
 
   // Подтянуть и нарисовать сохранённые подсветки (синк с сервером/Android).
@@ -249,7 +305,11 @@ function onRelocate(e) {
   markCurrentToc(tocItem)
   // Долистали до непереведённых абзацев — подтянуть их (дебаунс внутри).
   onTranslateRelocate()
+  // Последняя страница книги — факт, а не порог доли: так и только так книга
+  // становится «прочитанной» (serg/tasks#1853).
+  const atEnd = isAtEnd(e.detail)
   // Дебаунс-сохранение прогресса на сервер (доля + CFI + текстовый якорь).
+  // Потерь от дебаунса нет: уход вкладки/закрытие пишут место немедленно.
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     if (!currentWork) return
@@ -258,11 +318,11 @@ function onRelocate(e) {
     noteProgressSaved(fraction || 0)
     savePosition(
       { ratio: fraction || 0, locator: cfi || '', text_anchor: anchor || '',
-        chapter: tocItem?.label || '' })
-  }, 900)
+        chapter: tocItem?.label || '', at_end: atEnd })
+  }, atEnd ? 0 : 900)
   if (ttsSt.advance) { ttsSt.advance = false; setTimeout(() => { if (ttsSt.active) ttsReadPage() }, 350) }
-  // Дочитан до конца — сбросить флаг обновления
-  if (fraction >= 0.98 && currentWork && libUpdated.has(currentWork.id)) {
+  // Дочитан до последней страницы — сбросить флаг обновления.
+  if (atEnd && currentWork && libUpdated.has(currentWork.id)) {
     libUpdated.delete(currentWork.id)
     fetch(`/api/library/${currentWork.id}/update-flag`, { method: 'DELETE' })
       .catch((e) => logErr('clear update-flag', e))
@@ -468,3 +528,17 @@ function buildTOC() {
   }
   add(toc, false)
 }
+
+// Вкладку свернули/закрыли, PWA ушло в фон: записываем место СЕЙЧАС, keepalive —
+// запрос дойдёт и после выгрузки страницы. Без этого последние секунды чтения
+// (окно дебаунса) терялись, а убитое в фоне приложение открывалось не там.
+function onLeave() {
+  if (!currentWork || $('#reader')?.hidden) return
+  flushPosition({ keepalive: true })
+}
+window.addEventListener('pagehide', onLeave)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') onLeave()
+})
+// Досылка позиций, не ушедших в прошлый раз (сеть, убитая вкладка).
+replayPending()

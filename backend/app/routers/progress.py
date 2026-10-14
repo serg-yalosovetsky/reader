@@ -76,6 +76,16 @@ class ProgressIn(BaseModel):
     # Название главы на момент сохранения: в Progress не хранится (там только
     # координаты), но нужно истории позиций — подписью к записи.
     chapter: str = ""
+    # SHA-1 открытого файла: CFI точен только для него (см. Progress.book_rev).
+    book_rev: str = ""
+    # Момент сохранения на клиенте, мс от эпохи.
+    saved_at: int = 0
+    # Читалка показала последнюю страницу книги.
+    at_end: bool = False
+    # Досылка позиции, сохранённой без сети: принимается, только если она новее
+    # сохранённой на сервере — иначе старый офлайн-хвост затёр бы место,
+    # дочитанное с другого устройства.
+    replay: bool = False
 
 
 class HistoryIn(BaseModel):
@@ -124,6 +134,29 @@ def all_progress(session: Session = Depends(get_session)) -> dict[int, float]:
     }
 
 
+def is_finished(prog: Progress, chapters_now: int) -> bool:
+    """Дочитана ли книга: показана последняя страница, и глав с тех пор не прибавилось."""
+    if not prog.finished_at:
+        return False
+    return int(chapters_now or 0) <= int(prog.finished_chapters or 0) or not chapters_now
+
+
+@router.get("/finished")
+def finished(session: Session = Depends(get_session)) -> list[int]:
+    """id дочитанных книг — для карточек библиотеки (serg/tasks#1853).
+
+    Раньше карточка выводила «прочитано» из доли: «осталось меньше главы» — и
+    книга с половиной непрочитанной последней главы уже стояла прочитанной."""
+    rows = session.exec(select(Progress).where(Progress.finished_at.is_not(None))).all()
+    chapters = {
+        int(w_id): int(cnt or 0)
+        for w_id, cnt in session.exec(select(Work.id, Work.chapters_count)).all()
+    }
+    return [
+        int(p.work_id) for p in rows if is_finished(p, chapters.get(int(p.work_id), 0))
+    ]
+
+
 @router.get("/{work_id}")
 def get_progress(work_id: int, session: Session = Depends(get_session)) -> Progress:
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
@@ -147,7 +180,12 @@ def set_progress(
     if not work:
         raise HTTPException(404, "work not found")
 
+    import time as _time
+
+    saved_at = int(body.saved_at or 0) or int(_time.time() * 1000)
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
+    if prog and body.replay and saved_at <= int(prog.saved_at or 0):
+        return prog  # устаревшая досылка: на сервере уже позиция новее
     if prog:
         # Позицию вот-вот перезапишут. Если новая далеко от старой — это не
         # чтение, а прыжок (или затирание чужой вкладкой, открытой в начале
@@ -157,11 +195,13 @@ def set_progress(
         if jumped:
             _push_history(session, prog, chapter=prog.chapter, reason="overwrite")
         prog.ratio = body.ratio
+        # Координаты пишутся ОДНОЙ тройкой. Раньше пустой якорь оставлял
+        # прежний — и строка склеивалась из двух страниц: CFI новой, якорь
+        # старой; восстановление по якорю возвращало на старое место. Пустой
+        # якорь (картинка, пустая страница) теперь значит «восстанавливай по CFI».
         prog.locator = body.locator
-        # Пустой якорь не затираем сохранённым: релокейт без видимого текста
-        # (пустая/картиночная страница) не должен стирать рабочий якорь.
-        if body.text_anchor:
-            prog.text_anchor = body.text_anchor
+        prog.text_anchor = body.text_anchor
+        prog.book_rev = body.book_rev
         # Глава пришла — пишем. Пришла пустая (обложка, титул или
         # релокейт без tocItem) — сохраняем прежнюю подпись ТОЛЬКО пока читают
         # то же место. При прыжке прежняя глава уже не про эту позицию —
@@ -170,6 +210,7 @@ def set_progress(
             prog.chapter = body.chapter
         prog.last_read_time = utcnow()
         prog.chapters_at_read = int(work.chapters_count or 0)
+        prog.saved_at = saved_at
         prog.source = "web"
     else:
         prog = Progress(
@@ -177,11 +218,19 @@ def set_progress(
             ratio=body.ratio,
             locator=body.locator,
             text_anchor=body.text_anchor,
+            book_rev=body.book_rev,
             chapter=body.chapter,
             chapters_at_read=int(work.chapters_count or 0),
+            saved_at=saved_at,
             source="web",
         )
         session.add(prog)
+    # «Дочитано» ставится только фактом последней страницы и не снимается
+    # перелистыванием назад (перечитать любимую главу — не «не дочитал»).
+    # Снимают его новые главы: finished_chapters < chapters_count.
+    if body.at_end:
+        prog.finished_at = utcnow()
+        prog.finished_chapters = int(work.chapters_count or 0)
 
     # Отметим время последней активности на самой работе (для сортировки/sync).
     # Это НЕ «дата выхода новых глав» — для неё есть content_updated_at.

@@ -85,7 +85,10 @@ async function openReaderImpl(work, opts = {}) {
   setBookMeta(work)
   resetTranslate()
   const updBtn = $('#update-btn')
-  updBtn.hidden = !libMonitored.has(work.id)
+  // Кнопка нужна и книге без подписки, если у неё есть адрес на сайте: нажатие
+  // поставит её на отслеживание (navigation.js). Иначе такую книгу обновить
+  // из читалки было нечем (serg/tasks#1853).
+  updBtn.hidden = !libMonitored.has(work.id) && !/^https?:\/\//.test(work.source_url || '')
   updBtn.dataset.state = ''
   updBtn.disabled = false
   updBtn.title = 'Проверить новые главы'

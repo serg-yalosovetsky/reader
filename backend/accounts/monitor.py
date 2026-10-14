@@ -990,11 +990,18 @@ def check_one(
     «актуально»). Копия беднее нашего файла его не заменяет."""
     from ..app import blacklist as _bl
 
-    mon = session.exec(select(Monitored).where(Monitored.work_id == work_id)).first()
-    if not mon:
-        return {"error": "not_monitored"}
-
     _w = session.get(Work, work_id)
+    mons = session.exec(
+        select(Monitored).where(Monitored.work_id == work_id).order_by(Monitored.id)
+    ).all()
+    if not mons:
+        return {"error": "not_monitored"}
+    # У книги может быть несколько подписок (добавленное вручную зеркало,
+    # serg/tasks#1853). Проверяем ту, что смотрит на ОСНОВНОЙ источник книги:
+    # раньше бралась произвольная первая — и после переезда фика на новый адрес
+    # кнопка продолжала спрашивать мёртвый.
+    primary = (_w.source_url or "") if _w else ""
+    mon = next((m for m in mons if m.source_url == primary), mons[0])
     host = _host(mon.source_url).lower()
 
     if _bl.is_blacklisted(

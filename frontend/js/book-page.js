@@ -219,6 +219,7 @@ function renderBookPage(w) {
           : ''}
           ${w.monitored ? `<button id="bp-check" class="btn-ghost bp-btn" title="Спросить сайт, не появились ли новые главы">↻ Проверить обновления</button>` : ''}
           ${!w.monitored && canWatch(w) ? `<button id="bp-watch" class="btn-ghost bp-btn" title="Поставить книгу на автообновление и сразу проверить новые главы">🔔 Следить за обновлениями</button>` : ''}
+          <button id="bp-mirror" class="btn-ghost bp-btn" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">🔗 Добавить зеркало</button>
           ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '🔄 Обновить офлайн' : '📥 Сохранить офлайн'}</button>` : ''}
           ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
           ${origBtn}
@@ -351,6 +352,36 @@ function renderBookPage(w) {
       btn.textContent = '🔔 Следить за обновлениями'
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
       else toast('Не удалось подписаться: ' + e.message, 'err')
+    }
+  })
+  // Ручное зеркало: фик переехал (ficbook выдал новый id, старая страница —
+  // 404) или выложен ещё на одном сайте. Монитор будет проверять и этот адрес;
+  // «основной» — ещё и для «Оригинала» и кнопки проверки (serg/tasks#1853).
+  $('#bp-mirror')?.addEventListener('click', async () => {
+    const url = (prompt('Ссылка на эту книгу на другом сайте или по новому адресу:') || '').trim()
+    if (!url) return
+    const primary = !canWatch(w) || confirm(
+      'Сделать этот адрес основным источником книги?\n\n'
+      + 'OK — «Оригинал» и проверка обновлений пойдут сюда (старый адрес умер).\n'
+      + 'Отмена — оставить как дополнительное зеркало.')
+    const btn = $('#bp-mirror')
+    btn.disabled = true
+    btn.textContent = '🔗 Добавляю…'
+    try {
+      await api.post(`/api/library/${w.id}/mirror`, { url, primary })
+      libMonitored.add(w.id)
+      btn.textContent = '🔗 Проверяю…'
+      const res = await api.post(`/api/monitored/check/${w.id}`).catch((e) => ({ error: e.message }))
+      const full = await api.get(`/api/library/${w.id}`).catch(() => null)
+      if (full) { curWork = { ...w, ...full }; w = curWork }
+      if (res.error) toast(`Зеркало добавлено, но проверка не удалась: ${res.error}`, 'err')
+      else toast(`Зеркало добавлено — в книге ${res.chapters || w.chapters_have} гл.`, 'ok')
+      renderBookPage(w)
+    } catch (e) {
+      btn.disabled = false
+      btn.textContent = '🔗 Добавить зеркало'
+      if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
+      else toast('Не удалось добавить зеркало: ' + e.message, 'err')
     }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {

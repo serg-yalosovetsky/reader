@@ -3,7 +3,7 @@ import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { prefs } from './core/prefs.js'
 import { view, currentWork, bookDoc, lastIdx, libWorks, navStack,
-         setView, setCurrentWork, setBookDoc, setSelIndex } from './core/state.js'
+         setView, setCurrentWork, setBookDoc, setSelIndex, libMonitored } from './core/state.js'
 import { ttsStop } from './tts.js'
 import { loadLibrary } from './library.js'
 import { openReader, applyViewStyles, disposeReader } from './reader-core.js'
@@ -324,6 +324,10 @@ $('#update-btn').addEventListener('click', async () => {
   updState('checking', 'Проверяем…', 'Проверяем…')
   const workId = currentWork?.id
   try {
+    if (!libMonitored.has(workId) && currentWork.source_url) {
+      await api.post('/api/monitored', { url: currentWork.source_url })
+      libMonitored.add(workId)
+    }
     const res = await api.post(`/api/monitored/check/${workId}`)
     if (res.error) {
       const emsg = res.error === 'not_monitored' ? 'Книга не отслеживается' : `Ошибка: ${res.error}`

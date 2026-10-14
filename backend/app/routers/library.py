@@ -542,6 +542,52 @@ def set_hidden(
     return {"ok": True, "id": work_id, "hidden": work.hidden}
 
 
+class MirrorIn(BaseModel):
+    url: str
+    # Сделать адрес основным источником книги: на него поведёт «Оригинал», и
+    # его же спросит кнопка проверки. Нужно, когда фик переехал (ficbook выдал
+    # новый id, старая страница — 404).
+    primary: bool = False
+
+
+@router.post("/{work_id}/mirror")
+def add_mirror(
+    work_id: int, payload: MirrorIn, session: Session = Depends(get_session)
+) -> dict:
+    """Добавить книге ещё один адрес на сайте (serg/tasks#1853).
+
+    Заводит подписку на этот адрес, привязанную к книге: дальше монитор
+    проверяет его наравне с остальными и докачивает с того, где глав больше.
+    Счётчик «видели» стартует с числа глав книги, чтобы новая подписка не
+    вызвала полную перекачку на первом же тике.
+    """
+    from urllib.parse import urlparse
+
+    from ...accounts import monitor
+    from ..blacklist import unblock
+
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "work not found")
+    url = payload.url.strip()
+    if urlparse(url).scheme not in ("http", "https") or not urlparse(url).hostname:
+        raise HTTPException(400, "нужна ссылка на книгу (http/https)")
+    other = session.exec(
+        select(Monitored).where(Monitored.source_url == url, Monitored.work_id != work_id)
+    ).first()
+    if other and other.work_id:
+        raise HTTPException(409, f"этот адрес уже привязан к другой книге (id {other.work_id})")
+    unblock(session, source_url=url)  # явное ручное действие снимает чёрный список
+    mon = monitor.add_monitor(session, url, work.id, int(work.chapters_count or 0))
+    if mon is None:
+        raise HTTPException(409, "адрес в чёрном списке")
+    if payload.primary and work.source_url != url:
+        work.source_url = url
+        session.add(work)
+        session.commit()
+    return {"ok": True, "monitor_id": mon.id, "source_url": work.source_url}
+
+
 @router.delete("/{work_id}/update-flag")
 def clear_update_flag(work_id: int, session: Session = Depends(get_session)) -> dict:
     """Сбросить has_update для книги (пользователь дочитал до конца)."""

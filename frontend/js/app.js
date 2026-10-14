@@ -7,9 +7,9 @@ import { reconcileOffline } from './core/offline.js'
 import './core/prefs.js'
 import { loadLibrary } from './library.js'
 import { openReader } from './reader-core.js'
+import { openBookPage } from './book-page.js'
 import { syncSettingsUI } from './settings.js'
 // side-effect модули: навешивают DOM-слушатели своих секций
-import './book-page.js'
 import './accounts.js'
 import './navigation.js'
 import './bookmarks.js'
@@ -24,13 +24,16 @@ syncSettingsUI()
 // оставит её скрытой (display:none победит .hidden=false).
 document.documentElement.classList.remove('restoring-book')
 
-// Восстановление вкладки: если URL указывает на книгу (#read/<id>) или это
-// deep-link (?open=<id>) — открываем читалку СРАЗУ, параллельно с загрузкой
-// библиотеки и НЕ показывая её. Иначе наполненная сетка мелькает ~секунду,
-// пока loadLibrary дорендерится, и только потом поверх открывается книга.
+// Восстановление вкладки: если URL указывает на книгу (#read/<id>), на её
+// страницу (#book/<id>) или это deep-link (?open=<id>) — открываем СРАЗУ,
+// параллельно с загрузкой библиотеки и НЕ показывая её. Иначе наполненная
+// сетка мелькает ~секунду, пока loadLibrary дорендерится, и только потом
+// поверх открывается книга.
 const _restore = (() => {
   const h = (location.hash.match(/^#read\/(.+)$/) || [])[1]
   if (h) return { id: decodeURIComponent(h), fromHash: true }
+  const b = (location.hash.match(/^#book\/(.+)$/) || [])[1]
+  if (b) return { id: decodeURIComponent(b), fromHash: true, page: true }
   const q = new URLSearchParams(location.search).get('open')
   return q ? { id: q, fromHash: false } : null
 })()
@@ -48,7 +51,8 @@ if (_restore) {
       loadLibrary().catch(() => {})
       return
     }
-    await openReader(work)
+    if (_restore.page) await openBookPage(work)
+    else await openReader(work)
     // Библиотеку грузим ПОСЛЕ того, как книга открылась, и только в простое.
     // Раньше loadLibrary() стартовал первым «в фоне» — но фон тут условный:
     // список тянется секунды, а рендер ~1400 карточек занимает главный поток,

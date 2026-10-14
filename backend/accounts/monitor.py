@@ -702,6 +702,10 @@ def _download_and_write_impl(
 # Сбрасывается ручной проверкой (POST /api/monitored/check) или успехом.
 _MAX_FAILS = 5
 
+# Префикс last_error «источник не ответил на счёт глав»: по нему ошибка
+# снимается, как только источник снова ответит, и не затирает чужие причины.
+_NO_ANSWER = "сайт не ответил"
+
 
 def check_all(
     session: Session,
@@ -829,12 +833,25 @@ def check_all(
     for mon, _w in survivors:
         cur, at_info = counts.get(mon.id, (None, None))
         checked += 1
+        if cur is None and at_info and mon.work_id:
+            # Свой источник не ответил, но зеркало нашлось — решаем по зеркалу
+            # (ниже берётся max(cur, зеркало)). Раньше такая подписка молча
+            # пропускалась: пока резидентный egress лежал, ВСЕ книги author.today
+            # стояли, хотя searchfloor отдавал новые главы (serg/tasks#1853,
+            # «Вечно голодный студент 11» — обновлялся только ручной кнопкой).
+            cur = 0
         if cur is None:
             if (
                 not (mon.has_update and auto_download)
                 or (mon.fail_count or 0) >= _MAX_FAILS
             ):
                 mon.last_checked = utcnow()
+                # Не молчим: без этой строки отказ источника был виден только
+                # как «счёт глав без ответа N» в журнале, а на странице книги
+                # подписка выглядела здоровой. fail_count не трогаем — это
+                # недоступность сайта, а не сбой докачки, и backoff тут не нужен.
+                if not mon.last_error or mon.last_error.startswith(_NO_ANSWER):
+                    mon.last_error = f"{_NO_ANSWER} при автопроверке — новые главы не видны"
                 session.add(mon)
                 session.commit()
                 continue
@@ -946,6 +963,8 @@ def check_all(
             continue
         if not mon.has_update:
             _set_seen_no_update(mon, best_cur, best_url)
+        if mon.last_error and mon.last_error.startswith(_NO_ANSWER):
+            mon.last_error = None  # источник снова отвечает
         mon.last_checked = utcnow()
         session.add(mon)
         session.commit()

@@ -78,7 +78,9 @@ export async function openBookPage(work) {
   document.body.classList.add('bookpage-open')
   // Всегда новая запись истории: «назад» из читалки/со страницы ведёт в библиотеку,
   // а следующий клик по книге не блокируется устаревшим bookpage-состоянием.
-  history.pushState({ bookpage: true }, '', '#book')
+  // В URL — id книги: голый '#book' был ссылкой «в никуда», по ней (и после
+  // перезагрузки вкладки) открывалась библиотека, а не книга (serg/tasks#1853).
+  history.pushState({ bookpage: true, id: work.id }, '', `#book/${encodeURIComponent(work.id)}`)
   renderBookPage(work)                    // сразу из списочных данных
   window.scrollTo(0, 0)
   // Дотянуть полные данные (description хранится не в списке, а в детали).
@@ -166,6 +168,12 @@ function completenessHtml(w) {
   return rows.length ? `<div class="bp-compl-box">${rows.join('')}</div>` : ''
 }
 
+// Подписаться можно только на книгу с адресом на сайте: у загруженных файлов
+// и книг из Calibre проверять обновления негде.
+function canWatch(w) {
+  return /^https?:\/\//.test(w.source_url || '')
+}
+
 function renderBookPage(w) {
   const ratio = libProgress[w.id] || 0
   const pct = Math.round(ratio * 100)
@@ -210,6 +218,7 @@ function renderBookPage(w) {
           <button id="bp-read-orig" class="btn-ghost bp-btn" title="Открыть исходный файл как есть">📄 Читать оригинал</button>`
           : ''}
           ${w.monitored ? `<button id="bp-check" class="btn-ghost bp-btn" title="Спросить сайт, не появились ли новые главы">↻ Проверить обновления</button>` : ''}
+          ${!w.monitored && canWatch(w) ? `<button id="bp-watch" class="btn-ghost bp-btn" title="Поставить книгу на автообновление и сразу проверить новые главы">🔔 Следить за обновлениями</button>` : ''}
           ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '🔄 Обновить офлайн' : '📥 Сохранить офлайн'}</button>` : ''}
           ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
           ${origBtn}
@@ -317,6 +326,31 @@ function renderBookPage(w) {
     } finally {
       chkBtn.disabled = false
       chkBtn.textContent = '↻ Проверить обновления'
+    }
+  })
+  // Книга без подписки (снята вручную, попала в чёрный список, пришла не через
+  // скачивание) не обновлялась никак, а кнопки «проверить» у неё не было вовсе
+  // (serg/tasks#1853). POST /api/monitored — штатное ручное добавление: оно же
+  // снимает книгу с чёрного списка.
+  $('#bp-watch')?.addEventListener('click', async () => {
+    const btn = $('#bp-watch')
+    btn.disabled = true
+    btn.textContent = '🔔 Подписываю…'
+    try {
+      await api.post('/api/monitored', { url: w.source_url })
+      const res = await api.post(`/api/monitored/check/${w.id}`).catch((e) => ({ error: e.message }))
+      const full = await api.get(`/api/library/${w.id}`).catch(() => null)
+      if (full) { curWork = { ...w, ...full }; w = curWork }
+      libMonitored.add(w.id)
+      if (res.error) toast(`Книга на отслеживании, но проверка не удалась: ${res.error}`, 'err')
+      else if (res.downloaded) toast(`Книга на отслеживании — теперь ${res.chapters || w.chapters_have} гл.`, 'ok')
+      else toast('Книга на отслеживании — новые главы будут подтягиваться сами', 'ok')
+      renderBookPage(w)
+    } catch (e) {
+      btn.disabled = false
+      btn.textContent = '🔔 Следить за обновлениями'
+      if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
+      else toast('Не удалось подписаться: ' + e.message, 'err')
     }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {

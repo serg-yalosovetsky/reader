@@ -44,7 +44,7 @@
     // Восстановление вкладки: мгновенно прячем библиотеку, если URL указывает
     // на книгу (#read/<id>), — чтобы сетка не мелькала до открытия читалки.
     // Класс снимает app.js, дальше видимостью управляет читалка.
-    try { if (/^#read\//.test(location.hash)) document.documentElement.classList.add('restoring-book') } catch (e) {}
+    try { if (/^#(read|book)\//.test(location.hash)) document.documentElement.classList.add('restoring-book') } catch (e) {}
   </script>
 </head>
 <body>

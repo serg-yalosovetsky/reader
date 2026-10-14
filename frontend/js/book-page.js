@@ -14,6 +14,7 @@ import { filterBy, toggleHidden, isBookFinished, setBookFinished } from './libra
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 import { logErr } from './core/log.js'
 import { chapterDate } from './core/chapterdate.js'
+import { icon } from './core/icons.js'
 
 let curWork = null
 
@@ -61,6 +62,61 @@ function parseList(s) {
   if (!s) return []
   try { const a = JSON.parse(s); return Array.isArray(a) ? a : [] } catch { return [] }
 }
+
+// Кнопка = иконка + подпись. Подпись живёт в .bp-lbl: обработчики ниже меняют
+// ТОЛЬКО её (setLbl), иначе textContent стёр бы иконку.
+const btnInner = (ic, text) =>
+  `<span class="bp-ic">${icon(ic)}</span><span class="bp-lbl">${text}</span>`
+function setLbl(btn, text) {
+  const l = btn.querySelector('.bp-lbl')
+  if (l) l.textContent = text
+  else btn.textContent = text
+}
+function getLbl(btn) { return btn.querySelector('.bp-lbl')?.textContent ?? btn.textContent }
+function setIco(btn, name) {
+  const i = btn.querySelector('.bp-ic')
+  if (i) i.innerHTML = icon(name)
+}
+
+// Меню «Ещё»: редкие и необратимые действия. Одно на страницу, поэтому
+// слушатели документа ставятся один раз (renderBookPage зовётся много раз).
+function closeMenu(focusBtn) {
+  const m = $('#bp-menu')
+  const b = $('#bp-more')
+  if (!m || !b || m.hidden) return
+  m.hidden = true
+  b.setAttribute('aria-expanded', 'false')
+  b.closest('.bp-more')?.classList.remove('is-open')
+  if (focusBtn) b.focus()
+}
+function openMenu() {
+  const m = $('#bp-menu')
+  const b = $('#bp-more')
+  if (!m || !b) return
+  m.hidden = false
+  b.setAttribute('aria-expanded', 'true')
+  b.closest('.bp-more')?.classList.add('is-open')
+  m.querySelector('.bp-mi:not(:disabled)')?.focus()
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest?.('.bp-more')) closeMenu()
+})
+document.addEventListener('keydown', (e) => {
+  const m = $('#bp-menu')
+  if (!m || m.hidden) return
+  if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); return }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+  const items = [...m.querySelectorAll('.bp-mi:not(:disabled)')]
+  if (!items.length) return
+  e.preventDefault()
+  const i = items.indexOf(document.activeElement)
+  let n = i
+  if (e.key === 'ArrowDown') n = (i + 1) % items.length
+  else if (e.key === 'ArrowUp') n = (i - 1 + items.length) % items.length
+  else if (e.key === 'Home') n = 0
+  else n = items.length - 1
+  items[n].focus()
+})
 
 function fmtNum(n) { return (n || 0).toLocaleString('ru-RU') }
 
@@ -144,10 +200,10 @@ function completenessHtml(w) {
     const short = site && have && have < site
     rows.push(
       `<div class="bp-compl${short ? ' bp-compl-short' : ''}">`
-      + `${short ? '⚠' : '✓'} Скачано: <b>${have || '—'}</b> ${unit}`
+      + `${icon(short ? 'alert-triangle' : 'circle-check', 16)}<span>Скачано: <b>${have || '—'}</b> ${unit}`
       + (site ? ` из <b>${site}</b>` : '')
       + (short ? ` <span class="bp-compl-note">— не хватает ${site - have}</span>` : '')
-      + '</div>',
+      + '</span></div>',
     )
   }
   if (offlineSupported && isOffline(w.id)) {
@@ -156,14 +212,14 @@ function completenessHtml(w) {
     const stale = off && have && have > off
     rows.push(
       `<div class="bp-compl${stale ? ' bp-compl-short' : ''}">`
-      + `${stale ? '⚠' : '📥'} В офлайне: <b>${off || '?'}</b> ${unit}`
+      + `${icon(stale ? 'alert-triangle' : 'cloud-download', 16)}<span>В офлайне: <b>${off || '?'}</b> ${unit}`
       + (have ? ` из <b>${have}</b>` : '')
       + (stale ? ' <span class="bp-compl-note">— копия отстала, обнови</span>' : '')
-      + '</div>',
+      + '</span></div>',
     )
   }
   if (w.update_error) {
-    rows.push(`<div class="bp-compl bp-compl-short">⚠ ${escapeHtml(w.update_error)}</div>`)
+    rows.push(`<div class="bp-compl bp-compl-short">${icon('alert-triangle', 16)}<span>${escapeHtml(w.update_error)}</span></div>`)
   }
   return rows.length ? `<div class="bp-compl-box">${rows.join('')}</div>` : ''
 }
@@ -186,18 +242,23 @@ function renderBookPage(w) {
     ? `<span class="bp-author bp-link" data-flt-author title="Показать все книги автора">${escapeHtml(w.author)}</span>`
     : `<span class="bp-author"></span>`
   const seriesHtml = w.series
-    ? `<div class="bp-series bp-link" data-flt-series title="Показать всю серию">📚 ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>`
+    ? `<div class="bp-series bp-link" data-flt-series title="Показать всю серию">Серия: ${escapeHtml(w.series)}${w.series_index ? ' #' + w.series_index : ''}</div>`
     : ''
   const descHtml = w.description
     ? `<div class="bp-desc">${escapeHtml(w.description).replace(/\n+/g, '<br>')}</div>`
     : ''
   const progHtml = ratio > 0
-    ? `<div class="bp-progress"><div class="bp-progress-track"><i style="width:${Math.min(pct, 100)}%"></i></div><span>${pct}%</span></div>`
+    ? `<div class="bp-progress" role="progressbar" aria-label="Прочитано" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(pct, 100)}"><div class="bp-progress-track"><i style="width:${Math.min(pct, 100)}%"></i></div></div>`
     : ''
   const origBtn = w.source_url
-    ? `<a class="btn-ghost bp-btn" href="${escapeHtml(w.source_url)}" target="_blank" rel="noopener">↗ Оригинал</a>`
+    ? `<a class="bp-mi" role="menuitem" href="${escapeHtml(w.source_url)}" target="_blank" rel="noopener">${btnInner('external-link', 'Открыть оригинал на сайте')}</a>`
     : ''
   const complHtml = completenessHtml(w)
+
+  const finished = isBookFinished(w.id)
+  const hasOff = offlineSupported && isOffline(w.id)
+  // Главное действие одно и говорит, что будет: начать, продолжить или перечитать.
+  const readLabel = finished ? 'Читать снова' : (ratio > 0 ? `Продолжить · ${pct}%` : 'Читать')
 
   $('#bp-body').innerHTML = `
     <div class="bp-hero">
@@ -210,25 +271,36 @@ function renderBookPage(w) {
         ${factsText ? `<div class="bp-facts">${escapeHtml(factsText)}</div>` : ''}
         ${complHtml}
         ${progHtml}
-        <div class="bp-actions">
-          <button id="bp-read" class="btn-primary bp-btn bp-btn-read">📖 Читать книгу</button>
-          <a class="btn-ghost bp-btn" href="/api/reader/${w.id}/file?original=1" download>⬇ Скачать</a>
-          ${convertible(w) ? `
-          <button id="bp-epub" class="btn-ghost bp-btn" title="Собрать перетекающий текст вместо страниц-картинок">↻ EPUB-версия</button>
-          <button id="bp-read-orig" class="btn-ghost bp-btn" title="Открыть исходный файл как есть">📄 Читать оригинал</button>`
-          : ''}
-          ${w.monitored ? `<button id="bp-check" class="btn-ghost bp-btn" title="Спросить сайт, не появились ли новые главы">↻ Проверить обновления</button>` : ''}
-          ${!w.monitored && canWatch(w) ? `<button id="bp-watch" class="btn-ghost bp-btn" title="Поставить книгу на автообновление и сразу проверить новые главы">🔔 Следить за обновлениями</button>` : ''}
-          <button id="bp-finished" class="btn-ghost bp-btn" title="Отметка «прочитано» ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${isBookFinished(w.id) ? '↺ Снять «прочитано»' : '✓ Отметить прочитанной'}</button>
-          <button id="bp-mirror" class="btn-ghost bp-btn" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">🔗 Добавить зеркало</button>
-          ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '🔄 Обновить офлайн' : '📥 Сохранить офлайн'}</button>` : ''}
-          ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
-          ${origBtn}
-          <button id="bp-gencover" class="btn-ghost bp-btn">🎨 Сгенерировать обложку</button>
-          <button id="bp-uploadcover" class="btn-ghost bp-btn" title="Выбрать картинку (JPEG, PNG, WebP до 10 МБ) с этого устройства">🖼 Загрузить обложку</button>
-          <button id="bp-copycover" class="btn-ghost bp-btn" title="Скопировать обложку другой книги из библиотеки">📚 Взять обложку из другой книги</button>
-          <button id="bp-hide" class="btn-ghost bp-btn" title="${w.hidden ? 'Вернуть книгу в библиотеку' : 'Убрать из библиотеки: останется доступной поиском'}">${w.hidden ? '👁 Показать в библиотеке' : '🙈 Скрыть из библиотеки'}</button>
-          <button id="bp-del" class="btn-ghost bp-btn bp-btn-del">🗑 Удалить</button>
+      </div>
+      <div class="bp-actions">
+        <button id="bp-read" type="button" class="bp-primary">${btnInner('book-2', readLabel)}</button>
+        <div class="bp-sec">
+          <button id="bp-finished" type="button" class="bp-sec-btn${finished ? ' is-on' : ''}" aria-pressed="${finished}" title="${finished ? 'Снять «прочитано»' : 'Отметить прочитанной'}. Отметка ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${btnInner('circle-check', 'Прочитана')}</button>
+          ${w.monitored ? `<button id="bp-check" type="button" class="bp-sec-btn" aria-label="Проверить обновления" title="Спросить сайт, не появились ли новые главы">${btnInner('refresh', 'Проверить')}</button>` : ''}
+          ${!w.monitored && canWatch(w) ? `<button id="bp-watch" type="button" class="bp-sec-btn" aria-label="Следить за обновлениями" title="Поставить книгу на автообновление и сразу проверить новые главы">${btnInner('bell', 'Следить')}</button>` : ''}
+          <a class="bp-sec-btn" href="/api/reader/${w.id}/file?original=1" download aria-label="Скачать файл книги">${btnInner('download', 'Скачать')}</a>
+          <div class="bp-more">
+            <button id="bp-more" type="button" class="bp-sec-btn bp-more-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="bp-menu" aria-label="Другие действия">${btnInner('dots', '<span class="bp-lbl-m">Ещё</span>')}</button>
+            <div class="bp-scrim"></div>
+            <div id="bp-menu" class="bp-menu" role="menu" aria-label="Другие действия с книгой" hidden>
+              ${offlineSupported ? `<button id="bp-offline" type="button" class="bp-mi" role="menuitem" data-keep>${btnInner(hasOff ? 'refresh' : 'cloud-download', hasOff ? 'Обновить офлайн-копию' : 'Сохранить офлайн')}</button>` : ''}
+              ${hasOff ? `<button id="bp-offline-rm" type="button" class="bp-mi" role="menuitem" title="Убрать книгу из офлайн-кэша">${btnInner('x', 'Убрать офлайн-копию')}</button>` : ''}
+              ${origBtn}
+              <button id="bp-mirror" type="button" class="bp-mi" role="menuitem" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">${btnInner('link', 'Добавить зеркало')}</button>
+              ${convertible(w) ? `
+              <button id="bp-epub" type="button" class="bp-mi" role="menuitem" data-keep title="Собрать перетекающий текст вместо страниц-картинок">${btnInner('refresh', 'Сделать EPUB-версию')}</button>
+              <button id="bp-read-orig" type="button" class="bp-mi" role="menuitem" title="Открыть исходный файл как есть">${btnInner('file-text', 'Читать оригинал файла')}</button>`
+              : ''}
+              <div class="bp-sep" role="separator"></div>
+              <button id="bp-gencover" type="button" class="bp-mi" role="menuitem" data-keep>${btnInner('wand', 'Сгенерировать обложку')}</button>
+              <button id="bp-uploadcover" type="button" class="bp-mi" role="menuitem" title="Выбрать картинку (JPEG, PNG, WebP до 10 МБ) с этого устройства">${btnInner('upload', 'Загрузить обложку')}</button>
+              <button id="bp-copycover" type="button" class="bp-mi" role="menuitem" title="Скопировать обложку другой книги из библиотеки">${btnInner('copy', 'Взять обложку другой книги')}</button>
+              <div class="bp-sep" role="separator"></div>
+              <button id="bp-hide" type="button" class="bp-mi" role="menuitem" title="${w.hidden ? 'Вернуть книгу в библиотеку' : 'Убрать из библиотеки: останется доступной поиском'}">${btnInner(w.hidden ? 'eye' : 'eye-off', w.hidden ? 'Показать в библиотеке' : 'Скрыть из библиотеки')}</button>
+              <div class="bp-sep bp-sep-danger" role="separator"></div>
+              <button id="bp-del" type="button" class="bp-mi bp-mi-del" role="menuitem">${btnInner('trash', 'Удалить книгу…')}</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -241,6 +313,12 @@ function renderBookPage(w) {
       <div id="bp-toc" class="bp-toc">Загружаю оглавление…</div>
     </div>`
 
+  $('#bp-more').addEventListener('click', () => { if ($('#bp-menu').hidden) openMenu(); else closeMenu() })
+  $('#bp-body .bp-scrim').addEventListener('click', () => closeMenu(true))
+  $('#bp-menu').addEventListener('click', (e) => {
+    const it = e.target.closest('.bp-mi')
+    if (it && !it.hasAttribute('data-keep')) closeMenu()
+  })
   $('#bp-body').querySelectorAll('[data-flt-author]').forEach((el) =>
     el.addEventListener('click', () => goFilter(w.author)))
   $('#bp-body').querySelectorAll('[data-flt-series]').forEach((el) =>
@@ -258,16 +336,16 @@ function renderBookPage(w) {
   // книгу cache-first — без перекачки новых глав не увидеть вовсе.
   const offBtn = $('#bp-offline')
   if (offBtn) offBtn.addEventListener('click', async () => {
-    const orig = offBtn.textContent
+    const orig = getLbl(offBtn)
     const had = isOffline(w.id)
     offBtn.disabled = true
     // Немедленная обратная связь: раньше кнопка молчала до первого чанка, и на
     // медленном канале выглядела нерабочей — по ней жали снова и снова.
-    offBtn.textContent = '⏳ Начинаю…'
+    setLbl(offBtn, 'Начинаю…')
     const onProgress = (rec, total) => {
-      offBtn.textContent = total
-        ? `⬇ ${Math.round((rec / total) * 100)}%`
-        : `⬇ ${Math.round(rec / 1048576)} МБ`
+      setLbl(offBtn, total
+        ? `Сохраняю: ${Math.round((rec / total) * 100)}%`
+        : `Сохраняю: ${Math.round(rec / 1048576)} МБ`)
     }
     const chapters = Number(w.chapters_have) || 0
     try {
@@ -276,7 +354,7 @@ function renderBookPage(w) {
       toast(had ? 'Офлайн-копия обновлена' : 'Книга сохранена офлайн', 'ok')
       renderBookPage(w)     // перерисовать строку «В офлайне: N глав»
     } catch (e) {
-      offBtn.textContent = orig
+      setLbl(offBtn, orig)
       offBtn.disabled = false
       // AuthRequiredError сам поднимает баннер перелогина — не дублируем алертом.
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
@@ -292,7 +370,7 @@ function renderBookPage(w) {
   const chkBtn = $('#bp-check')
   if (chkBtn) chkBtn.addEventListener('click', async () => {
     chkBtn.disabled = true
-    chkBtn.textContent = '↻ Проверяю…'
+    setLbl(chkBtn, 'Проверяю…')
     try {
       const res = await api.post(`/api/monitored/check/${w.id}`)
       if (res.error) { toast(`Ошибка: ${res.error}`, 'err'); return }
@@ -327,7 +405,7 @@ function renderBookPage(w) {
       else toast('Не удалось проверить: ' + e.message, 'err')
     } finally {
       chkBtn.disabled = false
-      chkBtn.textContent = '↻ Проверить обновления'
+      setLbl(chkBtn, 'Проверить')
     }
   })
   // Книга без подписки (снята вручную, попала в чёрный список, пришла не через
@@ -337,7 +415,7 @@ function renderBookPage(w) {
   $('#bp-watch')?.addEventListener('click', async () => {
     const btn = $('#bp-watch')
     btn.disabled = true
-    btn.textContent = '🔔 Подписываю…'
+    setLbl(btn, 'Подписываю…')
     try {
       await api.post('/api/monitored', { url: w.source_url })
       const res = await api.post(`/api/monitored/check/${w.id}`).catch((e) => ({ error: e.message }))
@@ -350,7 +428,7 @@ function renderBookPage(w) {
       renderBookPage(w)
     } catch (e) {
       btn.disabled = false
-      btn.textContent = '🔔 Следить за обновлениями'
+      setLbl(btn, 'Следить')
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
       else toast('Не удалось подписаться: ' + e.message, 'err')
     }
@@ -382,11 +460,11 @@ function renderBookPage(w) {
       + 'Отмена — оставить как дополнительное зеркало.')
     const btn = $('#bp-mirror')
     btn.disabled = true
-    btn.textContent = '🔗 Добавляю…'
+    setLbl(btn, 'Добавляю…')
     try {
       await api.post(`/api/library/${w.id}/mirror`, { url, primary })
       libMonitored.add(w.id)
-      btn.textContent = '🔗 Проверяю…'
+      setLbl(btn, 'Проверяю…')
       const res = await api.post(`/api/monitored/check/${w.id}`).catch((e) => ({ error: e.message }))
       const full = await api.get(`/api/library/${w.id}`).catch(() => null)
       if (full) { curWork = { ...w, ...full }; w = curWork }
@@ -395,16 +473,16 @@ function renderBookPage(w) {
       renderBookPage(w)
     } catch (e) {
       btn.disabled = false
-      btn.textContent = '🔗 Добавить зеркало'
+      setLbl(btn, 'Добавить зеркало')
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
       else toast('Не удалось добавить зеркало: ' + e.message, 'err')
     }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {
     const btn = $('#bp-gencover')
-    const orig = btn.textContent
+    const orig = getLbl(btn)
     btn.disabled = true
-    btn.textContent = '🎨 Генерирую…'
+    setLbl(btn, 'Генерирую…')
     try {
       const r = await fetch(`/api/reader/${w.id}/cover/generate?force=1`, { method: 'POST' })
       if (r.ok) {
@@ -417,7 +495,7 @@ function renderBookPage(w) {
       alert('Ошибка генерации: ' + e.message)
     } finally {
       btn.disabled = false
-      btn.textContent = orig
+      setLbl(btn, orig)
     }
   })
   // Ручная обложка (serg/tasks#1055): файл с устройства или обложка другой книги.
@@ -429,17 +507,18 @@ function renderBookPage(w) {
   if (epubBtn) {
     const paint = (st) => {
       if (!st) return
-      if (st.status === 'pending') { epubBtn.textContent = '⏳ Собираю EPUB…'; epubBtn.disabled = true; return }
+      if (st.status === 'pending') { setLbl(epubBtn, 'Собираю EPUB…'); epubBtn.disabled = true; return }
       epubBtn.disabled = false
-      if (st.ready) epubBtn.textContent = '✅ EPUB готов — пересобрать'
-      else if (st.status === 'failed') epubBtn.textContent = '⚠ EPUB не вышел — повторить'
-      else epubBtn.textContent = '↻ Сделать EPUB-версию'
+      epubBtn.dataset.ready = st.ready ? '1' : ''
+      if (st.ready) setLbl(epubBtn, 'EPUB готов — пересобрать')
+      else if (st.status === 'failed') setLbl(epubBtn, 'EPUB не вышел — повторить')
+      else setLbl(epubBtn, 'Сделать EPUB-версию')
     }
     convertStatus(w.id).then(paint).catch(() => {})
     epubBtn.addEventListener('click', async () => {
-      const wasReady = epubBtn.textContent.startsWith('✅')
+      const wasReady = epubBtn.dataset.ready === '1'
       epubBtn.disabled = true
-      epubBtn.textContent = '⏳ Собираю EPUB…'
+      setLbl(epubBtn, 'Собираю EPUB…')
       const st = await ensureEpub(w.id, { force: wasReady }).catch((e) => ({ status: 'failed', error: e.message }))
       paint(st)
       if (st.ready) toast('EPUB готов — книга откроется перетекающим текстом', 'ok')
@@ -460,7 +539,8 @@ function renderBookPage(w) {
     const ok = await toggleHidden(w)
     btn.disabled = false
     if (!ok) return
-    btn.textContent = w.hidden ? '👁 Показать в библиотеке' : '🙈 Скрыть из библиотеки'
+    setLbl(btn, w.hidden ? 'Показать в библиотеке' : 'Скрыть из библиотеки')
+    setIco(btn, w.hidden ? 'eye' : 'eye-off')
     btn.title = w.hidden
       ? 'Вернуть книгу в библиотеку'
       : 'Убрать из библиотеки: останется доступной поиском'

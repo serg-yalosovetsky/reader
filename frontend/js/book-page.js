@@ -140,9 +140,20 @@ export async function openBookPage(work) {
   renderBookPage(work)                    // сразу из списочных данных
   window.scrollTo(0, 0)
   // Дотянуть полные данные (description хранится не в списке, а в детали).
-  const full = await api.get(`/api/library/${work.id}`).catch(() => null)
-  if (full && !$('#book-page').hidden && curWork && curWork.id === work.id) {
-    curWork = { ...work, ...full }
+  // Долю чтения — тоже, если списка библиотеки ещё нет: по ссылке #book/<id>
+  // и после перезагрузки вкладки он грузится позже, и кнопка писала «Читать»
+  // вместо «Продолжить · 99%».
+  const needProg = !(work.id in libProgress)
+  const [full, prog] = await Promise.all([
+    api.get(`/api/library/${work.id}`).catch(() => null),
+    needProg ? api.get(`/api/progress/${work.id}`).catch(() => null) : null,
+  ])
+  if (prog && prog.ratio > 0 && !(work.id in libProgress)) libProgress[work.id] = prog.ratio
+  if (prog && 'finished_at' in prog && Boolean(prog.finished_at) !== isBookFinished(work.id)) {
+    setBookFinished(work.id, Boolean(prog.finished_at))
+  }
+  if ((full || prog) && !$('#book-page').hidden && curWork && curWork.id === work.id) {
+    curWork = { ...work, ...(full || {}) }
     renderBookPage(curWork)
   }
 }

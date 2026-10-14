@@ -1042,6 +1042,8 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 }
 .bp-toc-item:last-child { border-bottom: none; }
 .bp-toc-item:hover, .bp-toc-item:focus-visible { background: var(--bg); outline: none; color: var(--accent-ink); }
+/* Фокус с клавиатуры — обводкой: смена цвета текста в sepia/terminal почти не видна. */
+.bp-toc-item:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
 .bp-toc-sub { padding-left: 28px; font-size: 14px; color: var(--fg-dim); }
 .bp-toc-n { min-width: 2.5em; text-align: right; color: var(--fg-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
 .bp-toc-label { flex: 1; }

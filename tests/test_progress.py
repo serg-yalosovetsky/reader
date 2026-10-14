@@ -117,3 +117,13 @@ def test_progress_default_has_empty_anchor(client):
     g = client.get(f"/api/progress/{wid}")
     assert g.status_code == 200
     assert g.json()["text_anchor"] == ""
+
+
+def test_manual_finished_toggle(client):
+    wid = _upload(client, "manual-finish")["id"]
+    r = client.put(f"/api/progress/{wid}/finished", json={"finished": True})
+    assert r.status_code == 200, r.text
+    assert wid in _finished(client)
+    client.put(f"/api/progress/{wid}/finished", json={"finished": False})
+    assert wid not in _finished(client)
+    assert client.put("/api/progress/999999/finished", json={"finished": True}).status_code == 404

@@ -10,7 +10,7 @@ import { coverUrl } from './core/coverpick.js'
 import {
   offlineSupported, isOffline, downloadBook, removeBook, refreshBook, offlineMeta,
 } from './core/offline.js'
-import { filterBy, toggleHidden } from './library.js'
+import { filterBy, toggleHidden, isBookFinished, setBookFinished } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 import { logErr } from './core/log.js'
 import { chapterDate } from './core/chapterdate.js'
@@ -219,6 +219,7 @@ function renderBookPage(w) {
           : ''}
           ${w.monitored ? `<button id="bp-check" class="btn-ghost bp-btn" title="Спросить сайт, не появились ли новые главы">↻ Проверить обновления</button>` : ''}
           ${!w.monitored && canWatch(w) ? `<button id="bp-watch" class="btn-ghost bp-btn" title="Поставить книгу на автообновление и сразу проверить новые главы">🔔 Следить за обновлениями</button>` : ''}
+          <button id="bp-finished" class="btn-ghost bp-btn" title="Отметка «прочитано» ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${isBookFinished(w.id) ? '↺ Снять «прочитано»' : '✓ Отметить прочитанной'}</button>
           <button id="bp-mirror" class="btn-ghost bp-btn" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">🔗 Добавить зеркало</button>
           ${offlineSupported ? `<button id="bp-offline" class="btn-ghost bp-btn">${isOffline(w.id) ? '🔄 Обновить офлайн' : '📥 Сохранить офлайн'}</button>` : ''}
           ${offlineSupported && isOffline(w.id) ? '<button id="bp-offline-rm" class="btn-ghost bp-btn" title="Убрать книгу из офлайн-кэша">🗑 Убрать офлайн</button>' : ''}
@@ -352,6 +353,21 @@ function renderBookPage(w) {
       btn.textContent = '🔔 Следить за обновлениями'
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
       else toast('Не удалось подписаться: ' + e.message, 'err')
+    }
+  })
+  $('#bp-finished')?.addEventListener('click', async () => {
+    const want = !isBookFinished(w.id)
+    const btn = $('#bp-finished')
+    btn.disabled = true
+    try {
+      await api.put(`/api/progress/${w.id}/finished`, { finished: want })
+      setBookFinished(w.id, want)
+      toast(want ? 'Отмечено прочитанной' : 'Отметка «прочитано» снята', 'ok')
+      renderBookPage(w)
+    } catch (e) {
+      btn.disabled = false
+      if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
+      else toast('Не удалось изменить отметку: ' + e.message, 'err')
     }
   })
   // Ручное зеркало: фик переехал (ficbook выдал новый id, старая страница —

@@ -35,6 +35,39 @@ let originalFile = false
 function sameAnchor(a, b) {
   return !a || !b || a.startsWith(b) || b.startsWith(a)
 }
+// Перезапуск сервиса (деплой) — ~10 с ответов 502 от nginx. Книга, открытая в
+// это окно, падала «Не удалось открыть книгу: 502», а хуже — без ответа на
+// запрос позиции открывалась с начала и первым же релокейтом затирала место.
+// Повторяем временные отказы ~20 с (0.5+1+2+4×4).
+const TRANSIENT = new Set([502, 503, 504])
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function withRetry(attempt, isTransient, alive) {
+  let delay = 500
+  for (let i = 0; ; i++) {
+    try { return await attempt() } catch (e) {
+      if (i >= 7 || !isTransient(e) || !alive()) throw e
+    }
+    await sleep(delay)
+    delay = Math.min(delay * 2, 4000)
+  }
+}
+const transientErr = (e) => e?.name === 'NetworkError' || TRANSIENT.has(e?.status)
+async function fetchBookFile(url, alive) {
+  return withRetry(async () => {
+    const r = await fetch(url)
+    if (TRANSIENT.has(r.status)) { const e = new Error(String(r.status)); e.status = r.status; throw e }
+    return r
+  }, (e) => TRANSIENT.has(e?.status) || e instanceof TypeError, alive)
+}
+// Серверная позиция НЕ пришла, книга открыта с начала: пока человек сам
+// ничего не сделал в читалке, ничего не пишем — иначе начало книги затёрло бы
+// сохранённое место. Ждём именно действия человека: CFI и доля после открытия
+// меняются и без него (раскладка, переход к началу текста).
+let holdSaves = false
+const USER_INPUT = ['pointerdown', 'keydown', 'wheel', 'touchstart']
+function releaseHold() { holdSaves = false }
+for (const ev of USER_INPUT) window.addEventListener(ev, releaseHold, { capture: true, passive: true })
+
 // SHA-1 открытого файла: к нему привязан сохраняемый CFI (core/position.js).
 let currentRev = ''
 // Листали страницы из кеша, пока живая книга грузилась.
@@ -45,6 +78,7 @@ const progressWrites = new Map()
 // потом PUT. Записи одной книги идут строго по очереди.
 function savePosition(pos, opts = {}) {
   if (!currentWork || !pos) return
+  if (holdSaves) return
   const id = currentWork.id
   const body = { book_rev: currentRev, ...pos }
   const savedAt = Date.now()
@@ -160,8 +194,10 @@ async function openReaderImpl(work, opts = {}) {
   // Прогресс не зависит от файла книги, а раньше запрашивался ПОСЛЕ его
   // открытия — лишний круг по сети посреди пути к первому кадру. Запускаем
   // сразу, ждём ниже, там где он реально нужен.
+  holdSaves = false
   const progP = (progressWrites.get(work.id) || Promise.resolve())
-    .then(() => api.get(`/api/progress/${work.id}`)).catch(() => null)
+    .then(() => withRetry(() => api.get(`/api/progress/${work.id}`), transientErr, current))
+    .catch(() => null)
   let cachedTarget = null, cachedSnapshot = null, cachedMoved = false, cachedSave = null
   const cachedKey = resumeKey(work, prefs, $('#view-host'))
   await showResume(work, prefs, $('#view-host'), opts, (pos, moved, snapshot) => {
@@ -187,7 +223,7 @@ async function openReaderImpl(work, opts = {}) {
       toast(st?.error ? 'Не вышло сделать EPUB: ' + st.error : 'Конвертация ещё идёт — открываю оригинал', 'err', 6000)
     }
   }
-  if (!resp) resp = await fetch(`/api/reader/${work.id}/file` + (opts.original ? '?original=1' : ''))
+  if (!resp) resp = await fetchBookFile(`/api/reader/${work.id}/file` + (opts.original ? '?original=1' : ''), current)
   if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
   const blob = await resp.blob()
   if (!current()) return
@@ -205,6 +241,10 @@ async function openReaderImpl(work, opts = {}) {
   document.getElementById('reader')?.classList.remove('chrome-hidden')
   view.addEventListener('relocate', e => { if (current() && !opening) onRelocate(e) })
   view.addEventListener('load', attachKeysToDoc)
+  // Действия внутри книги (iframe) до окна не всплывают — слушаем и там.
+  view.addEventListener('load', (e) => {
+    for (const ev of USER_INPUT) e.detail?.doc?.addEventListener(ev, releaseHold, { capture: true, passive: true })
+  })
   view.addEventListener('load', inlineImagesOnLoad)
   view.addEventListener('draw-annotation', onDrawAnnotation)
   applyViewStyles()
@@ -273,6 +313,11 @@ async function openReaderImpl(work, opts = {}) {
     if (!current()) return
   }
   hideResume()
+  // Позиция с сервера не пришла и неотправленной нет — место неизвестно.
+  if (!prog && !opts.jump && !samePosition) {
+    holdSaves = true
+    toast('Сервер не отдал место чтения — открыл с начала. Сохранённое место не тронуто.', 'err', 6000)
+  }
   opening = false
   cachedTurned = false
   if (readerView.lastLocation) onRelocate({ detail: readerView.lastLocation })

@@ -157,6 +157,36 @@ def finished(session: Session = Depends(get_session)) -> list[int]:
     ]
 
 
+class FinishedIn(BaseModel):
+    finished: bool
+
+
+@router.put("/{work_id}/finished")
+def set_finished(
+    work_id: int, body: FinishedIn, session: Session = Depends(get_session)
+) -> dict:
+    """Ручная отметка «прочитано» со страницы книги (serg/tasks#1853).
+
+    Автоматически книга становится прочитанной только на последней странице; у
+    книг с хвостом «об авторе»/послесловием до неё не листают — для них и
+    нужна ручная отметка. Позицию чтения не трогает."""
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "work not found")
+    prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
+    if not prog:
+        prog = Progress(work_id=work_id, chapters_at_read=int(work.chapters_count or 0))
+    if body.finished:
+        prog.finished_at = utcnow()
+        prog.finished_chapters = int(work.chapters_count or 0)
+    else:
+        prog.finished_at = None
+        prog.finished_chapters = 0
+    session.add(prog)
+    session.commit()
+    return {"ok": True, "work_id": work_id, "finished": body.finished}
+
+
 @router.get("/{work_id}")
 def get_progress(work_id: int, session: Session = Depends(get_session)) -> Progress:
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()

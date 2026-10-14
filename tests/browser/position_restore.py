@@ -8,6 +8,8 @@ Run with Playwright installed: python tests/browser/position_restore.py
 3. «Прочитано» (at_end) — только на последней странице, не в середине последней главы.
 4. Уход вкладки (pagehide) пишет место сразу, не дожидаясь дебаунса.
 5. Позиция, не ушедшая на сервер, досылается и открывается при следующем входе.
+6. Окно деплоя: 502 на файл и позицию — повтор, книга открывается на своём месте.
+7. Позиция так и не пришла — открытие с начала НЕ затирает место на сервере.
 """
 import asyncio
 import hashlib
@@ -92,7 +94,8 @@ async def main():
     rev = hashlib.sha1(data, usedforsecurity=False).hexdigest()
     # freeze: на время переоткрытия PUT'ы (запись места закрываемой книги) не
     # меняют подготовленную тестом серверную позицию.
-    state = {'progress': {'ratio': 0, 'locator': '', 'text_anchor': ''}, 'puts': [], 'fail_put': False, 'freeze': False}
+    state = {'progress': {'ratio': 0, 'locator': '', 'text_anchor': ''}, 'puts': [], 'fail_put': False, 'freeze': False,
+             'fail_get': 0, 'fail_file': 0}
     errors = []
     report = {}
     async with async_playwright() as p:
@@ -103,6 +106,14 @@ async def main():
         async def api(route):
             req = route.request
             path = req.url.split('/api/', 1)[1]
+            if path == 'reader/1/file' and state['fail_file']:
+                state['fail_file'] -= 1
+                await route.fulfill(status=502, body='bad gateway')
+                return
+            if path == 'progress/1' and req.method == 'GET' and state['fail_get']:
+                state['fail_get'] -= 1
+                await route.fulfill(status=502, body='bad gateway')
+                return
             if path == 'reader/1/file':
                 await route.fulfill(body=data, content_type='application/epub+zip', headers={'X-Book-Format': 'epub'})
                 return
@@ -203,6 +214,36 @@ async def main():
         assert any(b.get('replay') for b in state['puts']), 'неотправленная позиция не дослана'
         assert state['progress']['locator'] == pending['body']['locator'], 'сервер не получил досланную позицию'
         report['offline_replay'] = True
+
+        print('STEP 6', flush=True)
+        # --- 6. окно деплоя: 502 на файл и позицию ---
+        state['progress'] = {'ratio': 0.2, 'locator': pos['locator'], 'text_anchor': pos['text_anchor'],
+                             'chapter': pos['chapter'], 'book_rev': rev, 'saved_at': 10**13}
+        state['fail_file'], state['fail_get'] = 2, 2
+        await reopen(page, state)
+        assert await page.evaluate(SECTION) == target, 'после 502 книга открылась не на своём месте'
+        assert state['fail_file'] == 0 and state['fail_get'] == 0
+        report['retry_through_502'] = True
+
+        print('STEP 7', flush=True)
+        # --- 7. позиция не пришла совсем: начало книги не затирает место ---
+        saved = dict(state['progress'])
+        state['fail_get'] = 100
+        await reopen(page, state)
+        state['puts'].clear()
+        await page.evaluate("() => window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+        await page.wait_for_timeout(1500)
+        state['fail_get'] = 0
+        assert not state['puts'] and state['progress']['locator'] == saved['locator'], \
+            ('начало книги затёрло место', state['puts'][:1])
+        # Сдвинулся сам — дальше пишем как обычно.
+        # Перелистывание самой программой (раскладка) — не действие человека.
+        await page.evaluate("async () => { const v=(await import('/js/core/state.js')).view; await v.next(); await new Promise(r=>setTimeout(r,1500)) }")
+        assert not state['puts'], 'без действия человека место писаться не должно'
+        await page.click('#next-btn')
+        await page.wait_for_timeout(1500)
+        assert state['puts'], 'после своего перелистывания позиция должна писаться'
+        report['no_overwrite_without_server_position'] = True
 
         assert not errors, errors
         print(json.dumps(report, ensure_ascii=False))

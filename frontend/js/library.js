@@ -408,6 +408,14 @@ let libFinished = (() => {
 function isFinished(w) {
   return libFinished.has(w.id)
 }
+export function isBookFinished(id) { return libFinished.has(id) }
+// Ручная отметка со страницы книги: обновляем набор сразу, не дожидаясь
+// перезагрузки библиотеки.
+export function setBookFinished(id, finished) {
+  if (finished) libFinished.add(id)
+  else libFinished.delete(id)
+  try { localStorage.setItem(FINISHED_KEY, JSON.stringify([...libFinished])) } catch { /* квота */ }
+}
 
 function bookCard(w, ratio, hasUpdate) {
   const card = document.createElement('div')

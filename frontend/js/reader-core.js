@@ -17,6 +17,7 @@ import { cachedBook } from './core/offline.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
+import { readerUrl } from './core/reader-url.js'
 import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
 import { collapse } from '../vendor/foliate-js/epubcfi.js'
@@ -139,6 +140,7 @@ export async function openReader(work, opts = {}) {
   }
 }
 async function openReaderImpl(work, opts = {}) {
+  opts = { ...opts, original: opts.fmt === 'pdf' || (opts.fmt !== 'epub' && !!opts.original) }
   ttsStop()
   disposeReader()
   const generation = openGeneration
@@ -175,11 +177,13 @@ async function openReaderImpl(work, opts = {}) {
   // «назад» → назад по сайту); переключение книги внутри читалки или
   // восстановление из URL — замена записи, чтобы не плодить историю.
   const bookHash = `#read/${encodeURIComponent(work.id)}`
+  const requestedFormat = work.file_format === 'pdf' ? (opts.original ? 'pdf' : opts.fmt) : null
+  const bookUrl = readerUrl(location.href, work.id, requestedFormat)
   const histState = { reader: true, id: work.id }
   if ((history.state && history.state.reader) || location.hash === bookHash) {
-    history.replaceState(histState, '', bookHash)
+    history.replaceState(histState, '', bookUrl)
   } else {
-    history.pushState(histState, '', bookHash)
+    history.pushState(histState, '', bookUrl)
   }
 
   // Очистить прошлый экземпляр.
@@ -212,10 +216,12 @@ async function openReaderImpl(work, opts = {}) {
   if (!current()) return
   const cachedBase = resumeBasePosition()
   let resp = opts.original ? null : await cachedBook(work.id)
+  // Явный EPUB не должен подхватить офлайн-копию исходного PDF.
+  if (opts.fmt === 'epub' && resp?.headers.get('X-Book-Format') !== 'epub') resp = null
   if (!current()) return
   // PDF читаем как EPUB (перетекающий текст). Первое открытие ждёт конвертацию
   // (секунды–минуты на толстой книге), дальше файл готов и отдаётся сразу.
-  if (!resp && !opts.original && convertible(work) && pdfAsEpub()) {
+  if (!resp && !opts.original && convertible(work) && (opts.fmt === 'epub' || pdfAsEpub())) {
     const t = toast('Перевожу в EPUB — будет перетекающий текст…', 'info', 60000)
     const st = await ensureEpub(work.id).catch(() => null)
     t?.close?.()
@@ -231,6 +237,10 @@ async function openReaderImpl(work, opts = {}) {
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
   // каким движком foliate будет рендерить).
   const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
+  if (work.file_format === 'pdf') {
+    originalFile = fmt === 'pdf'
+    history.replaceState(histState, '', readerUrl(location.href, work.id, fmt))
+  }
   const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 

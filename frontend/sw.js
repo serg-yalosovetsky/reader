@@ -13,7 +13,7 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v12'
+const SHELL_CACHE = 'reader-shell-v13'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
 const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE])
@@ -33,7 +33,7 @@ const FALLBACK_PRECACHE = [
   '/js/core/api.js', '/js/core/dom.js', '/js/core/state.js', '/js/core/prefs.js',
   '/js/core/resume-cache.js', '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',
   '/js/core/locator.js', '/js/core/convert.js', '/js/core/inline-images.js',
-  '/js/core/fullscreen.js',
+  '/js/core/fullscreen.js', '/js/core/reader-url.js',
 ]
 
 // Что класть в офлайн-кэш оболочки. Сервер считает список сам (все .js, стили,

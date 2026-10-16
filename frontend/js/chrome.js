@@ -58,6 +58,14 @@ export function setBookMeta(work) {
   renderTitle()
 }
 
+// После переименования сразу показываем новое название книги.
+export function updateBookMeta(work) {
+  meta.book = (work.title || '').trim()
+  meta.author = (work.author || '').trim()
+  mode = 'book'
+  renderTitle()
+}
+
 // Название текущей главы для тех, кому нужен не заголовок, а сам факт: подпись
 // к позиции в истории переходов (js/jumps.js).
 export function chapterTitle() {

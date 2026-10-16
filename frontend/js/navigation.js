@@ -5,17 +5,18 @@ import { prefs } from './core/prefs.js'
 import { view, currentWork, bookDoc, lastIdx, libWorks, navStack,
          setView, setCurrentWork, setBookDoc, setSelIndex, libMonitored } from './core/state.js'
 import { ttsStop } from './tts.js'
-import { loadLibrary } from './library.js'
+import { loadLibrary, updateBookIdentity } from './library.js'
 import { openReader, applyViewStyles, disposeReader } from './reader-core.js'
 import { isOffline, removeBook, downloadBook } from './core/offline.js'
 import { onSelectionChanged, hideSelPopup } from './highlights.js'
 import { initProgressBar } from './progress-bar.js'
 import { initChrome, attachDoubleTapFullscreen, toggleFullscreen,
-         setMoreBadge, setMoreExpanded } from './chrome.js'
+         setMoreBadge, setMoreExpanded, updateBookMeta } from './chrome.js'
 import { initTranslate, onTranslateDocLoaded } from './translate.js'
 import { exitFullscreen, exitMeansBack, takeButtonExit } from './core/fullscreen.js'
 import { keyNavAction } from './core/keynav.js'
 import { initJumps } from './jumps.js'
+import { renameBook } from './book-identity.js'
 import { turnResume } from './core/resume-cache.js'
 
 // ===================== Навигация и панели =====================
@@ -371,3 +372,14 @@ $('#update-btn').addEventListener('click', async () => {
 })
 $('#search-btn').addEventListener('click', () => { openPanel('#search-panel'); $('#search-input').focus() })
 $('#panel-overlay').addEventListener('click', closePanels)
+
+$('#reader-rename').addEventListener('click', () => {
+  const work = currentWork
+  if (!work) return
+  closePanels()
+  renameBook(work, (saved) => {
+    Object.assign(work, saved)
+    updateBookIdentity(saved)
+    if (currentWork?.id === work.id) updateBookMeta(work)
+  })
+})

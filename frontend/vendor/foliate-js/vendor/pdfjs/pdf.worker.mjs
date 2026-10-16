@@ -1,4 +1,4 @@
-import './compat.mjs'
+import './compat.mjs?v=20261016-1'
 /**
  * @licstart The following is the entire license notice for the
  * JavaScript code in this page

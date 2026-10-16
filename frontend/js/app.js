@@ -6,6 +6,7 @@ import { api, onAuthRequired } from './core/api.js'
 import { reconcileOffline } from './core/offline.js'
 import './core/prefs.js'
 import { loadLibrary } from './library.js'
+import { parseReaderUrl } from './core/reader-url.js'
 import { openReader } from './reader-core.js'
 import { openBookPage } from './book-page.js'
 import { syncSettingsUI } from './settings.js'
@@ -29,14 +30,7 @@ document.documentElement.classList.remove('restoring-book')
 // параллельно с загрузкой библиотеки и НЕ показывая её. Иначе наполненная
 // сетка мелькает ~секунду, пока loadLibrary дорендерится, и только потом
 // поверх открывается книга.
-const _restore = (() => {
-  const h = (location.hash.match(/^#read\/(.+)$/) || [])[1]
-  if (h) return { id: decodeURIComponent(h), fromHash: true }
-  const b = (location.hash.match(/^#book\/(.+)$/) || [])[1]
-  if (b) return { id: decodeURIComponent(b), fromHash: true, page: true }
-  const q = new URLSearchParams(location.search).get('open')
-  return q ? { id: q, fromHash: false } : null
-})()
+const _restore = parseReaderUrl(new URL(location.href))
 
 if (_restore) {
   // Прячем библиотеку до первого рендера сетки — читалка откроется поверх.
@@ -52,7 +46,10 @@ if (_restore) {
       return
     }
     if (_restore.page) await openBookPage(work)
-    else await openReader(work)
+    else await openReader(work, {
+      fmt: _restore.fmt,
+      original: !_restore.fmt && new URLSearchParams(location.search).get('original') === '1',
+    })
     // Библиотеку грузим ПОСЛЕ того, как книга открылась, и только в простое.
     // Раньше loadLibrary() стартовал первым «в фоне» — но фон тут условный:
     // список тянется секунды, а рендер ~1400 карточек занимает главный поток,

@@ -54,14 +54,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Reader — фанфики и Calibre", lifespan=lifespan)
 
 
-# UI-ассеты (html/js/css) — always-revalidate. StaticFiles не слал Cache-Control,
+# UI-ассеты (включая модули PDF и манифесты) — always-revalidate. StaticFiles не слал Cache-Control,
 # и мобильные браузеры кешировали старые css/js эвристически (правки не доезжали).
 # no-cache = браузер обязан ревалидировать по ETag (быстрый 304, но всегда свежий).
 @app.middleware("http")
 async def _no_cache_ui(request, call_next):
     resp = await call_next(request)
     p = request.url.path
-    if p == "/" or p.endswith((".html", ".js", ".css")):
+    if p == "/" or p.endswith((
+        ".html", ".js", ".mjs", ".css", ".json", ".webmanifest",
+        ".svg", ".png", ".ico", ".woff", ".woff2",
+    )):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
     return resp
 

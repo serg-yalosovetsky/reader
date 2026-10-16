@@ -1,8 +1,10 @@
 const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toString()
 
-import './vendor/pdfjs/pdf.mjs'
+// Менять при обновлении PDF.js или compat, вместе с импортами compat.
+export const PDFJS_BUILD = '20261016-1'
+import './vendor/pdfjs/pdf.mjs?v=20261016-1'
 const pdfjsLib = globalThis.pdfjsLib
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsPath('pdf.worker.mjs')
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsPath(`pdf.worker.mjs?v=${PDFJS_BUILD}`)
 
 const fetchText = async url => await (await fetch(url)).text()
 

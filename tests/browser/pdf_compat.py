@@ -2,6 +2,8 @@
 
 PYTHONPATH=/path/to/playwright python tests/browser/pdf_compat.py
 """
+import os
+import re
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -42,7 +44,7 @@ def pdf():
 
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    browser = p.chromium.launch(headless=True, executable_path=os.environ.get('CHROME_BIN'), args=['--no-sandbox'])
     page = browser.new_page()
     page.add_init_script(DISABLE)
     def serve(route):
@@ -54,14 +56,14 @@ with sync_playwright() as p:
             route.fulfill(status=404, body='')
     page.route('http://reader.test/**', serve)
     # Удаление API внутри worker выполняется ДО импорта исправленной сборки.
-    page.route('**/pdf.worker.mjs', lambda route: route.fulfill(
-        content_type='text/javascript', body=DISABLE + "\nawait import('./compat.mjs');\n" + (ROOT / 'frontend/vendor/foliate-js/vendor/pdfjs/pdf.worker.mjs').read_text().replace("import './compat.mjs'", '')))
+    page.route('**/pdf.worker.mjs?*', lambda route: route.fulfill(
+        content_type='text/javascript', body=DISABLE + "\nawait import('./compat.mjs?v=20261016-1');\n" + re.sub(r"import './compat\.mjs[^']*'", '', (ROOT / 'frontend/vendor/foliate-js/vendor/pdfjs/pdf.worker.mjs').read_text())))
     page.route('http://reader.test/pdf-test', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><html></html>'))
     page.goto('http://reader.test/pdf-test')
     result = page.evaluate('''async data => {
-      const base = new URL('/frontend/vendor/foliate-js/vendor/pdfjs/', location.href);
-      await import(new URL('pdf.mjs', base));
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.mjs', base).href;
+      await import('/frontend/vendor/foliate-js/pdf.js');
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc.endsWith('?v=20261016-1'))
+        throw new Error('URL воркера без версии');
       const task = pdfjsLib.getDocument({data: new Uint8Array(data)});
       const doc = await task.promise;
       const page = await doc.getPage(1);

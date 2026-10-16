@@ -15,6 +15,13 @@ export function convertible(work) {
   return CONVERTIBLE.has(String(work?.file_format || '').toLowerCase())
 }
 
+// Обратный переход доступен только при готовой EPUB-версии.
+export function formatSwitchTarget(work, format, epubReady = false) {
+  if (!convertible(work) || !format) return null
+  if (format === 'epub') return String(work.file_format).toLowerCase()
+  return epubReady ? 'epub' : null
+}
+
 // Читать PDF как EPUB автоматически (по умолчанию — да).
 export function pdfAsEpub() { return localStorage.getItem(PREF_KEY) !== '0' }
 export function setPdfAsEpub(on) { localStorage.setItem(PREF_KEY, on ? '1' : '0') }

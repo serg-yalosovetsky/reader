@@ -290,6 +290,7 @@ function renderBookPage(w) {
           <button id="bp-finished" type="button" class="bp-sec-btn${finished ? ' is-on' : ''}" aria-pressed="${finished}" title="${finished ? 'Снять «прочитано»' : 'Отметить прочитанной'}. Отметка ставится сама на последней странице; здесь — вручную (книги с хвостом «об авторе»)">${btnInner(finished ? 'circle-check' : 'circle', 'Прочитана')}</button>
           ${w.monitored ? `<button id="bp-check" type="button" class="bp-sec-btn" aria-label="Проверить обновления" title="Спросить сайт, не появились ли новые главы">${btnInner('refresh', 'Проверить')}</button>` : ''}
           ${!w.monitored && canWatch(w) ? `<button id="bp-watch" type="button" class="bp-sec-btn" aria-label="Следить за обновлениями" title="Поставить книгу на автообновление и сразу проверить новые главы">${btnInner('bell', 'Следить')}</button>` : ''}
+          ${convertible(w) ? `<button id="bp-read-orig" type="button" class="bp-sec-btn" title="Открыть исходный файл как есть, без EPUB-версии">${btnInner('file-text', `${escapeHtml(String(w.file_format || '').toUpperCase())} в оригинале`)}</button>` : ''}
           <a class="bp-sec-btn" href="/api/reader/${w.id}/file?original=1" download aria-label="Скачать файл книги">${btnInner('download', 'Скачать')}</a>
           <div class="bp-more">
             <button id="bp-more" type="button" class="bp-sec-btn bp-more-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="bp-menu" aria-label="Ещё: другие действия">${btnInner('dots', '<span class="bp-lbl-m">Ещё</span>')}</button>
@@ -301,8 +302,7 @@ function renderBookPage(w) {
               <button id="bp-rename" type="button" class="bp-mi" role="menuitem" title="Исправить название и автора">${btnInner('pencil', 'Переименовать')}</button>
               <button id="bp-mirror" type="button" class="bp-mi" role="menuitem" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">${btnInner('link', 'Добавить зеркало')}</button>
               ${convertible(w) ? `
-              <button id="bp-epub" type="button" class="bp-mi" role="menuitem" data-keep title="Собрать перетекающий текст вместо страниц-картинок">${btnInner('refresh', 'Сделать EPUB-версию')}</button>
-              <button id="bp-read-orig" type="button" class="bp-mi" role="menuitem" title="Открыть исходный файл как есть">${btnInner('file-text', 'Читать оригинал файла')}</button>`
+              <button id="bp-epub" type="button" class="bp-mi" role="menuitem" data-keep title="Собрать перетекающий текст вместо страниц-картинок">${btnInner('refresh', 'Сделать EPUB-версию')}</button>`
               : ''}
               <div class="bp-sep" role="separator"></div>
               <button id="bp-gencover" type="button" class="bp-mi" role="menuitem" data-keep>${btnInner('wand', 'Сгенерировать обложку')}</button>

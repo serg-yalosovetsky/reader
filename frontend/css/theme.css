@@ -246,7 +246,8 @@ body.reader-open { height: 100%; overflow: hidden; }
 .reader-title[data-mode="author"] { font-style: italic; }
 .reader-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px;
   border-radius: 6px; }
-.reader-top-actions { display: flex; gap: 6px; }
+.reader-top-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#reader-format-btn { font-size: 12px; font-weight: 700; }
 
 /* Панель озвучивания (TTS) */
 .tts-bar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
@@ -804,8 +805,8 @@ a.bp-author:hover { color: var(--accent); text-decoration: underline; }
   .bp-badges { margin: 8px 0 6px; }
   .bp-actions { flex-direction: column; align-items: stretch; margin-top: 0; gap: 10px; }
   .bp-primary { width: 100%; }
-  .bp-sec { flex-wrap: nowrap; width: 100%; gap: 8px; }
-  .bp-sec > .bp-sec-btn, .bp-sec > .bp-more { flex: 1 1 0; min-width: 0; }
+  .bp-sec { flex-wrap: wrap; width: 100%; gap: 8px; }
+  .bp-sec > .bp-sec-btn, .bp-sec > .bp-more { flex: 1 1 90px; min-width: 0; }
   .bp-sec-btn {
     flex-direction: column; gap: 4px; min-height: 56px; padding: 8px 2px;
     font-size: 13px; line-height: 1.15;

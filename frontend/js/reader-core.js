@@ -21,7 +21,7 @@ import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { readerUrl } from './core/reader-url.js'
-import { convertible, pdfAsEpub, ensureEpub } from './core/convert.js'
+import { convertible, pdfAsEpub, ensureEpub, convertStatus, formatSwitchTarget } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
 import { collapse } from '../vendor/foliate-js/epubcfi.js'
 import { chapterDate } from './core/chapterdate.js'
@@ -34,6 +34,29 @@ let openGeneration = 0
 let opening = false
 let openedFile = null
 let originalFile = false
+
+// Общий путь открытия сохраняет позицию и переносит долю между форматами.
+let formatTarget = null
+function paintFormatSwitch(epubReady = false) {
+  const btn = $('#reader-format-btn')
+  formatTarget = formatSwitchTarget(currentWork, currentFormat, epubReady)
+  btn.hidden = !formatTarget
+  btn.textContent = formatTarget === 'epub' ? 'EPUB' : (formatTarget || '').toUpperCase()
+  btn.title = formatTarget === 'epub' ? 'Читать EPUB-версию' : 'Читать оригинал файла'
+  btn.setAttribute('aria-label', btn.title)
+}
+document.addEventListener('reader-format-change', () => {
+  paintFormatSwitch()
+  if (!convertible(currentWork) || !currentFormat || currentFormat === 'epub') return
+  const generation = openGeneration
+  convertStatus(currentWork.id).then(st => {
+    if (generation === openGeneration) paintFormatSwitch(!!st.ready)
+  }).catch(e => logErr('format switch status', e))
+})
+$('#reader-format-btn').addEventListener('click', () => {
+  if (!formatTarget || !currentWork) return
+  openReader(currentWork, formatTarget === 'epub' ? { fmt: 'epub' } : { original: true })
+})
 
 // Якоря одной позиции: старые записи (кеш, сервер) хранят 12 слов, новые — 24.
 function sameAnchor(a, b) {

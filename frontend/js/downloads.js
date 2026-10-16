@@ -7,7 +7,7 @@ import { api } from './core/api.js'
 
 const POLL_MS = 3000
 const COLLAPSE_KEY = 'reader:dlCollapsed'
-const UNIT = { chapters: 'гл.', pages: 'стр.' }
+const UNIT = { chapters: 'гл.', pages: 'стр.', bytes: 'байт' }
 
 export function formatElapsed(sec) {
   if (sec == null || !Number.isFinite(sec)) return ''
@@ -45,7 +45,7 @@ export function describeJob(job) {
     const t = formatElapsed(job.elapsed_s)
     if (t) parts.push(t)
   } else if (job.status === 'done') {
-    parts.push('готово')
+    parts.push(job.kind === 'upload' ? `добавлено: ${title}` : 'готово')
     const ch = job.work && job.work.chapters
     if (ch) parts.push(`${ch} гл.`)
     const t = formatElapsed(job.elapsed_s)
@@ -101,10 +101,23 @@ function setCollapsed(v) {
   try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0') } catch { /* см. выше */ }
 }
 
+const sending = new Map()
+export function updateUpload(job, loaded = 0, total = 0, error = null) {
+  sending.set(job.job_id, { ...job, status: error ? 'error' : 'running', error,
+    progress: { stage: 'отправка файла', done: loaded, total, unit: 'bytes' } })
+  setCollapsed(false)
+  userOpened = true
+  render(lastData)
+}
+export function finishUpload(jobId) {
+  sending.delete(jobId)
+  refreshDownloads()
+}
+
 function render(data) {
   lastData = data
-  const jobs = data.jobs || []
-  active = typeof data.active === 'number' ? data.active : countActive(jobs)
+  const jobs = [...sending.values(), ...(data.jobs || []).filter(j => !sending.has(j.job_id))]
+  active = sending.size ? countActive(jobs) : typeof data.active === 'number' ? data.active : countActive(jobs)
   const toggle = $('#dl-toggle')
   const panel = $('#dl-panel')
   const list = $('#dl-list')

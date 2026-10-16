@@ -1,7 +1,7 @@
 // Библиотека: список книг, ingest/upload, ReadEra-sync, тема библиотеки.
 import { $, escapeHtml, toast } from './core/dom.js'
 import { api } from './core/api.js'
-import { watchDownloads, onDownloadFinished } from './downloads.js'
+import { watchDownloads, updateUpload, finishUpload, onDownloadFinished } from './downloads.js'
 import { prefs, savePrefs } from './core/prefs.js'
 import { currentWork } from './core/state.js'
 import { libWorks, libCalibre, libHidden, libProgress, libUpdated, libMonitored,
@@ -708,28 +708,44 @@ $('#ingest-form').addEventListener('submit', async (e) => {
   }
 })
 
-// Ручная загрузка файла (работает уже на этапе 1).
+// Файлы используют ту же панель, что и добавление по ссылке.
 $('#upload-input').addEventListener('change', async (e) => {
-  const file = e.target.files[0]
-  if (!file) return
-  setIngestStatus('Загружаю файл…')
-  const fd = new FormData(); fd.append('file', file)
-  try {
-    const r = await fetch('/api/library/upload', { method: 'POST', body: fd })
-    if (!r.ok) throw new Error(await r.text())
-    // zip отдаёт сводку по архиву, одиночный файл — саму книгу.
-    const res = await r.json().catch(() => null)
-    if (res && typeof res.added === 'number') {
-      const dup = res.duplicates ? `, уже были: ${res.duplicates}` : ''
-      setIngestStatus(res.added ? `Добавлено книг: ${res.added}${dup}` : `Новых книг нет${dup}`)
-    } else {
-      setIngestStatus('Файл добавлен.')
-    }
-    await loadLibrary()
-  } catch (err) {
-    setIngestStatus('Ошибка загрузки: ' + err.message.slice(0, 160), { error: true })
-  }
+  const files = Array.from(e.target.files)
   e.target.value = ''
+  await Promise.allSettled(files.map(async file => {
+    let job
+    try {
+      job = await api.post('/api/library/upload/jobs', { filename: file.name })
+      watchDownloads(job.job_id)
+      updateUpload(job)
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', `/api/library/upload?job_id=${encodeURIComponent(job.job_id)}`)
+        xhr.upload.onprogress = event => updateUpload(job, event.loaded, event.lengthComputable ? event.total : 0)
+        xhr.upload.onload = () => finishUpload(job.job_id)
+        xhr.onerror = () => reject(new Error('обрыв связи при отправке файла'))
+        xhr.onabort = () => reject(new Error('отправка файла отменена'))
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve()
+          else {
+            let reason = `ошибка сервера ${xhr.status}`
+            try { reason = JSON.parse(xhr.responseText).detail || reason } catch {}
+            reject(new Error(reason))
+          }
+        }
+        const fd = new FormData(); fd.append('file', file)
+        xhr.send(fd)
+      })
+      finishUpload(job.job_id)
+      await loadLibrary()
+    } catch (err) {
+      if (job) {
+        api.post(`/api/library/upload/jobs/${encodeURIComponent(job.job_id)}/cancel`, {}).catch(() => {})
+        updateUpload(job, 0, 0, errText(err))
+      }
+      setIngestStatus('Ошибка загрузки: ' + errText(err), { error: true })
+    }
+  }))
 })
 
 // Синхронизация с ReadEra (импорт прогресса из бэкапа + экспорт веб-прогресса).

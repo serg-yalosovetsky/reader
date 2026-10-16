@@ -75,3 +75,9 @@ assert.equal(dl.shouldPoll('hidden', false), false)
 assert.equal(dl.shouldPoll('visible', false), true)
 
 console.log('ok: downloads panel')
+
+const uploaded = dl.describeJob({kind: 'upload', status: 'done', title: 'Моя книга', work: {title: 'Моя книга'}})
+assert.match(uploaded.sub, /добавлено: Моя книга/)
+const sending = dl.describeJob({kind: 'upload', status: 'running', title: 'file.pdf', progress: {done: 50, total: 100, unit: 'bytes', stage: 'отправка файла'}})
+assert.equal(sending.pct, 50)
+assert.match(sending.sub, /отправка файла/)

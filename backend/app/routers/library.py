@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 
 import os
 
-from .. import covers
+from .. import covers, upload_progress
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
 from ..upload_identity import clean_title, extract_identity
@@ -434,7 +434,7 @@ def _add_work(
     return work
 
 
-async def _import_one(session: Session, path: Path, title: str) -> tuple[Work, bool]:
+async def _import_one(session: Session, path: Path, title: str, job_id: str | None = None) -> tuple[Work, bool]:
     """Импортировать один файл книги. Возвращает (книга, новая ли она).
 
     Файловые операции — в поток: это async-обработчик, а sha1_of_file читает
@@ -451,18 +451,32 @@ async def _import_one(session: Session, path: Path, title: str) -> tuple[Work, b
     dest, _ = await anyio.to_thread.run_sync(import_file, path, sha1)
     # Название и автор — из самого файла (serg/tasks#1055); имя файла — последний
     # запасной вариант. Разбор читает файл → в поток, а не в event loop; сбой не роняет загрузку.
+    if job_id:
+        upload_progress.update(job_id, "извлечение метаданных")
     found_title, found_author = await anyio.to_thread.run_sync(
         extract_identity, path, fmt, title
     )
-    return (
-        _add_work(
-            session, found_title or clean_title(title) or "Без названия", fmt, dest, sha1, found_author
-        ),
-        True,
-    )
+    work = _add_work(session, found_title or clean_title(title) or "Без названия", fmt, dest, sha1, found_author)
+    from .. import bookmeta
+    meta = await anyio.to_thread.run_sync(bookmeta.extract_meta, str(dest), fmt)
+    # Название и автор уже выбраны extract_identity с отсевом хешей и заглушек.
+    meta = {k: v for k, v in (meta or {}).items() if k not in ("title", "author")}
+    if meta:
+        bookmeta.apply_meta(work, meta, overwrite=True)
+        session.add(work)
+        session.commit()
+    if job_id:
+        upload_progress.update(job_id, "извлечение обложки")
+    cover = await anyio.to_thread.run_sync(covers.extract_cover, str(dest), fmt, sha1)
+    if cover:
+        work.cover_path = str(cover)
+        work.cover_source = "embedded"
+        session.add(work)
+        session.commit()
+    return work, True
 
 
-async def _import_zip(session: Session, zip_path: Path) -> dict:
+async def _import_zip(session: Session, zip_path: Path, job_id: str | None = None) -> dict:
     """Импортировать книги из zip: один файл внутри — одна книга, много — много."""
     with tempfile.TemporaryDirectory() as td:
         try:
@@ -479,7 +493,7 @@ async def _import_zip(session: Session, zip_path: Path) -> dict:
         added: list[Work] = []
         duplicates: list[Work] = []
         for p in paths:
-            work, is_new = await _import_one(session, p, p.stem)
+            work, is_new = await _import_one(session, p, p.stem, job_id)
             (added if is_new else duplicates).append(work)
     return {
         "ok": True,
@@ -490,34 +504,63 @@ async def _import_zip(session: Session, zip_path: Path) -> dict:
     }
 
 
+class UploadJobIn(BaseModel):
+    filename: str
+
+
+@router.post("/upload/jobs")
+def create_upload_job(payload: UploadJobIn) -> dict:
+    return upload_progress.create(payload.filename)
+
+
+@router.post("/upload/jobs/{job_id}/cancel")
+def cancel_upload_job(job_id: str) -> dict:
+    upload_progress.update(job_id, "ошибка загрузки", error="отправка файла прервана — повторите загрузку")
+    return {"ok": True}
+
+
 @router.post("/upload", response_model=None)
 async def upload_book(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    job_id: str | None = None,
 ) -> Work | dict:
-    """Ручная загрузка EPUB/FB2/PDF либо zip-архива с книгами внутри."""
+    """Загрузка с этапами в общей панели; старый контракт ответа сохранён."""
     filename = file.filename or ""
-    suffix = Path(filename).suffix.lower()
-    is_zip = suffix == ".zip"
-    if not detect_format(filename) and not is_zip:
-        raise HTTPException(
-            400, "поддерживаются только .epub, .fb2, .pdf и .zip с книгами внутри"
-        )
-
-    # Сохраняем во временный файл: и sha1, и распаковка работают по файлу.
-    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    async with await anyio.open_file(tmp_path, "wb") as tmp:
-        while chunk := await file.read(1 << 20):
-            await tmp.write(chunk)
+    job_id = job_id or upload_progress.create(filename)["job_id"]
+    tmp_path = None
     try:
+        upload_progress.update(job_id, "приём файла")
+        suffix = Path(filename).suffix.lower()
+        is_zip = suffix == ".zip"
+        if not detect_format(filename) and not is_zip:
+            raise HTTPException(400, "поддерживаются только .epub, .fb2, .pdf и .zip с книгами внутри")
+        fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        async with await anyio.open_file(tmp_path, "wb") as tmp:
+            while chunk := await file.read(1 << 20):
+                await tmp.write(chunk)
+        upload_progress.update(job_id, "обработка файла")
         if is_zip:
-            return await _import_zip(session, tmp_path)
-        work, _ = await _import_one(session, tmp_path, Path(filename).stem)
-        return work
+            result = await _import_zip(session, tmp_path, job_id)
+            works = result["works"]
+        else:
+            result, _ = await _import_one(session, tmp_path, Path(filename).stem, job_id)
+            works = [{"id": result.id, "title": result.title}]
+        upload_progress.update(job_id, "добавлено", works=works)
+        return result
+    except Exception as exc:
+        session.rollback()
+        reason = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        try:
+            upload_progress.update(job_id, "ошибка загрузки", error=reason)
+        except HTTPException:
+            pass
+        raise
     finally:
-        await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
+        if tmp_path:
+            await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
 
 
 class IdentityIn(BaseModel):

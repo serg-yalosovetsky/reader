@@ -391,8 +391,16 @@ def mark_shutdown() -> int:
         rows = s.exec(
             select(IngestJob).where(IngestJob.status == "running", IngestJob.worker_boot == WORKER_BOOT)
         ).all()
-        info = [(r.id, r.query) for r in rows]
+        info = [(r.id, r.query) for r in rows if r.kind != "upload"]
         for r in rows:
+            if r.kind == "upload":
+                r.status = "error"
+                r.error = "загрузка прервана перезапуском сервиса — отправьте файл заново"
+                log.warning("загрузка %s прервана перезапуском сервиса", r.id)
+                r.finished_at = t
+                r.updated_at = t
+                s.add(r)
+                continue
             r.status = "queued"
             r.attempts = max(0, r.attempts - 1)
             r.interruptions += 1
@@ -417,8 +425,16 @@ def recover_on_startup() -> int:
                 IngestJob.worker_boot != WORKER_BOOT,
             )
         ).all()
-        info = [(r.id, r.query, r.attempts, r.max_attempts) for r in rows]
+        info = [(r.id, r.query, r.attempts, r.max_attempts) for r in rows if r.kind != "upload"]
         for r in rows:
+            if r.kind == "upload":
+                r.status = "error"
+                r.error = "загрузка прервана перезапуском сервиса — отправьте файл заново"
+                log.warning("загрузка %s прервана перезапуском сервиса", r.id)
+                r.finished_at = t
+                r.updated_at = t
+                s.add(r)
+                continue
             r.status = "queued"
             r.interruptions += 1
             r.interrupted_by = "crash"

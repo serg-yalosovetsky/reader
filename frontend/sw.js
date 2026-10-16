@@ -13,10 +13,10 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v14'
+const SHELL_CACHE = 'reader-shell-v15'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
-const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE, 'reader-recent-books-v1'])
+const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE, 'reader-recent-books-v1', 'reader-pdf-chunks-v1'])
 
 // Запасной список на случай, если /api/shell-assets недоступен при установке.
 // Основной список отдаёт сервер обходом каталога (см. FALLBACK ниже и
@@ -192,6 +192,10 @@ self.addEventListener('fetch', (e) => {
 
   // Файл книги: сначала books-кэш (сохранённое офлайн), иначе сеть.
   if (/^\/api\/reader\/\d+\/file$/.test(url.pathname)) {
+    if (req.headers.has('Range')) {
+      e.respondWith(fetch(req))
+      return
+    }
     e.respondWith((async () => {
       const c = await caches.open(BOOKS_CACHE)
       const hit = await c.match(req.url)
@@ -210,6 +214,11 @@ self.addEventListener('fetch', (e) => {
     // Статусы фоновых заданий не кэшируем: кэшированный «done» прошлой
     // проверки выглядел бы как итог текущей, а «running» добавления книги при
     // сбое сети крутил бы ожидание вечно.
+    if (/^\/api\/reader\/\d+\/pdf-crop$/.test(url.pathname)) {
+      // pending нельзя сохранять в API_CACHE: готовые поля могут появиться позже.
+      e.respondWith(fetch(req).catch(() => offlineResponse()))
+      return
+    }
     if (url.pathname === '/api/monitored/check/status'
         || url.pathname.startsWith('/api/ingest/jobs')) {  // и /jobs/{id}, и список /jobs?…
       e.respondWith(fetch(req).catch(() => offlineResponse()))

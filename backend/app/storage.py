@@ -53,6 +53,10 @@ def import_file(src: Path, sha1: str | None = None) -> tuple[Path, str]:
             with contextlib.suppress(OSError):
                 tmp.unlink()
             raise
+    if ext == ".pdf":
+        from .pdf_crop import ensure
+
+        ensure(dest, sha1)
     return dest, sha1
 
 

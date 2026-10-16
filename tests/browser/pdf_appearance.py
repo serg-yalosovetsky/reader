@@ -68,7 +68,8 @@ with sync_playwright() as p:
       await book.setPDFOptions({pdfCrop: false, theme: 'day'});
       const section = await book.sections[0].load();
       const original = section.getSize();
-      await book.setPDFOptions({pdfCrop: true, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: false});
+      // Границы теперь приходят с сервера; измерение canvas клиентом запрещено.
+      await book.setPDFOptions({pdfCrop: true, cropData: {status: 'ready', book: [.08,.18,.92,.92], pages: [[.08,.18,.92,.92]]}, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: false});
       const cropped = section.getSize();
       const frame = document.createElement('iframe');
       document.body.append(frame);

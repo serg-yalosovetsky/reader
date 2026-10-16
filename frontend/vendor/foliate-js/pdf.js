@@ -1,4 +1,5 @@
-import { contentBox, unionBoxes, stableBox, fullBox, darkTheme, imageBoxes } from './pdf-appearance.js'
+import { openPDFSource, CHUNK_SIZE, prefetchPages } from './pdf-range.js'
+import { unionBoxes, fullBox, darkTheme, imageBoxes } from './pdf-appearance.js'
 const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toString()
 
 // Менять при обновлении PDF.js или compat, вместе с импортами compat.
@@ -180,21 +181,30 @@ const makeTOCItem = item => ({
 })
 
 export const makePDF = async file => {
-    const transport = new pdfjsLib.PDFDataRangeTransport(file.size, [])
-    transport.requestDataRange = (begin, end) => {
+    const rangeMode = typeof file === 'string' || !!file.url
+    const source = rangeMode ? await openPDFSource(file, pdfjsLib) : null
+    const transport = source?.transport ?? new pdfjsLib.PDFDataRangeTransport(file.size, [])
+    if (!rangeMode) transport.requestDataRange = (begin, end) => {
         file.slice(begin, end).arrayBuffer().then(chunk => {
             transport.onDataRange(begin, chunk)
         })
     }
-    const pdf = await pdfjsLib.getDocument({
+    const loading = pdfjsLib.getDocument({
+        disableAutoFetch: true, disableStream: true, rangeChunkSize: CHUNK_SIZE,
         range: transport,
         cMapUrl: pdfjsPath('cmaps/'),
         standardFontDataUrl: pdfjsPath('standard_fonts/'),
         isEvalSupported: false,
-    }).promise
+    })
+    let readyBook
+    let rejectRange
+    const rangeError = new Promise((_, reject) => { rejectRange = reject })
+    source?.onError(error => { rejectRange(error); void loading.destroy().catch(() => {}); if (readyBook) readyBook.onPDFError?.(error) })
+    const pdf = await Promise.race([loading.promise, rangeError])
 
-    const book = { rendition: { layout: 'pre-paginated' } }
+    const book = { rendition: { layout: 'pre-paginated' }, rangeMode, rev: source?.rev }
 
+    readyBook = book
     const { metadata, info } = await pdf.getMetadata() ?? {}
     // TODO: for better results, parse `metadata.getRaw()`
     book.metadata = {
@@ -213,57 +223,45 @@ export const makePDF = async file => {
     const outline = await pdf.getOutline()
     book.toc = outline?.map(makeTOCItem)
 
-    let options = {}, sampled, destroyed = false
-    const bounds = new Map()
-    const measure = i => {
-        if (!bounds.has(i)) bounds.set(i, (async () => {
-            const page = await pdf.getPage(i + 1)
-            const base = page.getViewport({ scale: 1 })
-            const viewport = page.getViewport({ scale: 320 / Math.max(base.width, base.height) })
-            const canvas = document.createElement('canvas')
-            canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height)
-            const canvasContext = canvas.getContext('2d', { willReadFrequently: true })
-            await page.render({ canvasContext, viewport }).promise
-            return contentBox(canvasContext.getImageData(0, 0, canvas.width, canvas.height))
-        })())
-        return bounds.get(i)
-    }
-    let common = null
-    book.setPDFOptions = async value => {
-        options = value
-        // При ручном включении обрезки уже открытая страница доступна сразу;
-        // начальное открытие (пустой cache) не ждёт даже её измерения.
-        if (options.pdfCrop) await Promise.all([...cache.keys()].map(async i => {
-            if (!pageBoxes.has(i)) pageBoxes.set(i, await measure(i))
-        }))
-        if (options.pdfCrop && !sampled) {
-            const key = value.rev ? `reader:pdf-bbox:v1:${value.rev}` : null
-            try {
-                const box = key && JSON.parse(localStorage.getItem(key))
-                if (box && ['left', 'top', 'right', 'bottom'].every(k => Number.isFinite(box[k])))
-                    { common = box; sampled = true; return }
-            } catch { /* Нет доступа к localStorage. */ }
-            sampled = true
-            // Первый canvas не ждёт восьми пробных рендеров.
-            const idle = globalThis.requestIdleCallback ?? (fn => setTimeout(fn, 100))
-            idle(async () => {
-                try {
-                    const indices = [...new Set(Array.from({ length: Math.min(8, pdf.numPages) }, (_, n) =>
-                        Math.round(n * (pdf.numPages - 1) / Math.max(1, Math.min(8, pdf.numPages) - 1))))]
-                    const boxes = []
-                    for (const i of indices) {
-                        await new Promise(resolve => idle(resolve))
-                        if (destroyed) return
-                        boxes.push(await measure(i))
-                    }
-                    common = stableBox(boxes)
-                    try { if (key) localStorage.setItem(key, JSON.stringify(common)) } catch {}
-                    if (!destroyed && options.pdfCrop) book.onPDFCropReady?.()
-                } catch { /* Закрытая книга или ошибка фоновой выборки. */ }
-            })
+    let options = {}, destroyed = false, common = null, cropTimer, cropLoading = false, cropReady = false
+    const pageBoxes = new Map()
+    const asBox = b => Array.isArray(b) && b.length === 4 && b.every(Number.isFinite)
+        ? { left: b[0], top: b[1], right: b[2], bottom: b[3] } : null
+    const loadCrop = async () => {
+        cropTimer = null
+        if (destroyed || cropLoading || cropReady || !options.cropURL) return
+        cropLoading = true
+        try {
+            const response = await fetch(options.cropURL, { credentials: 'same-origin' })
+            if (!response.ok) return
+            // Офлайн-копия может относиться к предыдущей редакции книги.
+            const revision = response.headers.get('X-Book-SHA1')
+            if (revision && options.rev && revision !== options.rev) return
+            const result = await response.json()
+            if (destroyed) return
+            if (result.status === 'ready') {
+                common = asBox(result.book)
+                result.pages.forEach((b, i) => pageBoxes.set(i, asBox(b)))
+                cropReady = true
+                book.onPDFCropReady?.()
+            }
+        } catch { /* Офлайн читаем без обрезки до следующего обращения. */ }
+        finally {
+            cropLoading = false
+            if (!destroyed && !cropReady && options.pdfCrop)
+                cropTimer = setTimeout(loadCrop, 3000)
         }
     }
-    const pageBoxes = new Map()
+    book.setPDFOptions = async value => {
+        const path = rangeMode ? new URL(typeof file === 'string' ? file : file.url, location.href).pathname : ''
+        options = { ...value, cropURL: value.cropURL ?? (file.cropURL || (/^\/api\/reader\/\d+\/file$/.test(path) ? path.replace(/file$/, 'pdf-crop') : null)) }
+        if (value.cropData?.status === 'ready') {
+            common = asBox(value.cropData.book)
+            value.cropData.pages.forEach((b, i) => pageBoxes.set(i, asBox(b)))
+            cropReady = true
+        }
+        if (options.pdfCrop && !cropTimer) void loadCrop()
+    }
     const cache = new Map()
     const dimensions = new Map()
     const getBox = i => options.pdfCrop
@@ -271,6 +269,38 @@ export const makePDF = async file => {
     const sizeOf = i => {
         const base = dimensions.get(i), box = getBox(i)
         return { width: base.width * (box.right - box.left), height: base.height * (box.bottom - box.top) }
+    }
+    let prefetchGeneration = 0, prefetchRunning = false, activePages = []
+    const prepared = new Set()
+    const idle = globalThis.requestIdleCallback ?? (fn => setTimeout(fn, 100))
+    book.prefetch = indices => {
+        if (!rangeMode || destroyed) return
+        if (indices.length === activePages.length && indices.every((i, n) => i === activePages[n])) return
+        activePages = indices
+        ++prefetchGeneration
+        if (prefetchRunning) return
+        prefetchRunning = true
+        // Один исполнитель: при быстром перелистывании остаётся только один
+        // уже начатый getOperatorList, следующая страница берётся из новой очереди.
+        idle(async () => {
+            try {
+                let generation
+                do {
+                    generation = prefetchGeneration
+                    const wanted = [...new Set(activePages.flatMap(i => prefetchPages(i, pdf.numPages)))]
+                    for (const index of wanted) {
+                        if (destroyed || generation !== prefetchGeneration) break
+                        if (prepared.has(index)) continue
+                        const page = await pdf.getPage(index + 1)
+                        if (destroyed || generation !== prefetchGeneration) break
+                        await page.getOperatorList()
+                        prepared.add(index)
+                        await new Promise(resolve => idle(resolve))
+                    }
+                } while (!destroyed && generation !== prefetchGeneration)
+            } catch { /* Ошибку транспорта показывает основной путь чтения. */ }
+            finally { prefetchRunning = false }
+        })
     }
     book.sections = Array.from({ length: pdf.numPages }).map((_, i) => ({
         id: i,
@@ -287,6 +317,11 @@ export const makePDF = async file => {
             const url = await renderPage(await pdf.getPage(i + 1), false,
                 () => getBox(i),
                 () => options)
+            const onZoom = url.onZoom
+            url.onZoom = async args => {
+                await onZoom(args)
+                prepared.add(i)
+            }
             cache.set(i, url)
             return url
         },
@@ -324,6 +359,9 @@ export const makePDF = async file => {
     book.getCover = async () => renderPage(await pdf.getPage(1), true)
     book.destroy = () => {
         destroyed = true
+        clearTimeout(cropTimer)
+        ++prefetchGeneration
+        transport.abort?.()
         for (const section of cache.values()) URL.revokeObjectURL(section.src)
         cache.clear()
         return pdf.destroy()

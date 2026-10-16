@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import threading
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import Request, APIRouter, Depends, File, HTTPException, UploadFile
@@ -228,6 +229,19 @@ def _file_etag(path: Path) -> str:
     return f'"{hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
 
 
+@lru_cache(maxsize=128)
+def _file_sha1(path: str, mtime_ns: int, size: int) -> str:
+    """Хеш старого/конвертированного файла считаем один раз на редакцию."""
+    from ..storage import sha1_of_file
+
+    return sha1_of_file(Path(path))
+
+
+def _path_sha1(path: Path) -> str:
+    stat = path.stat()
+    return _file_sha1(str(path), stat.st_mtime_ns, stat.st_size)
+
+
 def _not_modified(request, path: Path, fmt: str) -> Response | None:
     """304 без тела, если у клиента уже лежит эта же версия файла.
 
@@ -299,6 +313,31 @@ def _thumb(src: Path, width: int) -> Path | None:
         return None
 
 
+@router.get("/{work_id}/pdf-crop")
+def get_pdf_crop(request: Request, work_id: int, session: Session = Depends(get_session)):
+    from .. import pdf_crop
+    from fastapi.responses import JSONResponse
+
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "книга не найдена")
+    if work.file_format != "pdf" or not work.file_path:
+        raise HTTPException(400, "обрезка доступна только для PDF")
+    path = Path(work.file_path)
+    if not path.exists():
+        raise HTTPException(410, "файл книги отсутствует на диске")
+    sha1 = work.sha1 or _path_sha1(path)
+    result = pdf_crop.ensure(path, sha1)
+    if result["status"] == "pending":
+        return JSONResponse(result, headers={"Cache-Control": "no-store", "Retry-After": "3"})
+    etag = f'"pdf-crop-v1-{sha1}"'
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache", "X-Book-SHA1": sha1}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(result, headers=headers)
+
+
+@router.head("/{work_id}/file")
 @router.get("/{work_id}/file")
 def get_book_file(
     request: Request, work_id: int, original: bool = False
@@ -322,14 +361,17 @@ def get_book_file(
         is_calibre_link = work.site == "calibre" and not work.file_path
         file_path = work.file_path
         file_format = work.file_format
+        sha1 = work.sha1 or ""
         converted = work.converted_path if work.converted_status == "ready" else ""
 
     # EPUB-версия готова — отдаём её (оригинал остаётся доступен по original=1).
     if converted and not original:
         cpath = Path(converted)
         if cpath.exists():
+            converted_sha1 = _path_sha1(cpath)
             fresh = _not_modified(request, cpath, "epub")
             if fresh is not None:
+                fresh.headers["X-Book-SHA1"] = converted_sha1
                 return fresh
             resp = FileResponse(
                 cpath, media_type=_MEDIA["epub"], filename=cpath.name
@@ -337,6 +379,7 @@ def get_book_file(
             # См. комментарий ниже: no-cache = «храни, но валидируй», а не «не храни».
             resp.headers["Cache-Control"] = "no-cache"
             resp.headers["X-Book-Format"] = "epub"
+            resp.headers["X-Book-SHA1"] = converted_sha1
             return resp
 
     if is_calibre_link:
@@ -352,9 +395,17 @@ def get_book_file(
         path = Path(file_path)
         if not path.exists():
             raise HTTPException(410, "файл книги отсутствует на диске")
+    # Старые записи и ссылки Calibre могут ещё не иметь SHA-1 в Work.
+    if not sha1:
+        sha1 = _path_sha1(path)
+    if file_format == "pdf":
+        from ..pdf_crop import ensure
+
+        ensure(path, sha1)
     media = _MEDIA.get(file_format, "application/octet-stream")
     fresh = _not_modified(request, path, file_format or "")
     if fresh is not None:
+        fresh.headers["X-Book-SHA1"] = sha1
         return fresh
     resp = FileResponse(path, media_type=media, filename=path.name)
     # Раньше здесь стоял no-store, и книга ехала по сети при КАЖДОМ открытии —
@@ -365,6 +416,7 @@ def get_book_file(
     # меняется файл, меняется ETag, устаревшая версия не отдаётся.
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Book-Format"] = file_format or ""
+    resp.headers["X-Book-SHA1"] = sha1
     return resp
 
 

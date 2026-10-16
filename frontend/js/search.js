@@ -20,7 +20,8 @@ $('#search-form').addEventListener('submit', async (e) => {
   // OR-поиск: «слово1|слово2» → несколько последовательных запросов.
   const terms = q.split('|').map(t => t.trim()).filter(Boolean)
   const isMulti = terms.length > 1
-  meta.textContent = isMulti ? `Поиск по ${terms.length} словам…` : 'Поиск…'
+  const warning = view.book?.rangeMode ? 'Поиск загружает всю книгу… ' : ''
+  meta.textContent = warning + (isMulti ? `Поиск по ${terms.length} словам…` : 'Поиск…')
   let count = 0
   try {
     for (const term of terms) {
@@ -34,11 +35,11 @@ $('#search-form').addEventListener('submit', async (e) => {
             const lbl = isMulti ? ((r.label ? r.label + ' ' : '') + '[' + term + ']') : r.label
             results.append(searchResult(lbl, sub))
           }
-          meta.textContent = `Найдено: ${count}`
+          meta.textContent = warning + `Найдено: ${count}`
         } else if (typeof r.progress === 'number') {
-          meta.textContent = isMulti
+          meta.textContent = warning + (isMulti
             ? `«${term}»: ${Math.round(r.progress * 100)}% (всего ${count})`
-            : `Поиск… ${Math.round(r.progress * 100)}% (найдено ${count})`
+            : `Поиск… ${Math.round(r.progress * 100)}% (найдено ${count})`)
         }
       }
     }

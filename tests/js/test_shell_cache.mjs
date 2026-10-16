@@ -16,8 +16,8 @@ const self = {
   addEventListener: (name, fn) => { handlers[name] = fn },
 }
 const context = vm.createContext({ self, URL, Response, setTimeout, clearTimeout,
-  caches: { open: async name => { assert.equal(name, 'reader-shell-v14'); return cache },
-    keys: async () => ['reader-shell-v12', 'reader-shell-v14', 'reader-books-v1', 'reader-recent-books-v1'],
+  caches: { open: async name => { assert.equal(name, 'reader-shell-v15'); return cache },
+    keys: async () => ['reader-shell-v12', 'reader-shell-v15', 'reader-books-v1', 'reader-recent-books-v1', 'reader-pdf-chunks-v1'],
     delete: async name => removed.push(name) },
   fetch: async req => {
     if (offline) throw Error('нет сети')
@@ -46,3 +46,8 @@ for (const module of ['pdf.mjs', 'pdf.worker.mjs', 'compat.mjs']) {
   offline = false
 }
 console.log('ok: SW версии модулей и удаление старой оболочки')
+
+let rangeResponse
+handlers.fetch({ request: { url: 'https://reader.test/api/reader/1/file?original=1', method: 'GET',
+  headers: new Headers({Range:'bytes=0-100'}) }, respondWith: promise => { rangeResponse = promise } })
+assert.equal((await rangeResponse).url, 'https://reader.test/api/reader/1/file?original=1')

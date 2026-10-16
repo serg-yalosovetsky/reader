@@ -1,3 +1,4 @@
+import { checkPDFResponse } from '../vendor/foliate-js/pdf-range.js'
 // Ядро читалки: открытие книги, релокейт/прогресс, стили книги, TOC.
 import { setMenuFormat } from './menu-autohide.js'
 import { $, toast } from './core/dom.js'
@@ -221,7 +222,8 @@ async function openReaderImpl(work, opts = {}) {
   })
   if (!current()) return
   const cachedBase = resumeBasePosition()
-  let resp = opts.original ? null : await cachedBook(work.id)
+  let resp = await cachedBook(work.id)
+  if (opts.original && resp?.headers.get('X-Book-Format') !== 'pdf') resp = null
   // Явный EPUB не должен подхватить офлайн-копию исходного PDF.
   if (opts.fmt === 'epub' && resp?.headers.get('X-Book-Format') !== 'epub') resp = null
   if (!current()) return
@@ -238,10 +240,24 @@ async function openReaderImpl(work, opts = {}) {
       toast(st?.error ? 'Не вышло сделать EPUB: ' + st.error : 'Конвертация ещё идёт — открываю оригинал', 'err', 6000)
     }
   }
+  let rangeSource = null
   if (!resp) {
     const url = `/api/reader/${work.id}/file` + (opts.original ? '?original=1' : epubReady ? '?format=epub' : '')
-    resp = await recentBook(url)
-    if (fileSource(false, resp) === 'recent') {
+    // HEAD выбирает тот же файл, что GET, включая готовую EPUB-версию PDF.
+    if (opts.original || work.file_format === 'pdf') {
+      let head = await fetch(url, { method: 'HEAD', credentials: 'same-origin', redirect: 'manual', cache: 'no-store' })
+      if ([405, 501].includes(head.status)) head = await fetch(url, { headers: { Range: 'bytes=0-524287' }, credentials: 'same-origin', redirect: 'manual', cache: 'no-store' })
+      if (head.ok) {
+        checkPDFResponse(head)
+        if ((head.headers.get('X-Book-Format') || (epubReady && !opts.original ? 'epub' : work.file_format)) === 'pdf') {
+          rangeSource = { url, response: head }
+          resp = head
+        }
+      } else if (![405, 501].includes(head.status)) checkPDFResponse(head)
+    }
+    if (!rangeSource) resp = await recentBook(url)
+    if (rangeSource) { /* Данные страниц загрузит PDFDataRangeTransport. */ }
+    else if (fileSource(false, resp) === 'recent') {
       const cached = resp
       // Проверка сети не задерживает открытие и не прерывает чтение.
       fetchBookFile(url, current, cached.headers.get('ETag')
@@ -262,11 +278,11 @@ async function openReaderImpl(work, opts = {}) {
     }
   }
   if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
-  let blob = await resp.blob()
+  let blob = rangeSource ? null : await resp.blob()
   if (refreshed) { resp = refreshed; blob = await resp.blob() }
   fileCommitted = true
   if (!current()) return
-  const revP = bookRev(blob)
+  const revP = rangeSource ? Promise.resolve(resp.headers.get('X-Book-SHA1') || '') : bookRev(blob)
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
   // каким движком foliate будет рендерить).
   const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
@@ -278,7 +294,11 @@ async function openReaderImpl(work, opts = {}) {
   setMenuFormat(fmt)
   document.dispatchEvent(new Event('reader-format-change'))
   const name = `book.${fmt}`
-  const file = new File([blob], name, { type: blob.type })
+  const file = rangeSource
+    ? await (await import('../vendor/foliate-js/pdf.js')).makePDF(rangeSource)
+    : new File([blob], name, { type: blob.type })
+  if (!current()) { if (rangeSource) await file.destroy(); return }
+  if (rangeSource) file.onPDFError = error => toast(error.message, 'err', 10000)
 
   openedFile = file
   await readerView.open(file)
@@ -480,7 +500,7 @@ export function applyViewStyles(target = view) {
   if (!target || !target.renderer) return
   const r = target.renderer
   if (r.setPDFOptions && target.book?.setPDFOptions) {
-    r.setPDFOptions({ ...prefs, rev: currentRev, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
+    r.setPDFOptions({ ...prefs, rev: currentRev, cropURL: currentWork ? `/api/reader/${currentWork.id}/pdf-crop` : null, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
   }
   // Сначала раскладка (flow/колонки), потом стили: render() триггерится атрибутами,
   // и к моменту его вызова наш bookCSS уже не перетирается лишним «paginated-кадром».

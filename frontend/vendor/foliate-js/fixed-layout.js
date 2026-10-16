@@ -305,6 +305,8 @@ export class FixedLayout extends HTMLElement {
     #reportLocation(reason) {
         if (!this.scrolled && this.index !== this.#position.index)
             this.#position = { index: this.index, offset: 0 }
+        this.book.prefetch?.(this.scrolled
+            ? visiblePages(this.#heights, this.scrollTop, this.clientHeight, 0) : [this.index])
         this.dispatchEvent(new CustomEvent('relocate', { detail:
             { reason, range: null, index: this.index, fraction: this.scrolled ? this.#position.offset : 0, size: this.scrolled ? (this.atEnd ? this.book.sections.length - this.index - this.#position.offset : 0) : 1 } }))
     }

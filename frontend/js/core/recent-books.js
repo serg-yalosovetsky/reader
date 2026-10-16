@@ -30,6 +30,8 @@ export async function recentBook(url) {
   } catch { return null }
 }
 export function storeRecent(url, response) {
+  // Частичный PDF хранится блоками в reader-pdf-chunks-v1, не как целая книга.
+  if (response.status === 206 || response.headers.has('Content-Range')) return Promise.resolve()
   const task = async () => {
     try {
       const blob = await response.blob()

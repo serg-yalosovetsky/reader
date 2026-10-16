@@ -38,3 +38,15 @@ for (const resolved of [{ index: 99 }, { index: 0, anchor: () => { throw Error('
 view.goToFraction = async () => { throw Error('failed') }
 assert.equal(await restorePosition(view, { ratio: 0.62 }), false)
 console.log('ok: выбор позиции при смене формата и неразрешимом locator')
+// PDF-лента: при F5 CFI страницы не должен вытеснять точную долю внутри неё.
+const pdfCalls = []
+const pdfView = {
+  isFixedLayout: true,
+  renderer: { scrolled: true, getContents: () => [] },
+  book: { sections: Array(20).fill({}) },
+  resolveNavigation: target => target?.fraction != null ? {index: 10, anchor: .5} : {index: 10},
+  init: async opts => pdfCalls.push(opts),
+  goTo: async target => { pdfCalls.push(target); return {index: 10} },
+}
+await restorePosition(pdfView, {locator: 'epubcfi(/6/22)', ratio: .525, book_rev: 'same'}, 'same', 'pdf')
+assert.deepEqual(pdfCalls, [{lastLocation: {fraction: .525}}])

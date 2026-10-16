@@ -247,8 +247,21 @@ export const makePDF = async file => {
     }
     const pageBoxes = new Map()
     const cache = new Map()
+    const dimensions = new Map()
+    const getBox = i => options.pdfCrop
+        ? (pageBoxes.has(i) ? unionBoxes([common, pageBoxes.get(i)]) : common) : fullBox()
+    const sizeOf = i => {
+        const base = dimensions.get(i), box = getBox(i)
+        return { width: base.width * (box.right - box.left), height: base.height * (box.bottom - box.top) }
+    }
     book.sections = Array.from({ length: pdf.numPages }).map((_, i) => ({
         id: i,
+        getSize: async () => {
+            if (!dimensions.has(i)) dimensions.set(i, (await pdf.getPage(i + 1)).getViewport({ scale: 1 }))
+            return sizeOf(i)
+        },
+        // После чтения метаданных размер доступен без асинхронной загрузки.
+        getCachedSize: () => dimensions.has(i) ? sizeOf(i) : null,
         load: async () => {
             const cached = cache.get(i)
             if (cached) return cached
@@ -259,6 +272,19 @@ export const makePDF = async file => {
             cache.set(i, url)
             return url
         },
+        createDocument: async () => {
+            // Та же структура textLayer, что в iframe, но без растрового рендера.
+            // Поэтому CFI результата поиска разрешается в видимой странице.
+            const section = await book.sections[i].load()
+            const doc = new DOMParser().parseFromString(await fetchText(section.src), 'text/html')
+            const page = await pdf.getPage(i + 1)
+            await new pdfjsLib.TextLayer({
+                textContentSource: await page.streamTextContent(),
+                container: doc.querySelector('.textLayer'),
+                viewport: page.getViewport({ scale: 1 }),
+            }).render()
+            return doc
+        },
         size: 1000,
     }))
     book.isExternal = uri => /^\w+:/i.test(uri)
@@ -266,18 +292,22 @@ export const makePDF = async file => {
         const parsed = JSON.parse(href)
         const dest = typeof parsed === 'string'
             ? await pdf.getDestination(parsed) : parsed
-        const index = await pdf.getPageIndex(dest[0])
+        const index = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0])
         return { index }
     }
     book.splitTOCHref = async href => {
         const parsed = JSON.parse(href)
         const dest = typeof parsed === 'string'
             ? await pdf.getDestination(parsed) : parsed
-        const index = await pdf.getPageIndex(dest[0])
+        const index = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0])
         return [index, null]
     }
     book.getTOCFragment = doc => doc.documentElement
     book.getCover = async () => renderPage(await pdf.getPage(1), true)
-    book.destroy = () => pdf.destroy()
+    book.destroy = () => {
+        for (const section of cache.values()) URL.revokeObjectURL(section.src)
+        cache.clear()
+        return pdf.destroy()
+    }
     return book
 }

@@ -208,6 +208,10 @@ async function validTarget(view, target) {
 
 // Куда ехать: CFI при том же файле, иначе якорь, иначе CFI как есть.
 async function pickTarget(view, pos, rev) {
+  // Искусственный PDF-CFI хранит страницу; доля ленты хранит и смещение.
+  if (view?.isFixedLayout && view.renderer?.scrolled && Number.isFinite(pos?.ratio)) {
+    return { fraction: pos.ratio }
+  }
   if (pos?.locator && pos.book_rev && rev && pos.book_rev === rev) return pos.locator
   const byAnchor = pos?.text_anchor ? await findAnchorCfi(view, pos) : null
   return byAnchor || pos?.locator || null

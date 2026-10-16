@@ -97,6 +97,8 @@ function handleKey(e) {
   // В полях ввода (поиск, заметки) клавиши листания не перехватываем.
   const t = e.target
   if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName || ''))) return
+  if (view.renderer?.handleScrollKey?.(e)) return
+  if (e.defaultPrevented) return
   const action = keyNavAction(e.key, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
   if (!action) return
   if (action === 'prev') goPrev()
@@ -156,6 +158,7 @@ export function attachKeysToDoc(e) {
     })
     e.detail.doc.addEventListener('keydown', handleKey)
     e.detail.doc.addEventListener('wheel', (ev) => {
+      if (view?.isFixedLayout && view.renderer?.scrolled) return
       if (prefs.flow === 'scrolled') {
         if (ev.deltaY < 0 && (view?.renderer?.start || 0) <= 2) {
           ev.preventDefault(); view.prev(); return
@@ -185,7 +188,7 @@ export function attachKeysToDoc(e) {
       const t = ev.changedTouches[0]; _sx = t.clientX; _sy = t.clientY; _st = Date.now(); _lastTY = t.clientY
     }, { passive: true })
     e.detail.doc.addEventListener('touchend', (ev) => {
-            if (!view) return
+            if (!view || (view.isFixedLayout && view.renderer?.scrolled)) return
       const t = ev.changedTouches[0]
       const dx = t.clientX - _sx, dy = t.clientY - _sy
       if (Date.now() - _st > 900) return

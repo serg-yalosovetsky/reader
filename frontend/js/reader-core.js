@@ -548,7 +548,7 @@ function bookCSS() {
     a:link, a:visited { color: ${accent}; }
     html, body { text-align: left !important; }
     p, li, blockquote, dd { line-height: 1.55; text-align: left !important; }
-    img, svg image { filter: ${isDark && prefs.dimImages ? 'brightness(.8) contrast(1.1)' : 'none'}; }
+    img, svg image { filter: ${isDark && prefs.imageMode !== 'original' ? 'brightness(.8) contrast(1.1)' : 'none'}; }
     img { max-width: 100%; height: auto; }
     .tts-reading { background: ${accent}28 !important; outline: 2px solid ${accent}88; outline-offset: 3px; border-radius: 3px; }
     ::highlight(tts-word) { background-color: ${accent}; color: #fff; border-radius: 2px; }
@@ -558,7 +558,7 @@ export function applyViewStyles(target = view) {
   if (!target || !target.renderer) return
   const r = target.renderer
   if (r.setPDFOptions && target.book?.setPDFOptions) {
-    r.setPDFOptions({ ...prefs, rev: currentRev, cropURL: currentWork ? `/api/reader/${currentWork.id}/pdf-crop` : null, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
+    r.setPDFOptions({ ...prefs, imageBookKey: currentWork?.id, rev: currentRev, cropURL: currentWork ? `/api/reader/${currentWork.id}/pdf-crop` : null, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
   }
   // Сначала раскладка (flow/колонки), потом стили: render() триггерится атрибутами,
   // и к моменту его вызова наш bookCSS уже не перетирается лишним «paginated-кадром».

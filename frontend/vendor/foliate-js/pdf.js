@@ -1,5 +1,5 @@
 import { openPDFSource, CHUNK_SIZE, prefetchPages } from './pdf-range.js'
-import { unionBoxes, fullBox, darkTheme, imageBoxes } from './pdf-appearance.js'
+import { unionBoxes, fullBox, darkTheme, imageBoxes, imageBlendDelta, imageModeBlend } from './pdf-appearance.js?v=20261016-2'
 const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toString()
 
 // Менять при обновлении PDF.js или compat, вместе с импортами compat.
@@ -42,6 +42,8 @@ const render = async (page, doc, zoom, box, options) => {
     canvas.width = viewport.width
     const canvasContext = canvas.getContext('2d')
     await page.render({ canvasContext, viewport }).promise
+    doc.querySelector('#image-original')?.remove()
+    doc.imageWheelHandler = null
     if (darkTheme(options.theme) || ['sepia', 'gray', 'grey'].includes(options.theme)) {
         const parseColor = value => {
             const ctx = document.createElement('canvas').getContext('2d')
@@ -52,13 +54,28 @@ const render = async (page, doc, zoom, box, options) => {
         const dark = darkTheme(options.theme)
         const colors = { dark, bg: parseColor(options.bg || '#ffffff'), fg: parseColor(options.fg || '#dddddd') }
         const pixels = canvasContext.getImageData(0, 0, canvas.width, canvas.height)
-        const original = dark ? new Uint8ClampedArray(pixels.data) : null
+        const boxes = dark ? imageBoxes(await page.getOperatorList(), pdfjsLib.OPS, viewport.transform) : []
+        // Однобайтная маска позволяет перекрасить текст и картинки за один проход.
+        const mask = boxes.length ? new Uint8Array(canvas.width * canvas.height) : null
+        for (const b of boxes) {
+            const left = Math.max(0, Math.floor(b.left)), right = Math.min(canvas.width, Math.ceil(b.right))
+            if (left >= right) continue
+            for (let y = Math.max(0, Math.floor(b.top)); y < Math.min(canvas.height, Math.ceil(b.bottom)); y++)
+                mask.fill(1, y * canvas.width + left, y * canvas.width + right)
+        }
         // Та же формула, что mapPixel, но без массивов на пиксель: на hi-DPI
         // странице миллионы пикселей, и аллокации растягивали рендер до секунд.
         const d = pixels.data, [br, bgc, bb] = colors.bg, [fr, fgc, fb] = colors.fg
         for (let i = 0; i < d.length; i += 4) {
             const r = d[i], g = d[i + 1], b = d[i + 2]
             if (!dark) { d[i] = r * br / 255; d[i + 1] = g * bgc / 255; d[i + 2] = b * bb / 255; continue }
+            if (mask && mask[i >>> 2]) {
+                const light = (r * .2126 + g * .7152 + b * .0722) / 255
+                d[i] = br * light + fr * (1-light)
+                d[i+1] = bgc * light + fgc * (1-light)
+                d[i+2] = bb * light + fb * (1-light)
+                continue
+            }
             const hi = r > g ? (r > b ? r : b) : (g > b ? g : b)
             const lo = r < g ? (r < b ? r : b) : (g < b ? g : b)
             const keep = hi ? Math.min(1, (hi - lo) / hi * 2) : 0, light = (hi + lo) / 510, k = 1 - keep
@@ -66,13 +83,48 @@ const render = async (page, doc, zoom, box, options) => {
             d[i + 1] = keep * g + k * (fgc * (1 - light) + bgc * light)
             d[i + 2] = keep * b + k * (fb * (1 - light) + bb * light)
         }
-        if (dark) {
-            for (const b of imageBoxes(await page.getOperatorList(), pdfjsLib.OPS, viewport.transform))
-                for (let y = Math.max(0, Math.floor(b.top)); y < Math.min(canvas.height, Math.ceil(b.bottom)); y++)
-                    for (let x = Math.max(0, Math.floor(b.left)); x < Math.min(canvas.width, Math.ceil(b.right)); x++) {
-                        const i = (y * canvas.width + x) * 4
-                        for (let c = 0; c < 3; c++) pixels.data[i+c] = original[i+c] * (options.dimImages ? .85 : 1)
-                    }
+        if (dark && boxes.length) {
+            const overlay = doc.createElement('canvas')
+            overlay.id = 'image-original'
+            overlay.width = canvas.width; overlay.height = canvas.height
+            Object.assign(overlay.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none' })
+            const ctx = overlay.getContext('2d')
+            // Сохраняем оригинал через canvas: без ещё одного RGBA-буфера и записи по пикселям.
+            ctx.beginPath()
+            for (const b of boxes) ctx.rect(b.left, b.top, b.right-b.left, b.bottom-b.top)
+            ctx.clip()
+            ctx.drawImage(canvas, 0, 0)
+            overlay.style.opacity = options.getImageBlend()
+            layers.append(overlay)
+            // Capture раньше обработчиков листания и ленты; координаты учитывают crop и DPI.
+            doc.imageWheelHandler = event => {
+                const delta = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX
+                if (event.ctrlKey || !delta || (!event.shiftKey && Math.abs(event.deltaY) > Math.abs(delta))) return
+                const rect = canvas.getBoundingClientRect()
+                const x = (event.clientX - rect.left) * canvas.width / rect.width
+                const y = (event.clientY - rect.top) * canvas.height / rect.height
+                if (!boxes.some(b => x >= b.left && x < b.right && y >= b.top && y < b.bottom)) return
+                event.preventDefault(); event.stopImmediatePropagation()
+                options.setImageBlend(imageBlendDelta(options.getImageBlend(), delta, event.deltaMode, doc.defaultView.innerWidth))
+                let hint = doc.querySelector('#image-hint')
+                if (!hint) {
+                    hint = doc.createElement('div'); hint.id = 'image-hint'
+                    Object.assign(hint.style, {position:'fixed', left:'16px', top:'16px', padding:'8px', background:options.bg, color:options.fg, zIndex:'100', pointerEvents:'none'})
+                    doc.body.append(hint)
+                }
+                hint.style.background = options.bg
+                hint.style.color = options.fg
+                hint.style.fontSize = `${14 * devicePixelRatio}px`
+                hint.textContent = `Картинки: ${Math.round(options.getImageBlend() * 100)}%`
+                hint.hidden = false
+                clearTimeout(doc.imageHintTimer)
+                doc.imageHintTimer = setTimeout(() => { hint.hidden = true }, 1000)
+            }
+            // Обработчик заменяется при масштабе; перехват устанавливается один раз.
+            if (!doc.imageWheelAttached) {
+                doc.addEventListener('wheel', event => doc.imageWheelHandler?.(event), {capture:true, passive:false})
+                doc.imageWheelAttached = true
+            }
         }
         canvasContext.putImageData(pixels, 0, 0)
     }
@@ -252,7 +304,28 @@ export const makePDF = async file => {
                 cropTimer = setTimeout(loadCrop, 3000)
         }
     }
+    let blend = 0, blendKey, imageMode
+    const imageDocs = new Set()
+    const getImageBlend = () => blend
+    const setImageBlend = value => {
+        blend = value
+        if (blendKey) localStorage.setItem(blendKey, String(value))
+        for (const ref of imageDocs) {
+            const doc = ref.deref()
+            if (!doc) { imageDocs.delete(ref); continue }
+            const overlay = doc.querySelector('#image-original')
+            if (overlay) overlay.style.opacity = value
+        }
+    }
     book.setPDFOptions = async value => {
+        const key = value.imageBookKey ? `reader.pdf-images.${value.imageBookKey}` : null
+        if (key !== blendKey || imageMode !== value.imageMode) {
+            const stored = key ? localStorage.getItem(key) : null
+            blend = imageMode !== undefined && imageMode !== value.imageMode ? imageModeBlend(value.imageMode)
+                : stored !== null && Number.isFinite(Number(stored)) ? Math.max(0, Math.min(1, Number(stored))) : imageModeBlend(value.imageMode)
+            blendKey = key; imageMode = value.imageMode
+            setImageBlend(blend)
+        }
         const path = rangeMode ? new URL(typeof file === 'string' ? file : file.url, location.href).pathname : ''
         options = { ...value, cropURL: value.cropURL ?? (file.cropURL || (/^\/api\/reader\/\d+\/file$/.test(path) ? path.replace(/file$/, 'pdf-crop') : null)) }
         if (value.cropData?.status === 'ready') {
@@ -316,9 +389,14 @@ export const makePDF = async file => {
             dimensions.set(i, (await pdf.getPage(i + 1)).getViewport({ scale: 1 }))
             const url = await renderPage(await pdf.getPage(i + 1), false,
                 () => getBox(i),
-                () => options)
+                () => ({ ...options, getImageBlend, setImageBlend }))
             const onZoom = url.onZoom
+            const registered = new WeakSet()
             url.onZoom = async args => {
+                if (!registered.has(args.doc)) {
+                    registered.add(args.doc)
+                    imageDocs.add(new WeakRef(args.doc))
+                }
                 await onZoom(args)
                 prepared.add(i)
             }

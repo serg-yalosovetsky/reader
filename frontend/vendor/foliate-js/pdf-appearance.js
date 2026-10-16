@@ -56,3 +56,14 @@ export function mapPixel(rgb, {dark,bg,fg}) {
     const hi=Math.max(...rgb), lo=Math.min(...rgb), keep=Math.min(1,hi ? (hi-lo)/hi*2 : 0), light=(hi+lo)/510
     return rgb.map((v,i)=>Math.round(keep*v+(1-keep)*(fg[i]*(1-light)+bg[i]*light)))
 }
+
+// Горизонтальное движение в CSS-пикселях; полный диапазон — 600 пикселей.
+export function imageBlendDelta(value, delta, deltaMode = 0, pageSize = 800) {
+    const pixels = delta * (deltaMode === 1 ? 16 : deltaMode === 2 ? pageSize : 1)
+    return Math.max(0, Math.min(1, value + pixels / 600))
+}
+export const imageModeBlend = mode => mode === 'original' ? 1 : mode === 'dim' ? .65 : 0
+export function themeImagePixel(rgb, bg, fg) {
+    const light = (rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722) / 255
+    return bg.map((v, i) => Math.round(v * light + fg[i] * (1 - light)))
+}

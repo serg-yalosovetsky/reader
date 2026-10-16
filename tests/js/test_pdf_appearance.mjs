@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('../../frontend/vendor/foliate-js/pdf-appearance.js', import.meta.url), 'utf8')
-const { contentBox, unionBoxes, stableBox, fullBox, mapPixel, imageBox, imageBoxes, multiplyMatrices } = await import('data:text/javascript,' + encodeURIComponent(source))
+const { contentBox, unionBoxes, stableBox, fullBox, mapPixel, imageBox, imageBoxes, multiplyMatrices, imageBlendDelta, imageModeBlend, themeImagePixel } = await import('data:text/javascript,' + encodeURIComponent(source))
 const width = 100, height = 100, data = new Uint8ClampedArray(width * height * 4).fill(255)
 assert.equal(contentBox({ data, width, height }), null)
 for (let y = 20; y < 80; y++) for (let x = 30; x < 70; x++) data[(y * width + x) * 4] = 0
@@ -62,3 +62,20 @@ assert.equal(prefs.menuAutohidePdf, true)
 assert.equal(prefs.menuAutohideOther, false)
 savePrefs()
 assert.equal('pdfBackground' in JSON.parse(stored), false)
+
+assert.equal(imageBlendDelta(.5, -120), .3)
+assert.equal(imageBlendDelta(.5, 120), .7)
+assert.equal(imageBlendDelta(.5, -9999), 0)
+assert.equal(imageBlendDelta(.5, 9999), 1)
+assert.equal(imageBlendDelta(0, 3, 1), .08)
+assert.equal(imageBlendDelta(0, 1, 2, 300), .5)
+assert.equal(imageBlendDelta(.4, 0), .4)
+assert.equal(imageModeBlend('theme'), 0)
+assert.equal(imageModeBlend('original'), 1)
+assert.equal(imageModeBlend('dim'), .65)
+assert.deepEqual(themeImagePixel([255,255,255], colors.bg, colors.fg), colors.bg)
+assert.deepEqual(themeImagePixel([0,0,0], colors.bg, colors.fg), colors.fg)
+for (const rgb of [[240,60,20], [128,128,128], [0,120,255]]) {
+  const mapped = themeImagePixel(rgb, colors.bg, colors.fg)
+  mapped.forEach((v,i) => assert.ok(v >= colors.bg[i] && v <= colors.fg[i]))
+}

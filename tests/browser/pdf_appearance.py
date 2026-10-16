@@ -32,7 +32,7 @@ def pdf():
                b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> /XObject << /Im1 6 0 R >> >> >>',
                b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'\nendstream', b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-               b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n' + bytes([240, 60, 20]) + b'\nendstream']
+               b'<< /Type /XObject /Subtype /Image /Width 3 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 9 >>\nstream\n' + bytes([255, 255, 255, 240, 60, 20, 0, 0, 0]) + b'\nendstream']
     data = b'%PDF-1.4\n'
     offsets = [0]
     for i, obj in enumerate(objects, 1):
@@ -62,6 +62,7 @@ with sync_playwright() as p:
     page.route('http://reader.test/pdf-test', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><html></html>'))
     page.goto('http://reader.test/pdf-test')
     result = page.evaluate('''async data => {
+      localStorage.removeItem('reader.pdf-images.appearance-test');
       const {makePDF} = await import('/frontend/vendor/foliate-js/pdf.js');
       await import('/frontend/vendor/foliate-js/fixed-layout.js');
       const book = await makePDF(new File([new Uint8Array(data)], 'test.pdf'));
@@ -69,7 +70,7 @@ with sync_playwright() as p:
       const section = await book.sections[0].load();
       const original = section.getSize();
       // Границы теперь приходят с сервера; измерение canvas клиентом запрещено.
-      await book.setPDFOptions({pdfCrop: true, cropData: {status: 'ready', book: [.08,.18,.92,.92], pages: [[.08,.18,.92,.92]]}, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: false});
+      await book.setPDFOptions({pdfCrop: true, cropData: {status: 'ready', book: [.08,.18,.92,.92], pages: [[.08,.18,.92,.92]]}, theme: 'night', bg: '#15171a', fg: '#dddddd', imageMode: 'theme', imageBookKey: 'appearance-test'});
       const cropped = section.getSize();
       const frame = document.createElement('iframe');
       document.body.append(frame);
@@ -77,16 +78,61 @@ with sync_playwright() as p:
       await section.onZoom({doc: frame.contentDocument, scale: 2});
       const doc = frame.contentDocument;
       const pixels = () => doc.querySelector('canvas').getContext('2d');
-      const pixel = (x,y) => [...pixels().getImageData(x*2,y*2,1,1).data].slice(0,3);
+      const pixel = (x,y) => {
+        const base = [...pixels().getImageData(x*2,y*2,1,1).data].slice(0,3);
+        const overlay = doc.querySelector('#image-original');
+        if (!overlay) return base;
+        const raw = overlay.getContext('2d').getImageData(x*2,y*2,1,1).data;
+        const alpha = Number(overlay.style.opacity) * raw[3]/255;
+        return base.map((v,i) => Math.round(v*(1-alpha)+raw[i]*alpha));
+      };
       const result = {original, cropped, background: pixel(50,20), image: pixel(70,50),
-        ink: pixel(30,89),
+        whiteImage: pixel(63,50), blackImage: pixel(77,50), ink: pixel(30,89),
         textInk: (() => {const d=pixels().getImageData(20,36,80,24).data; return Math.max(...Array.from(d).filter((_,i)=>i%4===0))})(),
         filter: doc.querySelector('#canvas').style.filter,
         offset: doc.querySelector('#layers').style.left,
         canvas: !!doc.querySelector('canvas'), text: !!doc.querySelector('.textLayer')};
-      await book.setPDFOptions({pdfCrop: true, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: true});
+      const firstCanvas = doc.querySelector('canvas');
+      const rect = firstCanvas.getBoundingClientRect();
+      const wheel = (x,y,deltaX,deltaY=0,shiftKey=false) => {
+        const event = new frame.contentWindow.WheelEvent('wheel', {clientX:rect.left+x*rect.width/firstCanvas.width*2,
+          clientY:rect.top+y*rect.height/firstCanvas.height*2, deltaX, deltaY, shiftKey, bubbles:true, cancelable:true});
+        doc.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      result.gesture = wheel(70,50,300);
+      result.blend = Number(doc.querySelector('#image-original').style.opacity);
+      result.blendedImage = pixel(70,50);
+      result.sameCanvas = firstCanvas === doc.querySelector('canvas');
+      result.textGesture = wheel(30,30,100);
+      result.verticalGesture = wheel(70,50,0,100);
+      result.shiftGesture = wheel(70,50,0,-120,true);
+      result.shiftBlend = Number(doc.querySelector('#image-original').style.opacity);
+      result.savedBlend = Number(localStorage.getItem('reader.pdf-images.appearance-test'));
+      const nextFrame = document.createElement('iframe'); document.body.append(nextFrame);
+      await new Promise(resolve => {nextFrame.onload=resolve; nextFrame.src=section.src});
+      await section.onZoom({doc:nextFrame.contentDocument,scale:2});
+      result.nextBlend = Number(nextFrame.contentDocument.querySelector('#image-original').style.opacity);
+      wheel(70,50,60);
+      result.peerBlend = Number(nextFrame.contentDocument.querySelector('#image-original').style.opacity);
+      wheel(70,50,-60);
+      const reopened = await makePDF(new File([new Uint8Array(data)], 'test.pdf'));
+      await reopened.setPDFOptions({theme:'night', bg:'#15171a', fg:'#dddddd', imageMode:'theme', imageBookKey:'appearance-test'});
+      const restoredSection = await reopened.sections[0].load();
+      const restoredFrame = document.createElement('iframe'); document.body.append(restoredFrame);
+      await new Promise(resolve => {restoredFrame.onload=resolve; restoredFrame.src=restoredSection.src});
+      await restoredSection.onZoom({doc:restoredFrame.contentDocument,scale:2});
+      result.reopenedBlend = Number(restoredFrame.contentDocument.querySelector('#image-original').style.opacity);
+      reopened.destroy();
+      await book.setPDFOptions({pdfCrop: true, theme: 'night', bg: '#15171a', fg: '#dddddd', imageMode: 'dim', imageBookKey: 'appearance-test'});
       await section.onZoom({doc, scale: 2});
       result.dimImage = pixel(70,50);
+      await book.setPDFOptions({theme:'terminal', bg:'#001100', fg:'#00cc66', imageMode:'theme'});
+      await section.onZoom({doc,scale:2});
+      result.terminalImage = pixel(70,50);
+      await book.setPDFOptions({theme:'night', bg:'#15171a', fg:'#dddddd', imageMode:'original'});
+      await section.onZoom({doc,scale:2});
+      result.originalImage = pixel(70,50);
       await book.setPDFOptions({pdfCrop: true, theme: 'sepia', bg: '#f5ecd9'});
       await section.onZoom({doc, scale: 2});
       result.sepia = pixel(50,20);
@@ -105,9 +151,22 @@ with sync_playwright() as p:
     assert result['filter'] == '' and result['offset'].startswith('-'), result
     assert result['canvas'] and result['text'], result
     assert result['background'] == [21, 23, 26], result
-    assert result['image'] == [240, 60, 20], result
+    light = (240*.2126 + 60*.7152 + 20*.0722)/255
+    themed = [round(bg*light + 221*(1-light)) for bg in [21,23,26]]
+    assert result['image'] == themed, result
+    assert result['whiteImage'] == result['background'], result
+    assert result['blackImage'] == [221,221,221], result
+    assert result['gesture'] and result['sameCanvas'] and result['shiftGesture'], result
+    assert not result['textGesture'] and not result['verticalGesture'], result
+    assert result['blend'] == .5 and result['shiftBlend'] == .3, result
+    assert result['savedBlend'] == result['nextBlend'] == .3, result
+    assert abs(result['reopenedBlend'] - .3) < 1e-9, result
+    assert result['peerBlend'] == .4, result
+    assert result['blendedImage'] == [round((v+raw)/2) for v,raw in zip(themed,[240,60,20])], result
+    assert result['originalImage'] == [240,60,20], result
+    assert result['terminalImage'][0] == 0 and 0 < result['terminalImage'][1] < 204, result
     assert min(result['ink']) > 200 and result['textInk'] > 200, result
-    assert result['dimImage'] == [204, 51, 17], result
+    assert result['dimImage'] == [round(v*.35 + raw*.65) for v,raw in zip(themed,[240,60,20])], result
     assert result['sepia'] == [245, 236, 217], result
     assert result['sepiaImage'] == [231, 56, 17], result
     assert result['day'] == [255, 255, 255], result

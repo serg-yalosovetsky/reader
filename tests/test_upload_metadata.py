@@ -257,3 +257,63 @@ def test_zip_upload_fills_title_and_author_for_every_book(client):
     assert got == {"Alpha", "Beta"}
     lib = {w["title"]: w["author"] for w in client.get("/api/library").json()}
     assert lib["Alpha"] == "A One" and lib["Beta"] == "B Two"
+
+
+@pytest.mark.parametrize('title', [
+    '8724ae996f4390f885086d121a70e40a', 'ABCDEF0123456789',
+    '550e8400-e29b-41d4-a716-446655440000', 'QWxhZGRpbjpvcGVuIHNlc2FtZQ==',
+    'aZ9xT2pL8qR4vN6mK0w3',
+])
+def test_opaque_titles_are_rejected(title):
+    assert clean_title(title) == ''
+
+
+@pytest.mark.parametrize('title', [
+    'harry_potter_and_the_chamber_2', 'DesigningInterfaces3rdEdition',
+    'designing-interfaces-3rd-edition-2020', '1984', 'Refactoring UI',
+])
+def test_slug_titles_are_kept(title):
+    assert clean_title(title) == title
+
+
+@pytest.mark.parametrize('metadata', ['', '8724ae996f4390f885086d121a70e40a'])
+def test_pdf_hash_uses_first_page(tmp_path, monkeypatch, metadata):
+    from types import SimpleNamespace
+    from backend.app import upload_identity
+
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        text = f'Title: {metadata}\n' if args[0] == 'pdfinfo' else 'Refactoring UI\nby Adam Wathan & Steve Schoger\n'
+        return SimpleNamespace(stdout=text.encode())
+
+    monkeypatch.setattr(upload_identity.subprocess, 'run', run)
+    assert extract_identity(tmp_path / 'book.pdf', 'pdf', '8724ae996f4390f885086d121a70e40a') == (
+        'Refactoring UI', 'Adam Wathan & Steve Schoger',
+    )
+    assert calls[1][1:5] == ['-f', '1', '-l', '1']
+
+
+@pytest.mark.parametrize('stem', ['8724ae996f4390f885086d121a70e40a', '550e8400-e29b-41d4-a716-446655440000'])
+def test_upload_does_not_restore_garbage_filename(client, stem):
+    r = client.post('/api/library/upload', files={'file': (stem + '.pdf', stem.encode(), 'application/pdf')})
+    assert r.status_code == 200
+    assert r.json()['title'] == 'Без названия'
+
+
+def test_hash_metadata_falls_back_to_titlepage(tmp_path):
+    p = _write(tmp_path, 'book.fb2', _fb2(book_title='abcdef0123456789', authors=(),
+        body_title='<p>Refactoring UI</p><p>by Adam Wathan &amp; Steve Schoger</p>'))
+    assert extract_identity(p, 'fb2') == ('Refactoring UI', 'Adam Wathan & Steve Schoger')
+
+
+def test_pdf_separate_by_line(tmp_path, monkeypatch):
+    from backend.app import upload_identity
+    monkeypatch.setattr(upload_identity, '_pdf_metadata', lambda _: ('', ''))
+    from types import SimpleNamespace
+    monkeypatch.setattr(upload_identity.subprocess, 'run', lambda *a, **kw:
+        SimpleNamespace(stdout=b'\n' * 20 + b'Refactoring UI\nby\nAdam Wathan & Steve Schoger\n'))
+    assert extract_identity(tmp_path / 'hash.pdf', 'pdf') == (
+        'Refactoring UI', 'Adam Wathan & Steve Schoger',
+    )

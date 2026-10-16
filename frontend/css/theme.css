@@ -1090,3 +1090,8 @@ body.is-offline .book-card.no-offline-copy .book-cover::after {
 .resume-clip { position: absolute; overflow: hidden; }
 .resume-clip iframe { position: absolute; border: 0; display: block; }
 .resume-warmer { position: fixed; left: -100000px; top: 0; opacity: 0; pointer-events: none; contain: strict; }
+
+/* Нативный диалог ручного названия (serg/tasks#1903). */
+dialog.cp-modal::backdrop { background: rgba(0,0,0,.4); }
+dialog.cp-modal label { display: grid; gap: 6px; }
+dialog.cp-modal input { width: 100%; box-sizing: border-box; }

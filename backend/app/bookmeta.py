@@ -308,6 +308,8 @@ def apply_meta(work, meta: dict, *, overwrite: bool = False) -> bool:
     Возвращает True, если что-то изменилось."""
     changed = False
     for key, val in meta.items():
+        if key in ("title", "author") and getattr(work, f"{key}_manual", False):
+            continue
         if not hasattr(work, key):
             continue
         cur = getattr(work, key)

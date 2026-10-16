@@ -10,11 +10,12 @@ import { coverUrl } from './core/coverpick.js'
 import {
   offlineSupported, isOffline, downloadBook, removeBook, refreshBook, offlineMeta,
 } from './core/offline.js'
-import { filterBy, toggleHidden, isBookFinished, setBookFinished } from './library.js'
+import { filterBy, toggleHidden, isBookFinished, setBookFinished, updateBookIdentity } from './library.js'
 import { convertible, convertStatus, ensureEpub } from './core/convert.js'
 import { logErr } from './core/log.js'
 import { chapterDate } from './core/chapterdate.js'
 import { icon } from './core/icons.js'
+import { renameBook } from './book-identity.js'
 
 let curWork = null
 
@@ -297,6 +298,7 @@ function renderBookPage(w) {
               ${offlineSupported ? `<button id="bp-offline" type="button" class="bp-mi" role="menuitem" data-keep>${btnInner(hasOff ? 'refresh' : 'cloud-download', hasOff ? 'Обновить офлайн-копию' : 'Сохранить офлайн')}</button>` : ''}
               ${hasOff ? `<button id="bp-offline-rm" type="button" class="bp-mi" role="menuitem" title="Убрать книгу из офлайн-кэша">${btnInner('x', 'Убрать офлайн-копию')}</button>` : ''}
               ${origBtn}
+              <button id="bp-rename" type="button" class="bp-mi" role="menuitem" title="Исправить название и автора">${btnInner('pencil', 'Переименовать')}</button>
               <button id="bp-mirror" type="button" class="bp-mi" role="menuitem" title="Указать другой адрес этой книги на сайте: книга переехала или выложена ещё где-то">${btnInner('link', 'Добавить зеркало')}</button>
               ${convertible(w) ? `
               <button id="bp-epub" type="button" class="bp-mi" role="menuitem" data-keep title="Собрать перетекающий текст вместо страниц-картинок">${btnInner('refresh', 'Сделать EPUB-версию')}</button>
@@ -324,6 +326,12 @@ function renderBookPage(w) {
       <div id="bp-toc" class="bp-toc">Загружаю оглавление…</div>
     </div>`
 
+  $('#bp-rename').addEventListener('click', () => renameBook(w, (saved) => {
+    Object.assign(w, saved)
+    updateBookIdentity(saved)
+    curWork = w
+    renderBookPage(w)
+  }))
   $('#bp-more').addEventListener('click', () => { if ($('#bp-menu').hidden) openMenu(); else closeMenu() })
   $('#bp-body .bp-scrim').addEventListener('click', () => closeMenu(true))
   $('#bp-menu').addEventListener('click', (e) => {

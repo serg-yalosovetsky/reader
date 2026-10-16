@@ -25,6 +25,9 @@ class Work(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = ""
     author: str = ""
+    # Ручные исправления не заменяем при пересканировании метаданных.
+    title_manual: bool = False
+    author_manual: bool = False
     # Источник: ficbook | fanfics | authortoday | ao3 | ffn | calibre | upload
     site: str = ""
     source_url: str = ""

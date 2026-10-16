@@ -12,7 +12,7 @@ from functools import partial
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session, select
 
 import os
@@ -20,7 +20,7 @@ import os
 from .. import covers
 from ..db.models import Monitored, Progress, Work, utcnow
 from ..db.session import get_session
-from ..upload_identity import extract_identity
+from ..upload_identity import clean_title, extract_identity
 from ..storage import (
     detect_format,
     extract_books_from_zip,
@@ -456,7 +456,7 @@ async def _import_one(session: Session, path: Path, title: str) -> tuple[Work, b
     )
     return (
         _add_work(
-            session, found_title or title or "Без названия", fmt, dest, sha1, found_author
+            session, found_title or clean_title(title) or "Без названия", fmt, dest, sha1, found_author
         ),
         True,
     )
@@ -518,6 +518,39 @@ async def upload_book(
         return work
     finally:
         await anyio.to_thread.run_sync(partial(tmp_path.unlink, missing_ok=True))
+
+
+class IdentityIn(BaseModel):
+    title: str = Field(max_length=500)
+    author: str | None = Field(default=None, max_length=500)
+
+    @field_validator("title", "author")
+    @classmethod
+    def strip_identity(cls, value: str | None, info):
+        if value is None:
+            return None
+        value = value.strip()
+        if info.field_name == "title" and not value:
+            raise ValueError("название не должно быть пустым")
+        return value
+
+
+@router.put("/{work_id}/identity")
+def rename_book(
+    work_id: int, payload: IdentityIn, session: Session = Depends(get_session)
+) -> dict:
+    """Исправить название и автора вручную (serg/tasks#1903)."""
+    work = session.get(Work, work_id)
+    if not work:
+        raise HTTPException(404, "work not found")
+    work.title = payload.title
+    work.title_manual = True
+    if payload.author is not None:
+        work.author = payload.author
+        work.author_manual = True
+    session.add(work)
+    session.commit()
+    return {"id": work.id, "title": work.title, "author": work.author}
 
 
 class HiddenIn(BaseModel):

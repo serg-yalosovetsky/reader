@@ -65,8 +65,19 @@ def clean_title(title: str, stem: str = "") -> str:
     # Одни знаки: «---», «...» — не название.
     if not re.search(r"[^\W_]", t):
         return ""
-    # Номер из имени файла или каталога (litres art: «39794961») — не название.
-    # Короткие числа оставляем: «1984», «451», «2001» — настоящие названия.
+    # Хеши, UUID и длинные непрерывные идентификаторы вместо названия.
+    opaque = (
+        re.fullmatch(r"[0-9a-f]{16,}", t, re.I)
+        or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", t, re.I)
+        # base64-подобные id: без разделителей и с плотными цифрами. Слаги
+        # «harry_potter_book_2» и «DesigningInterfaces3rdEdition» — не id.
+        or (len(t) >= 20 and re.fullmatch(r"[A-Za-z0-9+/=]+", t)
+            and re.search(r"[A-Za-z]", t)
+            and (sum(c.isdigit() for c in t) >= len(t) * 0.2 or t.endswith("=")))
+    )
+    if opaque:
+        return ""
+    # Короткие числа («1984», «451») — названия, длинные — номера каталогов.
     if t.isdigit() and len(t) >= _MIN_ID_DIGITS:
         return ""
     if _PLACEHOLDER_TITLE.match(t) or _PLACEHOLDER_TITLE_START.match(t):
@@ -190,11 +201,15 @@ def _titlepage_from_lines(lines: list[str], *, need_by: bool) -> tuple[str, str]
     (fb2 `<body><title>` — это и есть заголовок книги), need_by=True — ничего
     (у epub и pdf первая страница часто обложка или копирайт).
     """
-    lines = [l for l in (_plain(x) for x in lines[:14]) if l]
+    lines = [l for l in (_plain(x) for x in lines) if l][:14]
     for i, line in enumerate(lines):
-        if _BY_PREFIX.match(line) and len(line) < 120:
+        if (_BY_PREFIX.match(line) or line.lower() == "by") and len(line) < 120:
             title = lines[i - 1] if i > 0 else ""
-            return title, _BY_PREFIX.sub("", line)
+            author = "" if line.lower() == "by" else _BY_PREFIX.sub("", line)
+            # На обложках PDF «by» бывает отдельной строкой перед именами.
+            if not author and i + 1 < len(lines):
+                author = lines[i + 1]
+            return title, author
     if need_by or not lines:
         return "", ""
     return (lines[0] if len(lines[0]) <= 150 else ""), ""

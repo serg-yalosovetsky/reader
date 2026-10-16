@@ -128,6 +128,15 @@ function loadWorksSnap() {
   } catch { return null }
 }
 
+// Сразу обновить карточки и снимок для офлайна после ручного исправления.
+export function updateBookIdentity(saved) {
+  for (const work of [...libWorks, ...libHidden]) {
+    if (work.id === saved.id) Object.assign(work, saved)
+  }
+  saveWorksSnap(libWorks)
+  applyLibFilter((($('#lib-q') || {}).value || '').trim())
+}
+
 export async function loadLibrary() {
   let offlineMode = false
   try {

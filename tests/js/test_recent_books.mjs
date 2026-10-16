@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const source = readFileSync(new URL('../../frontend/js/core/recent-books.js', import.meta.url), 'utf8')
+const { lruVictims, fileSource, changedFile, readWithProgress } = await import('data:text/javascript,' + encodeURIComponent(source))
+const entries = Array.from({ length: 5 }, (_, n) => ({ key: String(n), size: 80, used: n }))
+assert.deepEqual(lruVictims(entries, 'new', 80, 400), ['0'])
+assert.deepEqual(lruVictims(entries, '4', 80, 400), [])
+assert.deepEqual(lruVictims(entries, 'new', 250, 400), ['0', '1', '2', '3'])
+assert.deepEqual(lruVictims([], 'new', 40, 400), [])
+assert.equal(fileSource(true, true), 'offline')
+assert.equal(fileSource(false, true), 'recent')
+assert.equal(fileSource(false, false), 'network')
+const cached = new Response('old', { headers: { ETag: 'a' } })
+assert.equal(changedFile(cached, new Response(null, { status: 304 })), false)
+assert.equal(changedFile(cached, new Response('same', { headers: { ETag: 'a' } })), false)
+assert.equal(changedFile(cached, new Response('new', { headers: { ETag: 'b' } })), true)
+let progress
+const result = await readWithProgress(new Response('book', { headers: { 'Content-Length': '4', ETag: 'b' } }), (n, total) => { progress = [n, total] })
+assert.equal(await result.text(), 'book')
+assert.deepEqual(progress, [4, 4])
+assert.equal(result.headers.get('ETag'), 'b')
+console.log('Recent books OK')

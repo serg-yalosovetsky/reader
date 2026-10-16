@@ -290,6 +290,7 @@ export class FixedLayout extends HTMLElement {
         }, [{}])
     }
     async setPDFOptions(options) {
+        this.book.onPDFCropReady = () => this.#render()
         await this.book.setPDFOptions(options)
         this.style.color = options.fg || 'inherit'
         this.#render()
@@ -398,8 +399,8 @@ export class FixedLayout extends HTMLElement {
             return
         }
         // Размеры из метаданных: невидимым страницам canvas не нужен.
-        const sizes = []
-        for (const section of this.book.sections) sizes.push(await section.getSize?.() ?? { width: 1000, height: 1400 })
+        const estimate = await this.book.sections[0].getSize?.() ?? { width: 1000, height: 1400 }
+        const sizes = this.book.sections.map(section => section.getCachedSize?.() ?? estimate)
         if (generation !== this.#generation) return
         this.style.display = 'block'
         this.#strip = document.createElement('div')
@@ -415,7 +416,8 @@ export class FixedLayout extends HTMLElement {
         this.#layoutStrip()
         this.#intersection = new IntersectionObserver(() => { this.#syncPages() }, { root: this, rootMargin: '100% 0px' })
         this.#slots.forEach(slot => this.#intersection.observe(slot))
-        await this.#syncPages()
+        // Даём восстановлению позиции выбрать целевую страницу до рендера.
+        setTimeout(() => { if (generation === this.#generation) this.#syncPages() }, 0)
         this.#reportLocation('flow')
     }
     #place() {
@@ -458,7 +460,7 @@ export class FixedLayout extends HTMLElement {
                 for (const [index, frame] of this.#frames) if (!wanted.includes(index)) {
                     this.#release(frame); this.#frames.delete(index)
                 }
-                const index = wanted.find(i => !this.#frames.has(i))
+                const index = wanted.sort((a, b) => Math.abs(a - this.#position.index) - Math.abs(b - this.#position.index)).find(i => !this.#frames.has(i))
                 if (index == null) break
                 const src = await this.book.sections[index].load()
                 if (generation !== this.#generation) break

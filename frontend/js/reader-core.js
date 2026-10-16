@@ -14,6 +14,7 @@ import { inlineImagesOnLoad } from './core/inline-images.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
+import { recentBook, storeRecent, changedFile, readWithProgress, fileSource } from './core/recent-books.js'
 import { cachedBook } from './core/offline.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
@@ -54,9 +55,9 @@ async function withRetry(attempt, isTransient, alive) {
   }
 }
 const transientErr = (e) => e?.name === 'NetworkError' || TRANSIENT.has(e?.status)
-async function fetchBookFile(url, alive) {
+async function fetchBookFile(url, alive, headers = {}) {
   return withRetry(async () => {
-    const r = await fetch(url)
+    const r = await fetch(url, { headers, cache: 'no-store' })
     if (TRANSIENT.has(r.status)) { const e = new Error(String(r.status)); e.status = r.status; throw e }
     return r
   }, (e) => TRANSIENT.has(e?.status) || e instanceof TypeError, alive)
@@ -226,17 +227,44 @@ async function openReaderImpl(work, opts = {}) {
   if (!current()) return
   // PDF читаем как EPUB (перетекающий текст). Первое открытие ждёт конвертацию
   // (секунды–минуты на толстой книге), дальше файл готов и отдаётся сразу.
+  let refreshed = null, fileCommitted = false
+  let epubReady = false
   if (!resp && !opts.original && convertible(work) && (opts.fmt === 'epub' || pdfAsEpub())) {
     const t = toast('Перевожу в EPUB — будет перетекающий текст…', 'info', 60000)
     const st = await ensureEpub(work.id).catch(() => null)
     t?.close?.()
+    epubReady = !!st?.ready
     if (!st?.ready) {
       toast(st?.error ? 'Не вышло сделать EPUB: ' + st.error : 'Конвертация ещё идёт — открываю оригинал', 'err', 6000)
     }
   }
-  if (!resp) resp = await fetchBookFile(`/api/reader/${work.id}/file` + (opts.original ? '?original=1' : ''), current)
+  if (!resp) {
+    const url = `/api/reader/${work.id}/file` + (opts.original ? '?original=1' : epubReady ? '?format=epub' : '')
+    resp = await recentBook(url)
+    if (fileSource(false, resp) === 'recent') {
+      const cached = resp
+      // Проверка сети не задерживает открытие и не прерывает чтение.
+      fetchBookFile(url, current, cached.headers.get('ETag')
+        ? { 'If-None-Match': cached.headers.get('ETag') } : {}).then(r => {
+        if (changedFile(cached, r) && !r.redirected && !r.headers.get('Content-Type')?.includes('text/html'))
+          { if (current() && !fileCommitted) refreshed = r.clone(); return storeRecent(url, r) }
+      }).catch(() => {})
+    } else {
+      const indicator = toast('Загружаю книгу…', 'info', 3600000)
+      try {
+        resp = await readWithProgress(await fetchBookFile(url, current), (n, total) => {
+          if (current() && indicator) indicator.textContent = total
+            ? `Загружаю книгу… ${Math.min(100, Math.round(n / total * 100))}% (${(n / 1048576).toFixed(1)} из ${(total / 1048576).toFixed(1)} МБ)`
+            : `Загружаю книгу… ${(n / 1048576).toFixed(1)} МБ`
+        })
+      } finally { indicator?.close?.() }
+      if (resp.ok && !resp.redirected && !resp.headers.get('Content-Type')?.includes('text/html')) storeRecent(url, resp.clone())
+    }
+  }
   if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
-  const blob = await resp.blob()
+  let blob = await resp.blob()
+  if (refreshed) { resp = refreshed; blob = await resp.blob() }
+  fileCommitted = true
   if (!current()) return
   const revP = bookRev(blob)
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
@@ -265,6 +293,7 @@ async function openReaderImpl(work, opts = {}) {
   })
   view.addEventListener('load', inlineImagesOnLoad)
   view.addEventListener('draw-annotation', onDrawAnnotation)
+  currentRev = await revP
   applyViewStyles()
   buildTOC()
   loadTocDates(work.id)
@@ -451,7 +480,7 @@ export function applyViewStyles(target = view) {
   if (!target || !target.renderer) return
   const r = target.renderer
   if (r.setPDFOptions && target.book?.setPDFOptions) {
-    r.setPDFOptions({ ...prefs, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
+    r.setPDFOptions({ ...prefs, rev: currentRev, bg: resolvedColor('--bg'), fg: resolvedColor('--fg') }).catch(e => logErr('PDF: настройки', e))
   }
   // Сначала раскладка (flow/колонки), потом стили: render() триггерится атрибутами,
   // и к моменту его вызова наш bookCSS уже не перетирается лишним «paginated-кадром».

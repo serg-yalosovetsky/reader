@@ -213,7 +213,7 @@ export const makePDF = async file => {
     const outline = await pdf.getOutline()
     book.toc = outline?.map(makeTOCItem)
 
-    let options = {}, sampled
+    let options = {}, sampled, destroyed = false
     const bounds = new Map()
     const measure = i => {
         if (!bounds.has(i)) bounds.set(i, (async () => {
@@ -228,28 +228,46 @@ export const makePDF = async file => {
         })())
         return bounds.get(i)
     }
-    let common = fullBox()
+    let common = null
     book.setPDFOptions = async value => {
         options = value
-        if (options.pdfCrop) {
-            // Равномерная выборка по книге; объединение консервативнее медианы:
-            // заголовки и колонтитулы остаются видны.
-            sampled ??= (async () => {
-                const indices = [...new Set(Array.from({ length: Math.min(8, pdf.numPages) }, (_, n) =>
-                    Math.round(n * (pdf.numPages - 1) / Math.max(1, Math.min(8, pdf.numPages) - 1))))]
-                const boxes = []
-                for (const i of indices) boxes.push(await measure(i))
-                return stableBox(boxes)
-            })()
-            common = await sampled
-            await Promise.all([...cache.keys()].map(async i => { pageBoxes.set(i, await measure(i)) }))
+        // При ручном включении обрезки уже открытая страница доступна сразу;
+        // начальное открытие (пустой cache) не ждёт даже её измерения.
+        if (options.pdfCrop) await Promise.all([...cache.keys()].map(async i => {
+            if (!pageBoxes.has(i)) pageBoxes.set(i, await measure(i))
+        }))
+        if (options.pdfCrop && !sampled) {
+            const key = value.rev ? `reader:pdf-bbox:v1:${value.rev}` : null
+            try {
+                const box = key && JSON.parse(localStorage.getItem(key))
+                if (box && ['left', 'top', 'right', 'bottom'].every(k => Number.isFinite(box[k])))
+                    { common = box; sampled = true; return }
+            } catch { /* Нет доступа к localStorage. */ }
+            sampled = true
+            // Первый canvas не ждёт восьми пробных рендеров.
+            const idle = globalThis.requestIdleCallback ?? (fn => setTimeout(fn, 100))
+            idle(async () => {
+                try {
+                    const indices = [...new Set(Array.from({ length: Math.min(8, pdf.numPages) }, (_, n) =>
+                        Math.round(n * (pdf.numPages - 1) / Math.max(1, Math.min(8, pdf.numPages) - 1))))]
+                    const boxes = []
+                    for (const i of indices) {
+                        await new Promise(resolve => idle(resolve))
+                        if (destroyed) return
+                        boxes.push(await measure(i))
+                    }
+                    common = stableBox(boxes)
+                    try { if (key) localStorage.setItem(key, JSON.stringify(common)) } catch {}
+                    if (!destroyed && options.pdfCrop) book.onPDFCropReady?.()
+                } catch { /* Закрытая книга или ошибка фоновой выборки. */ }
+            })
         }
     }
     const pageBoxes = new Map()
     const cache = new Map()
     const dimensions = new Map()
     const getBox = i => options.pdfCrop
-        ? (pageBoxes.has(i) ? unionBoxes([common, pageBoxes.get(i)]) : common) : fullBox()
+        ? (pageBoxes.has(i) ? unionBoxes([common, pageBoxes.get(i)]) : (common ?? fullBox())) : fullBox()
     const sizeOf = i => {
         const base = dimensions.get(i), box = getBox(i)
         return { width: base.width * (box.right - box.left), height: base.height * (box.bottom - box.top) }
@@ -265,9 +283,9 @@ export const makePDF = async file => {
         load: async () => {
             const cached = cache.get(i)
             if (cached) return cached
-            if (options.pdfCrop) pageBoxes.set(i, await measure(i))
+            dimensions.set(i, (await pdf.getPage(i + 1)).getViewport({ scale: 1 }))
             const url = await renderPage(await pdf.getPage(i + 1), false,
-                () => options.pdfCrop ? (pageBoxes.get(i) ? unionBoxes([common, pageBoxes.get(i)]) : fullBox()) : fullBox(),
+                () => getBox(i),
                 () => options)
             cache.set(i, url)
             return url
@@ -305,6 +323,7 @@ export const makePDF = async file => {
     book.getTOCFragment = doc => doc.documentElement
     book.getCover = async () => renderPage(await pdf.getPage(1), true)
     book.destroy = () => {
+        destroyed = true
         for (const section of cache.values()) URL.revokeObjectURL(section.src)
         cache.clear()
         return pdf.destroy()

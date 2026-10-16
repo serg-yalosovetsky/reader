@@ -13,10 +13,10 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v13'
+const SHELL_CACHE = 'reader-shell-v14'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
-const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE])
+const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE, 'reader-recent-books-v1'])
 
 // Запасной список на случай, если /api/shell-assets недоступен при установке.
 // Основной список отдаёт сервер обходом каталога (см. FALLBACK ниже и
@@ -31,7 +31,7 @@ const FALLBACK_PRECACHE = [
   '/js/progress-bar.js', '/js/chrome.js', '/js/menu-autohide.js', '/js/translate.js',
   '/js/settings.js', '/js/tts.js', '/js/accounts.js', '/js/downloads.js',
   '/js/core/api.js', '/js/core/dom.js', '/js/core/state.js', '/js/core/prefs.js',
-  '/js/core/resume-cache.js', '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',
+  '/js/core/recent-books.js', '/js/core/resume-cache.js', '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',
   '/js/core/locator.js', '/js/core/convert.js', '/js/core/inline-images.js',
   '/js/core/fullscreen.js', '/js/core/menu-autohide.js', '/js/core/reader-url.js',
 ]

@@ -78,6 +78,7 @@ class ProgressIn(BaseModel):
     chapter: str = ""
     # SHA-1 открытого файла: CFI точен только для него (см. Progress.book_rev).
     book_rev: str = ""
+    file_format: str = ""
     # Момент сохранения на клиенте, мс от эпохи.
     saved_at: int = 0
     # Читалка показала последнюю страницу книги.
@@ -232,6 +233,7 @@ def set_progress(
         prog.locator = body.locator
         prog.text_anchor = body.text_anchor
         prog.book_rev = body.book_rev
+        prog.file_format = body.file_format
         # Глава пришла — пишем. Пришла пустая (обложка, титул или
         # релокейт без tocItem) — сохраняем прежнюю подпись ТОЛЬКО пока читают
         # то же место. При прыжке прежняя глава уже не про эту позицию —
@@ -249,6 +251,7 @@ def set_progress(
             locator=body.locator,
             text_anchor=body.text_anchor,
             book_rev=body.book_rev,
+            file_format=body.file_format,
             chapter=body.chapter,
             chapters_at_read=int(work.chapters_count or 0),
             saved_at=saved_at,

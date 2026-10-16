@@ -7,7 +7,7 @@ import { prefs, MARGIN_INLINE, MARGIN_SIDE_PCT, MARGIN_GAP, FONT_STACKS,
 import { view, currentWork, lastCfi, libMonitored, libUpdated, navStack,
          setView, setCurrentWork, setLastCfi, setLastAnchor, setLastIdx,
          setLastFraction } from './core/state.js'
-import { restorePosition, captureAnchor, gotoPosition, bookRev } from './core/position.js'
+import { restorePosition, captureAnchor, gotoPosition, bookRev, positionForFormat } from './core/position.js'
 import { commitPosition, pendingFor, serverSavedAt, replayPending } from './core/progress-sync.js'
 import { inlineImagesOnLoad } from './core/inline-images.js'
 import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
@@ -69,7 +69,8 @@ const USER_INPUT = ['pointerdown', 'keydown', 'wheel', 'touchstart']
 function releaseHold() { holdSaves = false }
 for (const ev of USER_INPUT) window.addEventListener(ev, releaseHold, { capture: true, passive: true })
 
-// SHA-1 открытого файла: к нему привязан сохраняемый CFI (core/position.js).
+// Формат и SHA-1 открытого файла: к ним привязан сохраняемый CFI.
+let currentFormat = ''
 let currentRev = ''
 // Листали страницы из кеша, пока живая книга грузилась.
 let cachedTurned = false
@@ -81,7 +82,7 @@ function savePosition(pos, opts = {}) {
   if (!currentWork || !pos) return
   if (holdSaves) return
   const id = currentWork.id
-  const body = { book_rev: currentRev, ...pos }
+  const body = { book_rev: currentRev, file_format: currentFormat, ...pos }
   const savedAt = Date.now()
   if (opts.keepalive) { commitPosition(id, body, { ...opts, savedAt }); return }
   const write = (progressWrites.get(id) || Promise.resolve())
@@ -149,6 +150,7 @@ async function openReaderImpl(work, opts = {}) {
   const current = () => generation === openGeneration
   setCurrentWork(work)
   currentRev = ''
+  currentFormat = ''
   setLastIdx(null); setLastCfi(''); setLastAnchor('')
   document.body.classList.add('reader-open')
   $('#library').hidden = true
@@ -241,6 +243,7 @@ async function openReaderImpl(work, opts = {}) {
     originalFile = fmt === 'pdf'
     history.replaceState(histState, '', readerUrl(location.href, work.id, fmt))
   }
+  currentFormat = fmt
   const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 
@@ -280,7 +283,7 @@ async function openReaderImpl(work, opts = {}) {
   const sameAsServer = prog && prog.locator && base && collapse(prog.locator) === collapse(base.locator)
     && sameAnchor(prog.text_anchor, base.text_anchor)
   const serverNewer = prog && serverSavedAt(prog) > resumeBaseSavedAt()
-  const samePosition = base && (!prog || sameAsServer || (cachedMoved && !serverNewer))
+  const samePosition = base && positionForFormat(prog, fmt) === prog && fmt !== 'pdf' && (!prog || sameAsServer || (cachedMoved && !serverNewer))
   if (base && !samePosition) { hideResume(); cachedSave = null; cachedTurned = false }
   if (cachedSave) { savePosition({ ...cachedSave, book_rev: '' }); cachedSave = null }
   // Позиция, с которой книга открывается, — точка отсчёта для признака прыжка:
@@ -297,7 +300,9 @@ async function openReaderImpl(work, opts = {}) {
   } else if (samePosition && cachedTarget) {
     await readerView.init({ lastLocation: cachedTarget.locator })
   } else {
-    await restorePosition(readerView, prog, currentRev)
+    const restored = await restorePosition(readerView, prog, currentRev, fmt)
+    // Неудачный переход не должен записать начало поверх сохранённой доли.
+    if (!restored) holdSaves = true
   }
   if (!current()) return
   // The reader may have turned cached pages while the live view was loading.

@@ -127,3 +127,31 @@ def test_manual_finished_toggle(client):
     client.put(f"/api/progress/{wid}/finished", json={"finished": False})
     assert wid not in _finished(client)
     assert client.put("/api/progress/999999/finished", json={"finished": True}).status_code == 404
+
+
+def test_progress_format_roundtrip(client):
+    """Формат и координаты заменяются вместе при переключении PDF/EPUB."""
+    wid = _upload(client, "format-roundtrip")["id"]
+    for fmt, locator in [("epub", "epubcfi(/6/4!/4)"), ("pdf", "epubcfi(/6/40)")]:
+        r = client.put(f"/api/progress/{wid}", json={
+            "ratio": 0.5, "locator": locator, "file_format": fmt,
+        })
+        assert r.status_code == 200
+        g = client.get(f"/api/progress/{wid}").json()
+        assert (g["ratio"], g["locator"], g["file_format"]) == (0.5, locator, fmt)
+
+
+def test_progress_format_migration(monkeypatch):
+    from sqlalchemy import text
+    from sqlmodel import create_engine
+    from backend.app.db import session as db
+
+    engine = create_engine('sqlite://')
+    with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE progress (id INTEGER PRIMARY KEY, work_id INTEGER)'))
+        conn.execute(text('INSERT INTO progress (id, work_id) VALUES (1, 1)'))
+    monkeypatch.setattr(db, 'engine', engine)
+    assert ('progress', 'file_format') in db._migrate_add_columns()
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT file_format FROM progress')).scalar_one() == ''
+    assert not db._migrate_add_columns()

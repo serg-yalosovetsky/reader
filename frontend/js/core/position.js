@@ -179,6 +179,33 @@ async function findAnchorCfi(view, pos) {
   return null
 }
 
+// У старых PDF foliate пишет искусственный CFI без перехода внутрь документа.
+// EPUB содержит «!». Проверяем это только для пары PDF/EPUB, не для FB2.
+export function positionForFormat(pos, format = '') {
+  const saved = pos?.file_format || (/^epubcfi\(/.test(pos?.locator || '')
+    ? (pos.locator.includes('!') ? 'epub' : 'pdf') : '')
+  if (format && saved && format !== saved && [format, saved].includes('pdf')) {
+    return { ratio: pos?.ratio || 0 }
+  }
+  return pos
+}
+
+// resolveNavigation и goTo в foliate могут проглотить ошибку без исключения.
+async function validTarget(view, target) {
+  try {
+    const resolved = await view.resolveNavigation(target)
+    if (!resolved || !Number.isInteger(resolved.index)
+      || resolved.index < 0 || resolved.index >= view.book.sections.length) return false
+    const section = view.book.sections[resolved.index]
+    if (typeof resolved.anchor === 'function' && section.createDocument) {
+      // Секция может существовать, а путь CFI внутри неё — уже нет.
+      const doc = await section.createDocument()
+      if (!resolved.anchor(doc)) return false
+    }
+    return true
+  } catch { return false }
+}
+
 // Куда ехать: CFI при том же файле, иначе якорь, иначе CFI как есть.
 async function pickTarget(view, pos, rev) {
   if (pos?.locator && pos.book_rev && rev && pos.book_rev === rev) return pos.locator
@@ -216,12 +243,13 @@ async function settleAndReanchor(view, target) {
 // serg/tasks#1078). Тот же порядок точности, что и при открытии. Возвращает
 // true, если куда-то доехали: провал должен быть видимым — иначе нажатие
 // «Назад» выглядит как ничего не делающее.
-export async function gotoPosition(view, pos, rev = '') {
+export async function gotoPosition(view, pos, rev = '', format = '') {
+  pos = positionForFormat(pos, format)
   const ratio = pos?.ratio || 0
   const target = await pickTarget(view, pos, rev)
-  if (target) {
+  if (target && await validTarget(view, target)) {
     try {
-      await view.goTo(target)
+      if (!await view.goTo(target)) throw new Error('locator не разрешился')
       await settleAndReanchor(view, target)
       return true
     } catch (e) {
@@ -242,15 +270,16 @@ export async function gotoPosition(view, pos, rev = '') {
 // Восстановить позицию при открытии книги. rev — SHA-1 открытого файла.
 // view уже .open()-нут (book.sections доступны), но ещё не .init()-нут (ничего
 // не отрендерено) — здесь и выбираем, куда рендерить первый кадр.
-export async function restorePosition(view, prog, rev = '') {
+export async function restorePosition(view, prog, rev = '', format = '') {
+  prog = positionForFormat(prog, format)
   const ratio = prog?.ratio || 0
   const target = await pickTarget(view, prog, rev)
 
-  if (target) {
+  if (target && await validTarget(view, target)) {
     try {
       await view.init({ lastLocation: target })
       await settleAndReanchor(view, target)
-      return
+      return true
     } catch (e) {
       logErr('restore by target failed, fallback to ratio', e)
       // view мог упасть на этапе якоря — секция уже отрендерена, доедем по доле.
@@ -266,8 +295,11 @@ export async function restorePosition(view, prog, rev = '') {
   if (ratio > 0) {
     try {
       await view.goToFraction(ratio)
+      return true
     } catch {}
+    return false
   }
+  return true
 }
 
 // SHA-1 файла книги (hex) — ревизия, к которой привязан CFI. Пусто, если

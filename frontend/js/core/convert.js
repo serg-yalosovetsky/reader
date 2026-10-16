@@ -5,6 +5,7 @@
 // с телефона нечем. Сервер один раз собирает EPUB (calibre) и дальше отдаёт его
 // вместо PDF; оригинал остаётся доступен (кнопка «оригинал» / ?original=1).
 import { api } from './api.js'
+import { logErr } from './log.js'
 
 // Должно совпадать с CONVERTIBLE в backend/app/convert.py.
 const CONVERTIBLE = new Set(['pdf', 'djvu', 'mobi', 'azw3', 'doc', 'docx', 'rtf'])
@@ -13,6 +14,48 @@ const PREF_KEY = 'reader:pdf-as-epub'
 
 export function convertible(work) {
   return CONVERTIBLE.has(String(work?.file_format || '').toLowerCase())
+}
+
+// Явный выбор важнее локальной истории, затем — сервер и общая настройка.
+// Серверную свежесть сверяем отдельно: текущую книгу не переоткрываем.
+export function formatRecord(work, record) {
+  const format = String(record?.file_format || '').toLowerCase()
+  const original = String(work?.file_format || '').toLowerCase()
+  return convertible(work) && (format === original || format === 'epub')
+    ? { file_format: format, saved_at: Number(record.saved_at) || 0 } : null
+}
+
+export function readingFormat(work, opts = {}, local = null, server = null, asEpub = true) {
+  const original = String(work?.file_format || '').toLowerCase()
+  if (!convertible(work)) return original
+  if (opts.fmt === 'epub') return 'epub'
+  if (opts.fmt === original || opts.original) return original
+  return formatRecord(work, local)?.file_format || formatRecord(work, server)?.file_format
+    || (asEpub ? 'epub' : original)
+}
+
+// Сверка позднего ответа влияет лишь на локальную историю следующего входа.
+export function newerReadingFormat(work, local, server) {
+  const a = formatRecord(work, local)
+  const b = formatRecord(work, server)
+  return b && (!a || b.saved_at > a.saved_at) ? b : a
+}
+
+const FORMAT_KEY = 'reader:last-format:'
+export function localReadingFormat(work) {
+  try {
+    return formatRecord(work, JSON.parse(localStorage.getItem(FORMAT_KEY + work.id) || 'null'))
+  } catch (e) {
+    logErr('read local format', e)
+    return null
+  }
+}
+
+export function storeReadingFormat(work, record) {
+  const valid = formatRecord(work, record)
+  if (!valid) return
+  try { localStorage.setItem(FORMAT_KEY + work.id, JSON.stringify(valid)) }
+  catch (e) { logErr('save local format', e) }
 }
 
 // Обратный переход доступен только при готовой EPUB-версии.

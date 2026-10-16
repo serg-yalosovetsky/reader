@@ -21,7 +21,7 @@ import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
 import { readerUrl } from './core/reader-url.js'
-import { convertible, pdfAsEpub, ensureEpub, convertStatus, formatSwitchTarget } from './core/convert.js'
+import { convertible, pdfAsEpub, ensureEpub, convertStatus, formatSwitchTarget, readingFormat, formatRecord, newerReadingFormat, localReadingFormat, storeReadingFormat } from './core/convert.js'
 import { resetJumps, recordJump, pushServerJump, noteProgressSaved } from './jumps.js'
 import { collapse } from '../vendor/foliate-js/epubcfi.js'
 import { chapterDate } from './core/chapterdate.js'
@@ -167,12 +167,11 @@ export async function openReader(work, opts = {}) {
   }
 }
 async function openReaderImpl(work, opts = {}) {
-  opts = { ...opts, original: opts.fmt === 'pdf' || (opts.fmt !== 'epub' && !!opts.original) }
   ttsStop()
   disposeReader()
   const generation = openGeneration
   opening = true
-  originalFile = !!opts.original
+  originalFile = false
   const current = () => generation === openGeneration
   setCurrentWork(work)
   currentRev = ''
@@ -201,6 +200,48 @@ async function openReaderImpl(work, opts = {}) {
   { const _st = $('#update-state'); if (_st) _st.textContent = '' }
   setMoreBadge('')
 
+  // Позицию запрашиваем сразу, но локальный режим открывает кеш без сети.
+  holdSaves = false
+  const progP = (progressWrites.get(work.id) || Promise.resolve())
+    .then(() => withRetry(() => api.get(`/api/progress/${work.id}`), transientErr, current))
+    .catch(e => { logErr('load progress', e); return null })
+  let localFormat = localReadingFormat(work)
+  const pending = pendingFor(work.id)
+  const pendingFormat = formatRecord(work, pending?.body)
+  if (pendingFormat && (!localFormat || pendingFormat.saved_at > localFormat.saved_at)) {
+    localFormat = pendingFormat
+    storeReadingFormat(work, pendingFormat)
+  }
+  // Поздний ответ меняет только следующее открытие, если запись ещё новее.
+  progP.then(prog => {
+    const server = formatRecord(work, prog && { ...prog, saved_at: serverSavedAt(prog) })
+    const local = localReadingFormat(work)
+    const latest = newerReadingFormat(work, local, server)
+    if (latest && (!local || latest.saved_at > local.saved_at)) storeReadingFormat(work, latest)
+  }).catch(e => logErr('sync reading format', e))
+  let savedProgress = null
+  const explicitFormat = opts.original || opts.fmt === 'epub' || opts.fmt === String(work.file_format).toLowerCase()
+  if (convertible(work) && !localFormat && !explicitFormat) {
+    let timer
+    try {
+      savedProgress = await Promise.race([
+        progP,
+        new Promise(resolve => {
+          timer = setTimeout(() => {
+            logErr('load reading format', new Error('Таймаут 1500 мс: использую настройку формата'))
+            resolve(null)
+          }, 1500)
+        }),
+      ])
+    } finally { clearTimeout(timer) }
+  }
+  if (!current()) return
+  const selectedFormat = readingFormat(work, opts, localFormat, savedProgress, pdfAsEpub())
+  if (convertible(work)) {
+    opts = { ...opts, fmt: selectedFormat, original: selectedFormat !== 'epub' }
+  }
+  originalFile = !!opts.original
+
   // История/URL: URL отражает ОТКРЫТУЮ книгу (#read/<id>), чтобы при
   // переоткрытии вкладки читалка вернулась к той же книге (позицию хранит
   // сервер). Вход из библиотеки/страницы книги — новая запись (браузерный
@@ -225,13 +266,6 @@ async function openReaderImpl(work, opts = {}) {
   // Загружаем файл как Blob → File с корректным именем (для детекта FB2).
   // Cache-first: если книга сохранена офлайн — читаем из кэша (без сети),
   // иначе тянем с сервера. Помогает на телефоне при плохом коннекте.
-  // Прогресс не зависит от файла книги, а раньше запрашивался ПОСЛЕ его
-  // открытия — лишний круг по сети посреди пути к первому кадру. Запускаем
-  // сразу, ждём ниже, там где он реально нужен.
-  holdSaves = false
-  const progP = (progressWrites.get(work.id) || Promise.resolve())
-    .then(() => withRetry(() => api.get(`/api/progress/${work.id}`), transientErr, current))
-    .catch(() => null)
   let cachedTarget = null, cachedSnapshot = null, cachedMoved = false, cachedSave = null
   const cachedKey = resumeKey(work, prefs, $('#view-host'))
   await showResume(work, prefs, $('#view-host'), opts, (pos, moved, snapshot) => {
@@ -246,7 +280,7 @@ async function openReaderImpl(work, opts = {}) {
   if (!current()) return
   const cachedBase = resumeBasePosition()
   let resp = await cachedBook(work.id)
-  if (opts.original && resp?.headers.get('X-Book-Format') !== 'pdf') resp = null
+  if (opts.original && resp?.headers.get('X-Book-Format') !== selectedFormat) resp = null
   // Явный EPUB не должен подхватить офлайн-копию исходного PDF.
   if (opts.fmt === 'epub' && resp?.headers.get('X-Book-Format') !== 'epub') resp = null
   if (!current()) return
@@ -314,6 +348,7 @@ async function openReaderImpl(work, opts = {}) {
     history.replaceState(histState, '', readerUrl(location.href, work.id, fmt))
   }
   currentFormat = fmt
+  storeReadingFormat(work, { file_format: fmt, saved_at: Date.now() })
   setMenuFormat(fmt)
   document.dispatchEvent(new Event('reader-format-change'))
   const name = `book.${fmt}`

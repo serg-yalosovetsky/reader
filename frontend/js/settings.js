@@ -14,6 +14,9 @@ export function syncSettingsUI() {
   $('#columns-mode').value = String(prefs.columns || 1)
   // «Колонки» актуальны только в режиме страниц.
   $('#columns-row').style.display = prefs.flow === 'paginated' ? '' : 'none'
+  $('#pdf-crop').checked = prefs.pdfCrop
+  $('#pdf-background').value = prefs.pdfBackground
+  $('#dim-images').checked = prefs.dimImages
   $('#pdf-epub').value = pdfAsEpub() ? '1' : '0'
 }
 document.querySelectorAll('.swatch').forEach((b) => b.addEventListener('click', () => {
@@ -30,3 +33,10 @@ $('#flow-mode').addEventListener('change', (e) => { prefs.flow = e.target.value;
 $('#columns-mode').addEventListener('change', (e) => { prefs.columns = parseInt(e.target.value, 10) || 1; savePrefs(); applyViewStyles() })
 // PDF читать как EPUB (конвертация на сервере) или как есть — макетом страниц.
 $('#pdf-epub')?.addEventListener('change', (e) => setPdfAsEpub(e.target.value === '1'))
+
+for (const [id, key, checkbox] of [['pdf-crop', 'pdfCrop', true], ['pdf-background', 'pdfBackground', false], ['dim-images', 'dimImages', true]]) {
+  $('#' + id).addEventListener('change', e => {
+    prefs[key] = checkbox ? e.target.checked : e.target.value
+    savePrefs(); applyViewStyles()
+  })
+}

@@ -97,7 +97,7 @@ export class FixedLayout extends HTMLElement {
                     element, iframe,
                     width: parseFloat(width),
                     height: parseFloat(height),
-                    onZoom,
+                    onZoom, getSize: srcOption?.getSize,
                 })
             }, { once: true })
             iframe.src = src
@@ -105,6 +105,9 @@ export class FixedLayout extends HTMLElement {
     }
     #render(side = this.#side) {
         if (!side) return
+        for (const frame of [this.#left, this.#right, this.#center]) {
+            if (frame?.getSize) Object.assign(frame, frame.getSize())
+        }
         const left = this.#left ?? {}
         const right = this.#center ?? this.#right ?? {}
         const target = side === 'left' ? left : right
@@ -242,6 +245,10 @@ export class FixedLayout extends HTMLElement {
             }
             return arr
         }, [{}])
+    }
+    async setPDFOptions(options) {
+        await this.book.setPDFOptions(options)
+        this.#render()
     }
     get index() {
         const spread = this.#spreads[this.#index]

@@ -9,7 +9,7 @@ const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
 // Шрифт по умолчанию — PT Sans: сделан под русский и в длинном тексте теплее
 // нейтрального Inter, который для художественной прозы суховат.
 export const prefs = Object.assign(
-  { pdfCrop: false, pdfBackground: 'original', dimImages: true, theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
+  { menuAutohidePdf: true, menuAutohideOther: false, pdfCrop: false, pdfBackground: 'original', dimImages: true, theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
   saved,
 )
 if (prefs.fontFamily === 'sans') prefs.fontFamily = 'open-sans'

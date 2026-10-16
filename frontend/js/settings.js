@@ -1,4 +1,5 @@
 // Панель «Вид»: тема/размер/поля/шрифт/режим/колонки.
+import { refreshMenuAutohide } from './menu-autohide.js'
 import { $ } from './core/dom.js'
 import { prefs, savePrefs, MARGIN_NAME, MARGIN_MAX } from './core/prefs.js'
 import { applyViewStyles } from './reader-core.js'
@@ -6,6 +7,8 @@ import { pdfAsEpub, setPdfAsEpub } from './core/convert.js'
 
 // ===================== Настройки вида (UI) =====================
 export function syncSettingsUI() {
+  $('#menu-autohide-pdf').checked = prefs.menuAutohidePdf
+  $('#menu-autohide-other').checked = prefs.menuAutohideOther
   document.querySelectorAll('.swatch').forEach((b) => b.setAttribute('aria-current', String(b.dataset.theme === prefs.theme)))
   $('#font-val').textContent = Math.round(prefs.fontScale * 100) + '%'
   $('#margin-val').textContent = MARGIN_NAME[prefs.marginLevel]
@@ -38,5 +41,12 @@ for (const [id, key, checkbox] of [['pdf-crop', 'pdfCrop', true], ['pdf-backgrou
   $('#' + id).addEventListener('change', e => {
     prefs[key] = checkbox ? e.target.checked : e.target.value
     savePrefs(); applyViewStyles()
+  })
+}
+
+for (const [id, key] of [["menu-autohide-pdf", "menuAutohidePdf"], ["menu-autohide-other", "menuAutohideOther"]]) {
+  $("#" + id).addEventListener("change", e => {
+    prefs[key] = e.target.checked
+    savePrefs(); refreshMenuAutohide()
   })
 }

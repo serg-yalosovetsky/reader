@@ -1,4 +1,5 @@
 // Ядро читалки: открытие книги, релокейт/прогресс, стили книги, TOC.
+import { setMenuFormat } from './menu-autohide.js'
 import { $, toast } from './core/dom.js'
 import { api } from './core/api.js'
 import { logErr } from './core/log.js'
@@ -151,6 +152,7 @@ async function openReaderImpl(work, opts = {}) {
   setCurrentWork(work)
   currentRev = ''
   currentFormat = ''
+  setMenuFormat('')
   setLastIdx(null); setLastCfi(''); setLastAnchor('')
   document.body.classList.add('reader-open')
   $('#library').hidden = true
@@ -244,6 +246,7 @@ async function openReaderImpl(work, opts = {}) {
     history.replaceState(histState, '', readerUrl(location.href, work.id, fmt))
   }
   currentFormat = fmt
+  setMenuFormat(fmt)
   const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 

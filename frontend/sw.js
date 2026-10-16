@@ -28,12 +28,12 @@ const FALLBACK_PRECACHE = [
   '/favicon.svg', '/manifest.webmanifest',
   '/js/app.js', '/js/library.js', '/js/reader-core.js', '/js/book-page.js',
   '/js/navigation.js', '/js/bookmarks.js', '/js/highlights.js', '/js/search.js',
-  '/js/progress-bar.js', '/js/chrome.js', '/js/translate.js',
+  '/js/progress-bar.js', '/js/chrome.js', '/js/menu-autohide.js', '/js/translate.js',
   '/js/settings.js', '/js/tts.js', '/js/accounts.js', '/js/downloads.js',
   '/js/core/api.js', '/js/core/dom.js', '/js/core/state.js', '/js/core/prefs.js',
   '/js/core/resume-cache.js', '/js/core/log.js', '/js/core/offline.js', '/js/core/position.js',
   '/js/core/locator.js', '/js/core/convert.js', '/js/core/inline-images.js',
-  '/js/core/fullscreen.js', '/js/core/reader-url.js',
+  '/js/core/fullscreen.js', '/js/core/menu-autohide.js', '/js/core/reader-url.js',
 ]
 
 // Что класть в офлайн-кэш оболочки. Сервер считает список сам (все .js, стили,

@@ -7,6 +7,7 @@
 // (‹ ☰ 🔍 Aa ⛶ ⋮), редкие ушли в панель «Ещё», а их состояние видно точкой на
 // самой кнопке ⋮ — иначе перенос в меню сделал бы фоновую проверку глав
 // невидимой.
+import { initMenuAutohide, attachMenuDocument } from './menu-autohide.js'
 import { $ } from './core/dom.js'
 
 // --- Заголовок: глава → книга → автор → снова глава -------------------------
@@ -184,6 +185,7 @@ function onTapEnd(clientX, clientY, startX, startY, startedAt, width, win) {
 export function attachDoubleTapFullscreen(doc) {
   if (!doc || doc.__dblTapFs) return
   doc.__dblTapFs = true
+  attachMenuDocument(doc)
   let sx = 0, sy = 0, st = 0
   doc.addEventListener('touchstart', (ev) => {
     const t = ev.changedTouches[0]
@@ -197,6 +199,7 @@ export function attachDoubleTapFullscreen(doc) {
 }
 
 export function initChrome() {
+  initMenuAutohide()
   $('#reader-title')?.addEventListener('click', () => {
     const cur = resolveMode(mode)
     // Крутим от ПОКАЗАННОГО режима, а не от желаемого: иначе на книге без

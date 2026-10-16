@@ -6,10 +6,12 @@ const PREFS_VERSION = 3
 // Одно место на весь файл: дефолт и цель миграций не должны разъезжаться.
 const DEFAULT_FONT = 'pt-sans'
 const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+// Фон PDF всегда определяется темой; старый выбор игнорируем.
+delete saved.pdfBackground
 // Шрифт по умолчанию — PT Sans: сделан под русский и в длинном тексте теплее
 // нейтрального Inter, который для художественной прозы суховат.
 export const prefs = Object.assign(
-  { menuAutohidePdf: true, menuAutohideOther: false, pdfCrop: false, pdfBackground: 'original', dimImages: true, theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
+  { menuAutohidePdf: true, menuAutohideOther: false, pdfCrop: false, dimImages: true, theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
   saved,
 )
 if (prefs.fontFamily === 'sans') prefs.fontFamily = 'open-sans'

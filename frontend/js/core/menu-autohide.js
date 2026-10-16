@@ -1,5 +1,5 @@
 // Решения без DOM: листание не считается просьбой показать меню.
-export const MENU_HIDE_MS = 5000
+export const MENU_HIDE_MS = 1000
 export function menuAutohideEnabled(format, prefs = {}) {
   return format?.toLowerCase() === 'pdf'
     ? (prefs.menuAutohidePdf ?? true) : (prefs.menuAutohideOther ?? false)

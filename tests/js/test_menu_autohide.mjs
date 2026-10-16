@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { MENU_HIDE_MS, menuAutohideEnabled, shouldRevealMenu } from '../../frontend/js/core/menu-autohide.js'
-assert.equal(MENU_HIDE_MS, 5000)
+assert.equal(MENU_HIDE_MS, 1000)
 assert.equal(menuAutohideEnabled('pdf'), true)
 assert.equal(menuAutohideEnabled('epub'), false)
 assert.equal(menuAutohideEnabled('epub', { menuAutohidePdf: true }), false)

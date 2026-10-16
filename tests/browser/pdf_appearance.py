@@ -65,10 +65,10 @@ with sync_playwright() as p:
       const {makePDF} = await import('/frontend/vendor/foliate-js/pdf.js');
       await import('/frontend/vendor/foliate-js/fixed-layout.js');
       const book = await makePDF(new File([new Uint8Array(data)], 'test.pdf'));
-      await book.setPDFOptions({pdfCrop: false, pdfBackground: 'original', theme: 'day'});
+      await book.setPDFOptions({pdfCrop: false, theme: 'day'});
       const section = await book.sections[0].load();
       const original = section.getSize();
-      await book.setPDFOptions({pdfCrop: true, pdfBackground: 'theme', theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: false});
+      await book.setPDFOptions({pdfCrop: true, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: false});
       const cropped = section.getSize();
       const frame = document.createElement('iframe');
       document.body.append(frame);
@@ -83,21 +83,25 @@ with sync_playwright() as p:
         filter: doc.querySelector('#canvas').style.filter,
         offset: doc.querySelector('#layers').style.left,
         canvas: !!doc.querySelector('canvas'), text: !!doc.querySelector('.textLayer')};
-      await book.setPDFOptions({pdfCrop: true, pdfBackground: 'theme', theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: true});
+      await book.setPDFOptions({pdfCrop: true, theme: 'night', bg: '#15171a', fg: '#dddddd', dimImages: true});
       await section.onZoom({doc, scale: 2});
       result.dimImage = pixel(70,50);
-      await book.setPDFOptions({pdfCrop: true, pdfBackground: 'theme', theme: 'sepia', bg: '#f5ecd9'});
+      await book.setPDFOptions({pdfCrop: true, theme: 'sepia', bg: '#f5ecd9'});
       await section.onZoom({doc, scale: 2});
       result.sepia = pixel(50,20);
       result.sepiaImage = pixel(70,50);
-      await book.setPDFOptions({pdfCrop: false, pdfBackground: 'original', theme: 'day'});
+      await book.setPDFOptions({pdfCrop: false, theme: 'day'});
+      await section.onZoom({doc, scale: 2});
+      result.day = pixel(50,20);
+      result.dayImage = pixel(70,50);
+      result.dayInk = pixel(30,89);
       result.restored = section.getSize();
       book.destroy();
       return result;
     }''', list(pdf()))
     assert result['cropped']['width'] < result['original']['width'], result
     assert result['restored'] == result['original'], result
-    assert result['filter'] == 'none' and result['offset'].startswith('-'), result
+    assert result['filter'] == '' and result['offset'].startswith('-'), result
     assert result['canvas'] and result['text'], result
     assert result['background'] == [21, 23, 26], result
     assert result['image'] == [240, 60, 20], result
@@ -105,5 +109,8 @@ with sync_playwright() as p:
     assert result['dimImage'] == [204, 51, 17], result
     assert result['sepia'] == [245, 236, 217], result
     assert result['sepiaImage'] == [231, 56, 17], result
+    assert result['day'] == [255, 255, 255], result
+    assert result['dayImage'] == [240, 60, 20], result
+    assert result['dayInk'] == [0, 0, 0], result
     print('PDF crop/theme:', result)
     browser.close()

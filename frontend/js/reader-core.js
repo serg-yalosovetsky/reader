@@ -71,7 +71,7 @@ function releaseHold() { holdSaves = false }
 for (const ev of USER_INPUT) window.addEventListener(ev, releaseHold, { capture: true, passive: true })
 
 // Формат и SHA-1 открытого файла: к ним привязан сохраняемый CFI.
-let currentFormat = ''
+export let currentFormat = ''
 let currentRev = ''
 // Листали страницы из кеша, пока живая книга грузилась.
 let cachedTurned = false
@@ -153,6 +153,7 @@ async function openReaderImpl(work, opts = {}) {
   currentRev = ''
   currentFormat = ''
   setMenuFormat('')
+  document.dispatchEvent(new Event('reader-format-change'))
   setLastIdx(null); setLastCfi(''); setLastAnchor('')
   document.body.classList.add('reader-open')
   $('#library').hidden = true
@@ -247,6 +248,7 @@ async function openReaderImpl(work, opts = {}) {
   }
   currentFormat = fmt
   setMenuFormat(fmt)
+  document.dispatchEvent(new Event('reader-format-change'))
   const name = `book.${fmt}`
   const file = new File([blob], name, { type: blob.type })
 

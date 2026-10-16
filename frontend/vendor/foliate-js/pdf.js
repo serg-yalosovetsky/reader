@@ -1,4 +1,4 @@
-import { contentBox, unionBoxes, stableBox, fullBox, pdfAppearance, darkTheme, imageBoxes } from './pdf-appearance.js'
+import { contentBox, unionBoxes, stableBox, fullBox, darkTheme, imageBoxes } from './pdf-appearance.js'
 const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toString()
 
 // Менять при обновлении PDF.js или compat, вместе с импортами compat.
@@ -16,9 +16,7 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
 const annotationLayerBuilderCSS = await fetchText(pdfjsPath('annotation_layer_builder.css'))
 
 const render = async (page, doc, zoom, box, options) => {
-    const appearance = pdfAppearance(options)
-    doc.body.style.background = options.pdfBackground === 'theme' ? options.bg : 'white'
-    Object.assign(doc.querySelector('#canvas').style, { filter: appearance.filter, mixBlendMode: appearance.blend })
+    doc.body.style.background = options.theme === 'day' ? 'white' : (options.bg || 'white')
     const scale = zoom * devicePixelRatio
     doc.documentElement.style.transform = `scale(${1 / devicePixelRatio})`
     doc.documentElement.style.transformOrigin = 'top left'
@@ -43,7 +41,7 @@ const render = async (page, doc, zoom, box, options) => {
     canvas.width = viewport.width
     const canvasContext = canvas.getContext('2d')
     await page.render({ canvasContext, viewport }).promise
-    if (options.pdfBackground === 'theme' && (darkTheme(options.theme) || ['sepia', 'gray', 'grey'].includes(options.theme))) {
+    if (darkTheme(options.theme) || ['sepia', 'gray', 'grey'].includes(options.theme)) {
         const parseColor = value => {
             const ctx = document.createElement('canvas').getContext('2d')
             ctx.fillStyle = value

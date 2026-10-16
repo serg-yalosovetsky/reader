@@ -282,8 +282,7 @@
     <!-- Панель вида (темы, шрифт) -->
     <aside id="settings-panel" class="panel" hidden>
       <div class="panel-head">Вид</div>
-      <label class="setting-row">Автоскрытие меню — PDF <input id="menu-autohide-pdf" type="checkbox" /></label>
-      <label class="setting-row">Автоскрытие меню — другие форматы <input id="menu-autohide-other" type="checkbox" /></label>
+      <label class="setting-row">Автоскрывать меню в полноэкранном режиме <input id="menu-autohide" type="checkbox" /></label>
       <!-- Тема: 8 вариантов сеткой 4×2 под подписью (serg/tasks#912). Образец «Аа»
            цветом темы вместо цветного кружка — иначе «Терминал» и «Фосфор»
            неразличимы; подпись под кружком видна всегда: title на телефоне
@@ -358,7 +357,7 @@
         </select>
       </div>
       <div class="setting-row">
-        <span class="setting-label" title="PDF — макет страницы: шрифт, поля и темы к нему не применяются. EPUB-версия собирается на сервере один раз.">PDF как EPUB</span>
+        <span class="setting-label" title="PDF — макет страницы: шрифт и поля текста к нему не применяются. EPUB-версия собирается на сервере один раз.">PDF как EPUB</span>
         <select id="pdf-epub" class="select">
           <option value="1">перетекающий текст</option>
           <option value="0">как есть (макет)</option>
@@ -372,7 +371,6 @@
         </select>
       </div>
       <div class="setting-row"><label for="pdf-crop">Обрезать поля (PDF)</label><input id="pdf-crop" type="checkbox"></div>
-      <div class="setting-row"><label for="pdf-background">Фон страницы (PDF)</label><select id="pdf-background" class="select"><option value="original">Оригинал</option><option value="theme">Как тема</option><option value="invert">Инверсия</option></select></div>
       <div class="setting-row"><label for="dim-images">Затемнять картинки в тёмной теме</label><input id="dim-images" type="checkbox"></div>
       <div class="setting-row" id="columns-row">
         <span class="setting-label">Колонки</span>

@@ -2,13 +2,19 @@
 import { refreshMenuAutohide } from './menu-autohide.js'
 import { $ } from './core/dom.js'
 import { prefs, savePrefs, MARGIN_NAME, MARGIN_MAX } from './core/prefs.js'
-import { applyViewStyles } from './reader-core.js'
+import { currentWork } from './core/state.js'
+import { currentFormat, applyViewStyles } from './reader-core.js'
 import { pdfAsEpub, setPdfAsEpub } from './core/convert.js'
+
+// Формат ответа отличает исходный PDF от его EPUB-версии.
+const autohideKey = () => currentFormat.toLowerCase() === 'pdf' ? 'menuAutohidePdf' : 'menuAutohideOther'
+document.addEventListener('reader-format-change', syncSettingsUI)
 
 // ===================== Настройки вида (UI) =====================
 export function syncSettingsUI() {
-  $('#menu-autohide-pdf').checked = prefs.menuAutohidePdf
-  $('#menu-autohide-other').checked = prefs.menuAutohideOther
+  $('#menu-autohide').checked = prefs[autohideKey()]
+  $('#pdf-crop').closest('.setting-row').hidden = currentFormat.toLowerCase() !== 'pdf'
+  $('#pdf-epub').closest('.setting-row').hidden = !(currentWork?.file_format === 'pdf' && currentFormat.toLowerCase() === 'epub')
   document.querySelectorAll('.swatch').forEach((b) => b.setAttribute('aria-current', String(b.dataset.theme === prefs.theme)))
   $('#font-val').textContent = Math.round(prefs.fontScale * 100) + '%'
   $('#margin-val').textContent = MARGIN_NAME[prefs.marginLevel]
@@ -18,7 +24,6 @@ export function syncSettingsUI() {
   // «Колонки» актуальны только в режиме страниц.
   $('#columns-row').style.display = prefs.flow === 'paginated' ? '' : 'none'
   $('#pdf-crop').checked = prefs.pdfCrop
-  $('#pdf-background').value = prefs.pdfBackground
   $('#dim-images').checked = prefs.dimImages
   $('#pdf-epub').value = pdfAsEpub() ? '1' : '0'
 }
@@ -37,16 +42,14 @@ $('#columns-mode').addEventListener('change', (e) => { prefs.columns = parseInt(
 // PDF читать как EPUB (конвертация на сервере) или как есть — макетом страниц.
 $('#pdf-epub')?.addEventListener('change', (e) => setPdfAsEpub(e.target.value === '1'))
 
-for (const [id, key, checkbox] of [['pdf-crop', 'pdfCrop', true], ['pdf-background', 'pdfBackground', false], ['dim-images', 'dimImages', true]]) {
+for (const [id, key] of [['pdf-crop', 'pdfCrop'], ['dim-images', 'dimImages']]) {
   $('#' + id).addEventListener('change', e => {
-    prefs[key] = checkbox ? e.target.checked : e.target.value
+    prefs[key] = e.target.checked
     savePrefs(); applyViewStyles()
   })
 }
 
-for (const [id, key] of [["menu-autohide-pdf", "menuAutohidePdf"], ["menu-autohide-other", "menuAutohideOther"]]) {
-  $("#" + id).addEventListener("change", e => {
-    prefs[key] = e.target.checked
-    savePrefs(); refreshMenuAutohide()
-  })
-}
+$('#menu-autohide').addEventListener('change', e => {
+  prefs[autohideKey()] = e.target.checked
+  savePrefs(); refreshMenuAutohide()
+})

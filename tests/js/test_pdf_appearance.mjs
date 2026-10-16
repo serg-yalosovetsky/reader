@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('../../frontend/vendor/foliate-js/pdf-appearance.js', import.meta.url), 'utf8')
-const { contentBox, unionBoxes, stableBox, fullBox, pdfAppearance, mapPixel, imageBox, imageBoxes, multiplyMatrices } = await import('data:text/javascript,' + encodeURIComponent(source))
+const { contentBox, unionBoxes, stableBox, fullBox, mapPixel, imageBox, imageBoxes, multiplyMatrices } = await import('data:text/javascript,' + encodeURIComponent(source))
 const width = 100, height = 100, data = new Uint8ClampedArray(width * height * 4).fill(255)
 assert.equal(contentBox({ data, width, height }), null)
 for (let y = 20; y < 80; y++) for (let x = 30; x < 70; x++) data[(y * width + x) * 4] = 0
@@ -14,18 +14,11 @@ assert.equal(contentBox({ data: sparse, width, height }), null)
 assert.deepEqual(unionBoxes([null]), fullBox())
 assert.deepEqual(stableBox([fullBox(), box, null]), box)
 assert.deepEqual(unionBoxes([{ left: .1, top: .2, right: .8, bottom: .7 }, { left: .2, top: .1, right: .9, bottom: .8 }]), { left: .1, top: .1, right: .9, bottom: .8 })
-for (const theme of ['dusk', 'night', 'black', 'terminal', 'phosphor']) {
-  assert.equal(pdfAppearance({ theme, pdfBackground: 'theme' }).filter, 'none')
-  assert.equal(pdfAppearance({ theme }).filter, 'brightness(.85)')
-  assert.equal(pdfAppearance({ theme, dimImages: false }).filter, 'none')
-}
-assert.equal(pdfAppearance({ theme: 'sepia', pdfBackground: 'theme' }).blend, 'normal')
-assert.equal(pdfAppearance({ theme: 'day' }).filter, 'none')
-assert.match(pdfAppearance({ theme: 'day', pdfBackground: 'invert' }).filter, /invert/)
-for (const id of ['pdf-crop', 'pdf-background', 'dim-images']) {
+for (const id of ['pdf-crop', 'dim-images']) {
   const html = readFileSync(new URL('../../frontend/index.html', import.meta.url), 'utf8')
   assert.ok(html.includes(`id="${id}"`))
 }
+assert.ok(!readFileSync(new URL('../../frontend/index.html', import.meta.url), 'utf8').includes('id="pdf-background"'))
 console.log('PDF appearance OK')
 
 const colors = {dark:true, bg:[43,46,51], fg:[221,225,231]}
@@ -53,3 +46,19 @@ for (const [op,args] of [[8,['img',20,30,[10,15,40,50]]],[9,[{},20,0,0,30,[10,15
     [imageBox([20,0,0,30,10,15]),imageBox([20,0,0,30,40,50])])
 for (const [op,args] of [[10,[[{transform:[2,0,0,3,4,5]}]]],[11,[{},[{transform:[2,0,0,3,4,5]}]]]])
   assert.deepEqual(imageBoxes({fnArray:[op],argsArray:[args]},imageOPS,identity),[imageBox([2,0,0,3,4,5])])
+
+// Старый выбор фона не возвращается в настройки даже при актуальной версии схемы.
+let stored = JSON.stringify({ v: 3, pdfBackground: 'invert', theme: 'night' })
+globalThis.localStorage = {
+  getItem: () => stored,
+  setItem: (_key, value) => { stored = value },
+}
+globalThis.document = { documentElement: { dataset: {} } }
+const prefsSource = readFileSync(new URL('../../frontend/js/core/prefs.js', import.meta.url), 'utf8')
+const { prefs, savePrefs } = await import('data:text/javascript,' + encodeURIComponent(prefsSource))
+assert.equal('pdfBackground' in prefs, false)
+assert.equal(prefs.theme, 'night')
+assert.equal(prefs.menuAutohidePdf, true)
+assert.equal(prefs.menuAutohideOther, false)
+savePrefs()
+assert.equal('pdfBackground' in JSON.parse(stored), false)

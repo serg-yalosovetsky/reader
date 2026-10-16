@@ -26,9 +26,6 @@ export function stableBox(boxes) {
     return unionBoxes(boxes.filter(b => b && (b.right - b.left) * (b.bottom - b.top) < .9))
 }
 export const darkTheme = theme => ['dusk', 'night', 'terminal', 'black', 'phosphor'].includes(theme)
-export function pdfAppearance({ theme, pdfBackground = 'original', dimImages = true }) {
-    return { filter: pdfBackground === 'invert' ? 'invert(1) hue-rotate(180deg)' : pdfBackground === 'original' && darkTheme(theme) && dimImages ? 'brightness(.85)' : 'none', blend: 'normal' }
-}
 export const multiplyMatrices = (a,b) => [a[0]*b[0]+a[2]*b[1], a[1]*b[0]+a[3]*b[1], a[0]*b[2]+a[2]*b[3], a[1]*b[2]+a[3]*b[3], a[0]*b[4]+a[2]*b[5]+a[4], a[1]*b[4]+a[3]*b[5]+a[5]]
 export function imageBox(m) {
     const points = [[0,0],[1,0],[0,1],[1,1]].map(([x,y]) => [m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]])

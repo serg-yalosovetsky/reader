@@ -1097,22 +1097,19 @@ dialog.cp-modal label { display: grid; gap: 6px; }
 dialog.cp-modal input { width: 100%; box-sizing: border-box; }
 
 /* В полном экране размеры книги постоянны и при показе, и при скрытии меню. */
-/* clip, а не hidden: hidden позволяет фокусу прокрутить контейнер к кнопке
-   уезжающей панели, и книга сдвигалась на высоту панели. */
+/* clip не позволяет фокусу прокручивать контейнер к скрытой панели. */
 #reader.fullscreen-menu { position: relative; overflow: clip; }
 #reader.fullscreen-menu .reader-bar {
   position: absolute; left: 0; right: 0; z-index: 12;
   max-height: 120px; opacity: 1; pointer-events: auto;
-  transition: transform .2s ease, opacity .2s ease;
+  transition: opacity .15s ease-out;
 }
 #reader.fullscreen-menu .reader-top { top: 0; border-bottom-width: 1px; }
 #reader.fullscreen-menu .reader-bottom {
   bottom: 0; border-top-width: 1px;
   padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
-#reader.fullscreen-menu.menu-hidden .reader-top { transform: translateY(-100%); }
-#reader.fullscreen-menu.menu-hidden .reader-bottom { transform: translateY(100%); }
-#reader.fullscreen-menu.menu-hidden .reader-bar { opacity: 0; pointer-events: none; }
+#reader.fullscreen-menu.menu-hidden .reader-bar { opacity: 0; pointer-events: none; transition-duration: .45s; }
 @media (prefers-reduced-motion: reduce) {
   #reader.fullscreen-menu .reader-bar { transition: none; }
 }

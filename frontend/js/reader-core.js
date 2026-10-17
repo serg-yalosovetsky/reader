@@ -17,6 +17,7 @@ import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.
 import { attachKeysToDoc, closePanels } from './navigation.js'
 import { recentBook, storeRecent, changedFile, readWithProgress, fileSource } from './core/recent-books.js'
 import { cachedBook } from './core/offline.js'
+import { probeRangeSource, makeEpubRange } from './core/book-range.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
 import { onTranslateRelocate, resetTranslate } from './translate.js'
@@ -307,13 +308,23 @@ async function openReaderImpl(work, opts = {}) {
       if (head.ok) {
         checkPDFResponse(head)
         if ((head.headers.get('X-Book-Format') || (epubReady && !opts.original ? 'epub' : work.file_format)) === 'pdf') {
-          rangeSource = { url, response: head }
+          rangeSource = { url, response: head, format: 'pdf',
+            sha1: head.headers.get('X-Book-SHA1') || '' }
           resp = head
         }
       } else if (![405, 501].includes(head.status)) checkPDFResponse(head)
     }
     if (!rangeSource) resp = await recentBook(url)
-    if (rangeSource) { /* Данные страниц загрузит PDFDataRangeTransport. */ }
+    // Ленивое открытие EPUB: файл остаётся на сервере, браузер качает только
+    // каталог zip и читаемые секции (HTTP Range). Офлайн-копия и кэш недавних
+    // файлов идут прежним путём — там файл уже на устройстве.
+    if (!resp && !rangeSource && !opts.original
+        && (work.file_format === 'epub' || (work.file_format === 'pdf' && epubReady))) {
+      rangeSource = await probeRangeSource(url)
+      if (rangeSource && rangeSource.format !== 'epub') rangeSource = null
+    }
+    if (rangeSource && rangeSource.format !== 'pdf') { /* Секции загрузит ZipReader по Range. */ }
+    else if (rangeSource) { /* Данные страниц загрузит PDFDataRangeTransport. */ }
     else if (fileSource(false, resp) === 'recent') {
       const cached = resp
       // Проверка сети не задерживает открытие и не прерывает чтение.
@@ -334,15 +345,16 @@ async function openReaderImpl(work, opts = {}) {
       if (resp.ok && !resp.redirected && !resp.headers.get('Content-Type')?.includes('text/html')) storeRecent(url, resp.clone())
     }
   }
-  if (!resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
+  if (resp && !resp.ok) throw new Error('Не удалось открыть книгу: ' + resp.status)
   let blob = rangeSource ? null : await resp.blob()
   if (refreshed) { resp = refreshed; blob = await resp.blob() }
   fileCommitted = true
   if (!current()) return
-  const revP = rangeSource ? Promise.resolve(resp.headers.get('X-Book-SHA1') || '') : bookRev(blob)
+  const revP = rangeSource ? Promise.resolve(rangeSource.sha1 || '') : bookRev(blob)
   // Формат берём из ответа: сервер мог отдать EPUB вместо PDF (имя файла решает,
   // каким движком foliate будет рендерить).
-  const fmt = resp.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
+  const fmt = rangeSource?.format
+    || resp?.headers?.get?.('X-Book-Format') || work.file_format || 'epub'
   if (work.file_format === 'pdf') {
     originalFile = fmt === 'pdf'
     history.replaceState(histState, '', readerUrl(location.href, work.id, fmt))
@@ -352,9 +364,9 @@ async function openReaderImpl(work, opts = {}) {
   setMenuFormat(fmt)
   document.dispatchEvent(new Event('reader-format-change'))
   const name = `book.${fmt}`
-  const file = rangeSource
-    ? await (await import('../vendor/foliate-js/pdf.js')).makePDF(rangeSource)
-    : new File([blob], name, { type: blob.type })
+  const file = !rangeSource ? new File([blob], name, { type: blob.type })
+    : fmt === 'pdf' ? await (await import('../vendor/foliate-js/pdf.js')).makePDF(rangeSource)
+    : await makeEpubRange(rangeSource)
   if (!current()) { if (rangeSource) await file.destroy(); return }
   if (rangeSource) file.onPDFError = error => toast(error.message, 'err', 10000)
 

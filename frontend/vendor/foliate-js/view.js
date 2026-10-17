@@ -27,11 +27,15 @@ const isFBZ = ({ name, type }) =>
     type === 'application/x-zip-compressed-fb2'
     || name.endsWith('.fb2.zip') || name.endsWith('.fbz')
 
-const makeZipLoader = async file => {
+export const makeZipLoader = async file => {
     const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } =
         await import('./vendor/zip.js')
     configure({ useWebWorkers: false })
-    const reader = new ZipReader(new BlobReader(file))
+    // file может быть и готовым reader-ом ({size, readUint8Array}) — тогда
+    // zip читается лениво по сети (HTTP Range), без скачивания файла целиком.
+    const reader = new ZipReader(
+        typeof file.readUint8Array === 'function' && Number.isFinite(file.size)
+            ? file : new BlobReader(file))
     const entries = await reader.getEntries()
     const map = new Map(entries.map(entry => [entry.filename, entry]))
     const load = f => (name, ...args) =>

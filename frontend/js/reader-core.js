@@ -319,7 +319,10 @@ async function openReaderImpl(work, opts = {}) {
     // каталог zip и читаемые секции (HTTP Range). Офлайн-копия и кэш недавних
     // файлов идут прежним путём — там файл уже на устройстве.
     if (!resp && !rangeSource && !opts.original
-        && (work.file_format === 'epub' || (work.file_format === 'pdf' && epubReady))) {
+        && (!work.file_format || work.file_format === 'epub'
+            || (work.file_format === 'pdf' && epubReady))) {
+      // Из строки списка библиотеки file_format не приходит — формат решает
+      // сама проба: range открываем только если сервер отдал EPUB.
       rangeSource = await probeRangeSource(url)
       if (rangeSource && rangeSource.format !== 'epub') rangeSource = null
     }

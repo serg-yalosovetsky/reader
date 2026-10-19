@@ -130,16 +130,18 @@ def main():
     failures = 0
     with Session(engine) as session, httpx.Client(follow_redirects=True) as client:
         work_ids = {}
-        if args.apply:
-            for work in session.exec(select(Work)).all():
-                for filename in (work.file_path, work.converted_path):
-                    if filename:
-                        work_ids[Path(filename).resolve()] = work.id
+        for work in session.exec(select(Work)).all():
+            for filename in (work.file_path, work.converted_path):
+                if filename:
+                    work_ids[Path(filename).resolve()] = work.id
         for path in sorted(config.BOOKS_DIR.rglob('*')):
             if path.suffix.lower() != '.epub':
                 continue
+            # Старые версии книг после обновлений лежат без записи в БД — их не читают.
+            if path.resolve() not in work_ids:
+                continue
             try:
-                new = repack(path, client, work_ids.get(path.resolve(), str(path)), args.apply)
+                new = repack(path, client, work_ids[path.resolve()], args.apply)
                 if new:
                     update_work(session, path, new)
             except Exception:

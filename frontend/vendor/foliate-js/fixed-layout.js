@@ -40,6 +40,8 @@ export class FixedLayout extends HTMLElement {
     #frames = new Map()
     #scrollRAF
     #heights = []
+    #stripHeight = 0
+    #viewHeight = 0
     #position = { index: 0, offset: 0 }
     #generation = 0
     #loading
@@ -48,7 +50,9 @@ export class FixedLayout extends HTMLElement {
     get scrolled() { return this.getAttribute('flow') === 'scrolled' }
     get atEnd() {
         return this.scrolled
-            ? !!this.#strip && this.scrollTop + this.clientHeight >= this.scrollHeight - 2
+            // Высоты ленты известны: scrollHeight/clientHeight здесь заставляли бы
+            // браузер пересчитывать раскладку на каждом relocate прокрутки.
+            ? !!this.#strip && this.scrollTop + this.#viewHeight >= this.#stripHeight - 2
             : this.index >= this.book.sections.length - 1
     }
     #index = -1
@@ -76,11 +80,14 @@ export class FixedLayout extends HTMLElement {
 
         this.addEventListener('scroll', () => {
             if (!this.scrolled || !this.#strip) return
+            // Позиция — сразу (её читает #place при подгрузке страниц), relocate и
+            // подгрузка — раз за кадр: событий scroll на жест бывает больше кадров.
             this.#position = scrollPosition(this.#heights, this.scrollTop)
-            this.#reportLocation('scroll')
             if (this.#scrollRAF == null) this.#scrollRAF = requestAnimationFrame(() => {
                 this.#scrollRAF = null
-                if (this.scrolled && this.#strip) this.#syncPages()
+                if (!this.scrolled || !this.#strip) return
+                this.#reportLocation('scroll')
+                this.#syncPages()
             })
         }, { passive: true })
         this.#observer.observe(this)
@@ -315,7 +322,7 @@ export class FixedLayout extends HTMLElement {
         if (!this.scrolled && this.index !== this.#position.index)
             this.#position = { index: this.index, offset: 0 }
         this.book.prefetch?.(this.scrolled
-            ? visiblePages(this.#heights, this.scrollTop, this.clientHeight, 0) : [this.index])
+            ? visiblePages(this.#heights, this.scrollTop, this.#viewHeight || this.clientHeight, 0) : [this.index])
         this.dispatchEvent(new CustomEvent('relocate', { detail:
             { reason, range: null, index: this.index, fraction: this.scrolled ? this.#position.offset : 0, size: this.scrolled ? (this.atEnd ? this.book.sections.length - this.index - this.#position.offset : 0) : 1 } }))
     }
@@ -433,20 +440,26 @@ export class FixedLayout extends HTMLElement {
     }
     #layoutStrip() {
         if (!this.#strip) return
+        // Размеры вьюпорта читаем один раз: чтение clientWidth после записи
+        // style.height заставляло пересчитывать раскладку на каждом из сотен слотов.
+        const width = this.clientWidth
+        this.#viewHeight = this.clientHeight
         this.#heights = this.#slots.map((slot, index) => {
             const frame = this.#frames.get(index)
             const size = frame?.getSize?.() ?? this.book.sections[index].getCachedSize?.() ?? slot.size
             slot.size = size
-            const scale = this.clientWidth / size.width
+            const scale = width / size.width
             const height = size.height * scale + 1
-            slot.style.height = `${height}px`
+            const css = `${height}px`
+            if (slot.style.height !== css) slot.style.height = css
             if (frame) {
-                Object.assign(frame.iframe.style, { display: 'block', width: `${this.clientWidth}px`, height: `${height - 1}px` })
+                Object.assign(frame.iframe.style, { display: 'block', width: `${width}px`, height: `${height - 1}px` })
                 if (frame.onZoom) frame.pending = frame.onZoom({ doc: frame.iframe.contentDocument, scale })
                 else Object.assign(frame.iframe.style, { width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${scale})`, transformOrigin: 'top left' })
             }
             return height
         })
+        this.#stripHeight = this.#heights.reduce((a, b) => a + b, 0)
         this.#place()
     }
     #syncPages() {
@@ -463,7 +476,7 @@ export class FixedLayout extends HTMLElement {
         try {
             // Последовательно: быстрый скролл не копит тяжёлые рендеры.
             while (generation === this.#generation && this.#strip) {
-                const wanted = visiblePages(this.#heights, this.scrollTop, this.clientHeight)
+                const wanted = visiblePages(this.#heights, this.scrollTop, this.#viewHeight || this.clientHeight)
                 for (const [index, frame] of this.#frames) if (!wanted.includes(index)) {
                     this.#release(frame); this.#frames.delete(index)
                 }

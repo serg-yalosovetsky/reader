@@ -138,15 +138,21 @@ const render = async (page, doc, zoom, box, options) => {
         img.width = canvas.width; img.height = canvas.height
         img.style.cssText = `display:block;width:${canvas.width}px;height:${canvas.height}px`
         img.src = imageURL
-        try { await img.decode() }
-        catch (error) { URL.revokeObjectURL(imageURL); throw error }
-        pageImage = img
+        try {
+            await img.decode()
+            pageImage = img
+        } catch (error) {
+            // Картинка не декодировалась — показываем страницу живым canvas, как раньше.
+            console.warn(`PDF: страница ${page.pageNumber} остаётся canvas, decode не удался:`, error)
+            URL.revokeObjectURL(imageURL)
+            imageURL = undefined
+        }
     } else console.warn(`PDF: toBlob вернул null, страница ${page.pageNumber}`)
     const previousURL = doc.pdfImageURL
     doc.querySelector('#canvas').replaceChildren(doc.adoptNode(pageImage))
     doc.pdfImageURL = imageURL
     if (previousURL) URL.revokeObjectURL(previousURL)
-    if (blob) { canvas.width = 0; canvas.height = 0 }
+    if (pageImage !== canvas) { canvas.width = 0; canvas.height = 0 }
 
     const container = doc.querySelector('.textLayer')
     const textLayer = new pdfjsLib.TextLayer({

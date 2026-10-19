@@ -27,7 +27,7 @@ from ebooklib import epub
 from ..app import progress
 from . import egress
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
-from .remote_images import ImageEmbedder, fetch_image
+from .remote_images import ImageEmbedder, fetch_image, image_client
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +47,11 @@ _CHAPTERS_RE = re.compile(r"\bchapters\s*:\s*(\[.+?\])\s*,?[\n\r]", re.DOTALL)
 _USERID_RE = re.compile(r"\buserId\s*:\s*(\d+)")
 
 
-def _get(c: httpx.Client, url: str, *, attempts: int = 4, **kw) -> httpx.Response | bytes:
+def _get(c: httpx.Client, url: str, *, attempts: int = 4, **kw) -> httpx.Response:
     """GET с ретраями на транзиентные сетевые/TLS-сбои (author.today флакит)."""
-    max_bytes = kw.pop("max_bytes", None)
     last: Exception | None = None
     for i in range(attempts):
         try:
-            if max_bytes is not None:
-                return fetch_image(c, url, max_bytes)
             return c.get(url, **kw)
         except httpx.HTTPError as e:
             last = e
@@ -451,10 +448,11 @@ def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
         if not chapter_htmls:
             raise PaidContentError(title=title, author=author, reason="paid")
 
-        embedder = ImageEmbedder(
-            lambda url, limit: _get(c, url, max_bytes=limit), work_id
-        )
-        chapter_htmls = [(title, embedder.rewrite(html)) for title, html in chapter_htmls]
+        with image_client(_UA) as images_client:
+            embedder = ImageEmbedder(
+                lambda url, limit: fetch_image(images_client, url, limit), work_id
+            )
+            chapter_htmls = [(title, embedder.rewrite(html)) for title, html in chapter_htmls]
 
     # 4) Сборка EPUB (со встроенной обложкой).
     cover = None

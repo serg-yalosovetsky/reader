@@ -15,7 +15,6 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 from zipfile import ZipFile
 
-import httpx
 from defusedxml import ElementTree as ET
 from sqlmodel import Session, select
 
@@ -23,8 +22,12 @@ from backend.app import config
 from backend.app.db.models import Work, utcnow
 from backend.app.db.session import engine
 from backend.app.storage import sha1_of_file
-from backend.downloaders.authortoday import _get
-from backend.downloaders.remote_images import ImageEmbedder, remote_urls
+from backend.downloaders.remote_images import (
+    ImageEmbedder,
+    fetch_image,
+    image_client,
+    remote_urls,
+)
 
 logger = logging.getLogger(__name__)
 OPF = 'http://www.idpf.org/2007/opf'
@@ -53,7 +56,7 @@ def repack(path: Path, client, work_id, apply=False) -> Path | None:
         # Свободный каталог не перезаписывает иллюстрации исходного EPUB.
         while any(name.startswith(prefix + '/') for name in archive.namelist()):
             prefix += '-new'
-        embedder = ImageEmbedder(lambda url, limit: _get(client, url, max_bytes=limit), work_id, prefix)
+        embedder = ImageEmbedder(lambda url, limit: fetch_image(client, url, limit), work_id, prefix)
         rewritten = {name: embedder.rewrite(text, lambda image, name=name:
                      posixpath.relpath(image, posixpath.dirname(name) or '.')).encode('utf-8')
                      for name, text in documents.items()}
@@ -128,7 +131,7 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     failures = 0
-    with Session(engine) as session, httpx.Client(follow_redirects=True) as client:
+    with Session(engine) as session, image_client() as client:
         work_ids = {}
         for work in session.exec(select(Work)).all():
             for filename in (work.file_path, work.converted_path):

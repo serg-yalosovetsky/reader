@@ -179,7 +179,7 @@ async function openReaderImpl(work, opts = {}) {
   // того, как список стал его отдавать, — тогда берём деталь книги.
   if (work.file_format == null) {
     try { work = { ...work, ...await api.get(`/api/library/${work.id}`) } }
-    catch (e) { logErr(load work format, e) }
+    catch (e) { logErr('load work format', e) }
     if (!current()) return
   }
   setCurrentWork(work)

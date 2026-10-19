@@ -20,6 +20,8 @@ MAX_URLS = 300
 IMAGE_DEADLINE = 30
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
 NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# Устаревшие IPv4-compatible ::a.b.c.d — без исключений (mapped ::ffff:0:0/96 вне этой сети).
+IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
 IMG = re.compile(r'''<img\b(?:[^"'<>]|"[^"]*"|'[^']*')*>''', re.IGNORECASE)
 SRC = re.compile(r'''(\s+)([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''', re.IGNORECASE)
 
@@ -103,12 +105,20 @@ def _embedded_ipv4(ip):
 
 
 def _allowed_ip(ip):
-    # Разрешено только глобальное: всё, что не is_global, запрещено по умолчанию.
-    inner = _embedded_ipv4(ip)
-    if inner is not None and not _allowed_ip(inner):
+    """Разрешено только глобальное, и внешний адрес, и вложенный IPv4 — каждый сам по себе."""
+    # ::ffff:a.b.c.d — это и есть IPv4-адрес (сокет соединится с ним), судим только его.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return _allowed_ip(ip.ipv4_mapped)
+    if (not ip.is_global or ip.is_private or ip.is_reserved or ip.is_loopback
+            or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip in TAILNET):
         return False
-    return (ip.is_global or inner is not None and inner.is_global) and ip not in TAILNET \
-        and not ip.is_multicast
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.is_site_local or ip in IPV4_COMPATIBLE:
+            return False
+        inner = _embedded_ipv4(ip)
+        if inner is not None and not _allowed_ip(inner):
+            return False
+    return True
 
 
 def validate_image_url(url):

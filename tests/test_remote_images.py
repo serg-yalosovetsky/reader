@@ -1,4 +1,5 @@
 """Встраивание иллюстраций без настоящей сети."""
+import ipaddress
 import socket
 from io import BytesIO
 from zipfile import ZipFile
@@ -184,6 +185,8 @@ def test_download_once_embeds_before_client_closes(png, monkeypatch):
     # IPv4 внутри IPv6-обёрток: 6to4 (10.0.0.1), Teredo (клиент 127.0.0.1), NAT64 (192.168.1.1)
     '2002:a00:1::1', '2001:0:4136:e378:8000:63bf:80ff:fffe', '64:ff9b::c0a8:101',
     '198.18.0.1', '192.0.2.1',
+    # IPv4-compatible и site-local IPv6
+    '::a00:1', '::808:808', 'fec0::1',
 ])
 def test_private_dns_rejected(ip, monkeypatch):
     monkeypatch.setattr(remote_images.socket, 'getaddrinfo', lambda *args, **kwargs:
@@ -389,3 +392,8 @@ def test_connection_pinned_to_validated_ip(png):
     assert request.url.host == '93.184.216.34'
     assert request.headers['Host'] == 'cm.author.today'
     assert request.extensions['sni_hostname'] == 'cm.author.today'
+
+
+@pytest.mark.parametrize('ip', ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946', '::ffff:93.184.216.34'])
+def test_public_ip_allowed(ip):
+    assert remote_images._allowed_ip(ipaddress.ip_address(ip))

@@ -21,6 +21,11 @@ def public_dns(monkeypatch):
                         [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))])
 
 
+def logical(request):
+    """URL глазами автора книги: соединение идёт на IP, имя — в Host."""
+    return f"{request.url.scheme}://{request.headers['Host']}{request.url.raw_path.decode()}"
+
+
 @pytest.fixture
 def png():
     out = BytesIO()
@@ -145,9 +150,9 @@ def test_download_once_embeds_before_client_closes(png, monkeypatch):
     calls = []
 
     def serve(request):
-        if request.url.host == 'cm.author.today':
+        if request.headers.get('Host') == 'cm.author.today':
             assert 'Cookie' not in request.headers
-            calls.append(str(request.url))
+            calls.append(logical(request))
             return httpx.Response(200, content=png)
         assert request.headers.get('Cookie') == 'session=secret'
         return httpx.Response(200, text='страница')
@@ -176,6 +181,9 @@ def test_download_once_embeds_before_client_closes(png, monkeypatch):
     '127.0.0.1', '10.1.2.3', '100.64.1.2', '100.127.255.254', '::1',
     '169.254.169.254', '224.0.0.1', '0.0.0.0', '240.0.0.1',
     'fc00::1', 'fe80::1', '::ffff:100.64.1.2',
+    # IPv4 внутри IPv6-обёрток: 6to4 (10.0.0.1), Teredo (клиент 127.0.0.1), NAT64 (192.168.1.1)
+    '2002:a00:1::1', '2001:0:4136:e378:8000:63bf:80ff:fffe', '64:ff9b::c0a8:101',
+    '198.18.0.1', '192.0.2.1',
 ])
 def test_private_dns_rejected(ip, monkeypatch):
     monkeypatch.setattr(remote_images.socket, 'getaddrinfo', lambda *args, **kwargs:
@@ -226,7 +234,7 @@ def test_redirect_to_private_is_rejected(monkeypatch):
     calls = []
 
     def serve(request):
-        calls.append(str(request.url))
+        calls.append(logical(request))
         return httpx.Response(302, headers={'Location': 'http://private/a'})
 
     # Даже клиент с follow_redirects=True не может обойти ручную проверку.
@@ -242,7 +250,7 @@ def test_redirect_limit_and_relative_location(png):
     calls = []
 
     def serve(request):
-        calls.append(str(request.url))
+        calls.append(logical(request))
         return httpx.Response(302, headers={'Location': '/next'})
 
     with (
@@ -365,3 +373,19 @@ def test_deadline_after_dns(monkeypatch):
     ):
         fetch_image(client, 'https://host/a', 1024)
     assert not calls
+
+
+def test_connection_pinned_to_validated_ip(png):
+    """Соединение идёт на проверенный IP: повторного DNS (rebinding) нет, Host и SNI — исходные."""
+    seen = []
+
+    def serve(request):
+        seen.append(request)
+        return httpx.Response(200, content=png)
+
+    with httpx.Client(transport=httpx.MockTransport(serve)) as client:
+        assert fetch_image(client, 'https://cm.author.today/a.jpg', 1024) == png
+    request = seen[0]
+    assert request.url.host == '93.184.216.34'
+    assert request.headers['Host'] == 'cm.author.today'
+    assert request.extensions['sni_hostname'] == 'cm.author.today'

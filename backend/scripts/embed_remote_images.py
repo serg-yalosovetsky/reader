@@ -22,6 +22,7 @@ from backend.app import config
 from backend.app.db.models import Work, utcnow
 from backend.app.db.session import engine
 from backend.app.storage import sha1_of_file
+from backend.downloaders.authortoday import _UA
 from backend.downloaders.remote_images import (
     ImageEmbedder,
     fetch_image,
@@ -131,7 +132,7 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     failures = 0
-    with Session(engine) as session, image_client() as client:
+    with Session(engine) as session, image_client(_UA) as client:
         work_ids = {}
         for work in session.exec(select(Work)).all():
             for filename in (work.file_path, work.converted_path):

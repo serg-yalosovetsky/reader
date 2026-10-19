@@ -19,6 +19,7 @@ MAX_BOOK = 150 * 1024 * 1024
 MAX_URLS = 300
 IMAGE_DEADLINE = 30
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
 IMG = re.compile(r'''<img\b(?:[^"'<>]|"[^"]*"|'[^']*')*>''', re.IGNORECASE)
 SRC = re.compile(r'''(\s+)([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''', re.IGNORECASE)
 
@@ -86,8 +87,32 @@ def image_client(user_agent=None):
     return httpx.Client(headers=headers, follow_redirects=False, trust_env=False)
 
 
+def _embedded_ipv4(ip):
+    """IPv4 внутри IPv6-обёрток (mapped, 6to4, Teredo, NAT64) проверяется отдельно."""
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return None
+    if ip.ipv4_mapped:
+        return ip.ipv4_mapped
+    if ip.sixtofour:
+        return ip.sixtofour
+    if ip.teredo:
+        return ip.teredo[1]
+    if ip in NAT64:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return None
+
+
+def _allowed_ip(ip):
+    # Разрешено только глобальное: всё, что не is_global, запрещено по умолчанию.
+    inner = _embedded_ipv4(ip)
+    if inner is not None and not _allowed_ip(inner):
+        return False
+    return (ip.is_global or inner is not None and inner.is_global) and ip not in TAILNET \
+        and not ip.is_multicast
+
+
 def validate_image_url(url):
-    """Ни один из адресов хоста не должен вести во внутреннюю сеть."""
+    """Все адреса хоста должны быть глобальными; возвращает проверенный IP для соединения."""
     try:
         parsed = urlsplit(url)
         port = parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80)
@@ -100,14 +125,21 @@ def validate_image_url(url):
         raise ValueError(f'недопустимый URL картинки {url}: {exc}') from exc
     if not addresses:
         raise ValueError(f'у хоста картинки нет IP-адресов: {parsed.hostname}')
-    for _, _, _, _, address in addresses:
-        ip = ipaddress.ip_address(address[0])
-        # IPv4-mapped IPv6 не должен обходить запрет tailnet и приватных IPv4.
-        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-            ip = ip.ipv4_mapped
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
-                or ip.is_multicast or ip.is_unspecified or ip in TAILNET):
+    ips = [ipaddress.ip_address(address[0]) for _, _, _, _, address in addresses]
+    for ip in ips:
+        if not _allowed_ip(ip):
             raise ValueError(f'запрещённый IP картинки: {ip} ({parsed.hostname})')
+    return ips[0]
+
+
+def _pinned(url, ip):
+    """URL с проверенным IP вместо имени: повторного разрешения (DNS rebinding) нет.
+    Host и SNI остаются исходными — сертификат проверяется по имени хоста."""
+    parsed = urlsplit(url)
+    literal = f'[{ip}]' if ip.version == 6 else str(ip)
+    netloc = literal + (f':{parsed.port}' if parsed.port else '')
+    host = parsed.hostname + (f':{parsed.port}' if parsed.port else '')
+    return parsed._replace(netloc=netloc).geturl(), host, parsed.hostname
 
 
 def fetch_image(client, url, limit):
@@ -122,8 +154,10 @@ def fetch_image(client, url, limit):
 
     for redirects in range(4):
         remaining()
-        validate_image_url(url)
-        request = client.build_request('GET', url, timeout=min(15, remaining()))
+        target, host, hostname = _pinned(url, validate_image_url(url))
+        request = client.build_request('GET', target, headers={'Host': host},
+                                       timeout=min(15, remaining()),
+                                       extensions={'sni_hostname': hostname})
         # Не отправляем даже cookies, полученные от предыдущей иллюстрации.
         request.headers.pop('Cookie', None)
         response = client.send(request, stream=True, follow_redirects=False, auth=None)
@@ -135,7 +169,7 @@ def fetch_image(client, url, limit):
                 location = response.headers.get('Location')
                 if not location:
                     raise ValueError('редирект картинки без Location')
-                url = urljoin(str(response.url), location)
+                url = urljoin(url, location)
                 continue
             response.raise_for_status()
             data = bytearray()

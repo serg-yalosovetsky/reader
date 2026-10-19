@@ -2,7 +2,7 @@
 const PREFS_KEY = 'reader.prefs'
 // Версия схемы настроек. Нужна ровно там, где ЗНАЧЕНИЕ меняет смысл: уровни
 // полей — числа, и вставка нового уровня в середину сдвигает все сохранённые.
-const PREFS_VERSION = 3
+const PREFS_VERSION = 4
 // Одно место на весь файл: дефолт и цель миграций не должны разъезжаться.
 const DEFAULT_FONT = 'pt-sans'
 const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
@@ -13,7 +13,7 @@ delete saved.dimImages
 // Шрифт по умолчанию — PT Sans: сделан под русский и в длинном тексте теплее
 // нейтрального Inter, который для художественной прозы суховат.
 export const prefs = Object.assign(
-  { menuAutohidePdf: true, menuAutohideOther: false, pdfCrop: false, imageMode: 'theme', theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
+  { menuAutohidePdf: true, menuAutohideOther: false, pdfCrop: true, imageMode: 'theme', theme: 'day', fontScale: 1, marginLevel: 2, fontFamily: DEFAULT_FONT, flow: 'paginated', columns: 1, v: PREFS_VERSION },
   saved,
 )
 if (prefs.fontFamily === 'sans') prefs.fontFamily = 'open-sans'
@@ -62,6 +62,12 @@ function migratePrefs() {
   if (from === 2 && saved.fontFamily === 'inter') {
     prefs.fontFamily = DEFAULT_FONT
   }
+  // v3 -> v4: обрезка полей PDF включена по умолчанию. Настройки сохраняются
+  // целиком, поэтому у всех, кто открывал читалку, уже записано pdfCrop: false —
+  // без миграции новый дефолт до них не доехал бы. Перезапись разовая: флажку
+  // три дня, осознанно выключенным он почти ни у кого быть не успел, а выключить
+  // его снова можно в «Aa».
+  if (from < 4) prefs.pdfCrop = true
   prefs.v = PREFS_VERSION
   savePrefs()
 }

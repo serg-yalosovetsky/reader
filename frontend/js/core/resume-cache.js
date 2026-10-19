@@ -1,3 +1,4 @@
+import { deferRemoteImages } from './remote-images.js'
 import { inlineImagesOnLoad } from './inline-images.js'
 import { captureAnchor } from './position.js'
 // Persistent, already laid-out resume pages. The live reader warms a separate
@@ -131,7 +132,7 @@ async function frozenDocument(doc, assets) {
   for (const url of urls) html = html.split(url).join(await fetchAsset(url))
   // Cached documents are inert, self-contained and cannot initiate requests.
   html = html.replace(/<head([^>]*)>/i, `<head$1><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' data:; img-src data:; font-src data:">`)
-  return '<!doctype html>' + html
+  return '<!doctype html>' + deferRemoteImages(html)
 }
 
 // Paginator раскладывает новую главу в два шага: сначала колонки, потом
@@ -204,7 +205,7 @@ function showPage() {
     }, { passive: true })
     host.dataset.resumeVisible = 'true'
   }, { once: true })
-  frame.srcdoc = record.documents[page.document]
+  frame.srcdoc = deferRemoteImages(record.documents[page.document])
   clip.append(frame); layer.append(clip); host.append(layer)
   onPosition?.(page.position, false, page)
 }
@@ -290,6 +291,7 @@ export function scheduleResume(view, work, prefs, host, applyStyles, original = 
       const sections = view.book.sections.map(section => ({ ...section, unload() {} }))
       const book = new Proxy(view.book, { get(target, property) {
         if (property === 'sections') return sections
+        // Переписывание HTML уже подключено к общему загрузчику живой книги.
         if (property === 'transformTarget') return undefined
         if (property === 'destroy') return () => {}
         const value = Reflect.get(target, property, target)

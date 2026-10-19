@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import tempfile
 import time
@@ -26,6 +27,9 @@ from ebooklib import epub
 from ..app import progress
 from . import egress
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
+from .remote_images import ImageEmbedder, fetch_image
+
+logger = logging.getLogger(__name__)
 
 
 class _PaidChapter(DownloaderError):
@@ -39,15 +43,18 @@ _UA = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 _ID_RE = re.compile(r"/(?:work|reader)/(\d+)")
-_CHAPTERS_RE = re.compile(r"\bchapters\s*:\s*(\[.+?\])\s*,?[\n\r]", re.S)
+_CHAPTERS_RE = re.compile(r"\bchapters\s*:\s*(\[.+?\])\s*,?[\n\r]", re.DOTALL)
 _USERID_RE = re.compile(r"\buserId\s*:\s*(\d+)")
 
 
-def _get(c: httpx.Client, url: str, *, attempts: int = 4, **kw) -> httpx.Response:
+def _get(c: httpx.Client, url: str, *, attempts: int = 4, **kw) -> httpx.Response | bytes:
     """GET с ретраями на транзиентные сетевые/TLS-сбои (author.today флакит)."""
+    max_bytes = kw.pop("max_bytes", None)
     last: Exception | None = None
     for i in range(attempts):
         try:
+            if max_bytes is not None:
+                return fetch_image(c, url, max_bytes)
             return c.get(url, **kw)
         except httpx.HTTPError as e:
             last = e
@@ -156,8 +163,8 @@ def search_work(title: str, author: str = "") -> str | None:
                 # автора в одном regex с названием нельзя: у части карточек его нет
                 # в ожидаемом виде, и тогда терялась вся карточка (так «Бродяга
                 # Грег» выпадал, хотя присутствовал в bookcard-title).
-                ids = re.findall(title_pat, r.text, re.S)
-                authors = re.findall(author_pat, r.text, re.S)
+                ids = re.findall(title_pat, r.text, re.DOTALL)
+                authors = re.findall(author_pat, r.text, re.DOTALL)
                 for i, (wid, t_raw) in enumerate(ids):
                     t = _clean(t_raw)
                     if not t or wid in title_by_id:
@@ -222,7 +229,8 @@ def search_work(title: str, author: str = "") -> str | None:
                 if exact:
                     return f"https://author.today/work/{exact}"
             return f"https://author.today/work/{best_id}"
-        except Exception:
+        except Exception as exc:
+            logger.warning("author.today: поиск %s: %s", title, exc, exc_info=True)
             return None
 
 
@@ -241,7 +249,8 @@ def count_chapters(url: str) -> int | None:
                 return None
             arr = json.loads(m.group(1))
             return len([ch for ch in arr if ch.get("id")])
-        except Exception:
+        except Exception as exc:
+            logger.warning("author.today: не удалось получить метаданные %s: %s", url, exc, exc_info=True)
             return None
 
 
@@ -296,8 +305,8 @@ def fetch_text_sample(
         if creds:
             try:
                 _login(c, creds[0], creds[1])
-            except Exception:  # noqa: BLE001 — неудачный вход не валит пробу
-                pass
+            except Exception as exc:
+                logger.warning("author.today: неудачный вход для work_id=%s: %s", work_id, exc, exc_info=True)
         try:
             rr = _get(c, f"{_BASE}/reader/{work_id}")
             chapters = _parse_chapters(rr.text)
@@ -339,7 +348,8 @@ def _login(c: httpx.Client, email: str, password: str) -> bool:
             else {}
         )
         return bool(data.get("isSuccessful"))
-    except Exception:
+    except Exception as exc:
+        logger.warning("author.today: ошибка входа: %s", exc, exc_info=True)
         return False
 
 
@@ -441,6 +451,11 @@ def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
         if not chapter_htmls:
             raise PaidContentError(title=title, author=author, reason="paid")
 
+        embedder = ImageEmbedder(
+            lambda url, limit: _get(c, url, max_bytes=limit), work_id
+        )
+        chapter_htmls = [(title, embedder.rewrite(html)) for title, html in chapter_htmls]
+
     # 4) Сборка EPUB (со встроенной обложкой).
     cover = None
     try:
@@ -449,7 +464,7 @@ def _download_once(url: str, cookies: dict | None = None) -> DownloadResult:
         cover = covers.fetch_cover_bytes(f"{_BASE}/work/{work_id}")
     except Exception:  # noqa: BLE001
         cover = None
-    out = _build_epub(work_id, title, author, annotation, chapter_htmls, cover=cover)
+    out = _build_epub(work_id, title, author, annotation, chapter_htmls, cover=cover, images=embedder.images)
     return DownloadResult(
         file_path=out,
         file_format="epub",
@@ -547,7 +562,7 @@ def _fetch_chapter(c: httpx.Client, work_id: str, chapter_id: str, user_id: str)
 # Кнопка чтения в левой колонке страницы книги — ЕДИНСТВЕННЫЙ надёжный признак
 # того, отдаёт ли AT текст целиком: «Читать книгу» (btn-success) у бесплатной,
 # «Читать фрагмент» (btn-primary) — у платной.
-_READ_BTN_RE = re.compile(r"<a\b[^>]*\bbtn-read-book\b[^>]*>(.*?)</a>", re.S | re.I)
+_READ_BTN_RE = re.compile(r"<a\b[^>]*\bbtn-read-book\b[^>]*>(.*?)</a>", re.DOTALL | re.IGNORECASE)
 
 
 def _is_free(html: str) -> bool:
@@ -576,7 +591,7 @@ def _is_free(html: str) -> bool:
     # но без покупки ЦИКЛА: она ничего не говорит об этой книге.
     if "Свободный доступ" in html:
         return True
-    rest = re.sub(r"<a\b[^>]*\bbtn-buy-series\b[^>]*>.*?</a>", " ", html, flags=re.S)
+    rest = re.sub(r"<a\b[^>]*\bbtn-buy-series\b[^>]*>.*?</a>", " ", html, flags=re.DOTALL)
     rest = rest.replace("Купить цикл", " ")
     paid_markers = ("icon-2-cart", "Купить", "add-to-cart", 'class="price"')
     return not any(m in rest for m in paid_markers)
@@ -676,6 +691,7 @@ def _build_epub(
     annotation: str,
     chapters: list[tuple[str, str]],
     cover: bytes | None = None,
+    images: list[tuple[str, bytes, str]] | None = None,
 ) -> Path:
     book = epub.EpubBook()
     book.set_identifier(f"authortoday_{work_id}")
@@ -689,8 +705,12 @@ def _build_epub(
         ext = "png" if cover[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
         try:
             book.set_cover(f"cover.{ext}", cover)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            logger.warning("author.today: обложка EPUB work_id=%s: %s", work_id, exc, exc_info=True)
+
+    for n, (name, data, mime) in enumerate(images or [], 1):
+        book.add_item(epub.EpubItem(uid=f"img{n:04d}", file_name=name,
+                                    media_type=mime, content=data))
 
     spine: list = []
     toc: list = []

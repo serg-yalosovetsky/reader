@@ -1,3 +1,4 @@
+import { protectRemoteImages, restoreRemoteImages } from './core/remote-images.js'
 import { checkPDFResponse } from '../vendor/foliate-js/pdf-range.js'
 // Ядро читалки: открытие книги, релокейт/прогресс, стили книги, TOC.
 import { setMenuFormat } from './menu-autohide.js'
@@ -384,6 +385,8 @@ async function openReaderImpl(work, opts = {}) {
   openedFile = file
   await readerView.open(file)
   if (!current()) { try { readerView.close() } catch {} readerView.book?.destroy?.(); return }
+  const remoteImages = fmt !== 'pdf' && !view.isFixedLayout && protectRemoteImages(view.book)
+  if (remoteImages) view.addEventListener('load', e => { if (e.detail?.doc) restoreRemoteImages(e.detail.doc) })
   navStack.length = 0
   document.getElementById('reader')?.classList.remove('chrome-hidden')
   view.addEventListener('relocate', e => { if (current() && !opening) onRelocate(e) })

@@ -7,7 +7,8 @@ def test_pdf_range_and_head(client):
     uploaded = client.post('/api/library/upload', files={'file': ('range.pdf', data, 'application/pdf')})
     assert uploaded.status_code == 200, uploaded.text
     url = f"/api/reader/{uploaded.json()['id']}/file?original=1"
-    rev = hashlib.sha1(data).hexdigest()
+    # SHA-1 здесь — ревизия файла (заголовок X-Book-SHA1), а не защита.
+    rev = hashlib.sha1(data, usedforsecurity=False).hexdigest()
     head = client.head(url)
     assert head.status_code == 200
     assert not head.content

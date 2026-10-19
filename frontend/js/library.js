@@ -777,9 +777,9 @@ $('#lib-q').addEventListener('input', (e) => {
 })
 
 // ===================== Тема в библиотеке =====================
-const LIB_THEMES = ['day', 'sepia', 'grey', 'dusk', 'night', 'terminal', 'black', 'phosphor']
+const LIB_THEMES = ['day', 'sepia', 'grey', 'dusk', 'night', 'terminal', 'black', 'phosphor', 'solarized']
 function updateLibThemeBtn() {
-  const isDark = ['dusk', 'night', 'terminal', 'black', 'phosphor'].includes(prefs.theme)
+  const isDark = ['dusk', 'night', 'terminal', 'black', 'phosphor', 'solarized'].includes(prefs.theme)
   const btn = document.querySelector('#lib-theme-btn')
   if (btn) btn.title = isDark ? 'Тема: тёмная' : 'Тема: светлая'
 }

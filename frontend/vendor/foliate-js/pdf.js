@@ -1,5 +1,5 @@
 import { openPDFSource, CHUNK_SIZE, prefetchPages } from './pdf-range.js'
-import { unionBoxes, fullBox, darkTheme, imageBoxes, imageBlendDelta, imageModeBlend } from './pdf-appearance.js?v=20261016-2'
+import { unionBoxes, fullBox, darkTheme, imageBoxes, imageBlendDelta, imageModeBlend } from './pdf-appearance.js?v=20261019-1'
 const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toString()
 
 // Менять при обновлении PDF.js или compat, вместе с импортами compat.

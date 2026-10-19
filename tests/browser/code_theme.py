@@ -14,7 +14,7 @@ async def main():
    const {prefs}=await import('/js/core/prefs.js'); prefs.fontFamily='system';
    const {applyViewStyles}=await import('/js/reader-core.js');
    const results=[];
-   for (const theme of ['day','sepia','grey','dusk','night','terminal','black','phosphor']) {
+   for (const theme of ['day','sepia','grey','dusk','night','terminal','black','phosphor', 'solarized']) {
     document.documentElement.dataset.theme=theme; prefs.theme=theme;
     let css; applyViewStyles({renderer:{setAttribute(){},setStyles(s){css=s}}});
     const frame=document.createElement('iframe');document.body.append(frame);

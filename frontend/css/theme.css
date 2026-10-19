@@ -28,15 +28,18 @@
 /* --- Палитры --- */
 html[data-theme="day"]   { color-scheme: light; --bg:#ffffff; --bg-soft:#f3f4f6; --fg:#1f2227; --fg-dim:#6b7280; --line:#e5e7eb; --card:#ffffff; }
 html[data-theme="sepia"] { color-scheme: light; --bg:#f5ecd9; --bg-soft:#efe3c8; --fg:#5b4636; --fg-dim:#7a6449; --line:#e0d2b4; --card:#f8f1e2; }
-html[data-theme="grey"]  { color-scheme: light; --bg:#cfd2d4; --bg-soft:#c2c6c9; --fg:#23262a; --fg-dim:#4d5257; --line:#b3b8bc; --card:#d6d9db; }
+html[data-theme="grey"]  { color-scheme: light; --bg:#c9d1da; --bg-soft:#bcc6d1; --fg:#1f2733; --fg-dim:#475365; --line:#aab6c3; --card:#d2d9e1; }
 html[data-theme="dusk"]     { color-scheme: dark; --bg:#2b2e33; --bg-soft:#32363c; --fg:#dde1e7; --fg-dim:#969ca4; --line:#3e4249; --card:#32363c; --danger:#ff7a7a; --accent-ink: var(--accent); }
-html[data-theme="night"]    { color-scheme: dark; --bg:#15171a; --bg-soft:#1d2024; --fg:#cbd0d6; --fg-dim:#8b929b; --line:#2a2e34; --card:#1b1e22; --danger:#ff7a7a; --accent-ink: var(--accent); }
+html[data-theme="night"]    { color-scheme: dark; --bg:#10151d; --bg-soft:#161d28; --fg:#c8d3e1; --fg-dim:#8794a8; --line:#233043; --card:#131a24; --danger:#ff7a7a; --accent-ink: var(--accent); }
 html[data-theme="terminal"] { color-scheme: dark; --bg:#0d1117; --bg-soft:#161b22; --fg:#3fb950; --fg-dim:#4a8f5c; --line:#21262d; --card:#161b22; --accent:#3fb950; --accent-text:#0d1117; --danger:#ff7a7a; --accent-ink: var(--accent); }
 html[data-theme="black"]    { color-scheme: dark; --bg:#000000; --bg-soft:#0c0c0c; --fg:#bdbdbd; --fg-dim:#7a7a7a; --line:#1a1a1a; --card:#0a0a0a; --danger:#ff7a7a; --accent-ink: var(--accent); }
 /* «Фосфор» (serg/tasks#911): чистый чёрный, зелёный текст. В отличие от terminal
    фон именно #000, а зелёный приглушён до ~10.6:1 — ярче для долгого чтения режет глаз.
    Контраст проверяет tests/js/test_themes.mjs. */
 html[data-theme="phosphor"] { color-scheme: dark; --bg:#000000; --bg-soft:#07130a; --fg:#39d353; --fg-dim:#2ea043; --line:#12301a; --card:#050d07; --accent:#7ee787; --accent-text:#000000; --danger:#ff7a7a; --accent-ink: var(--accent); }
+/* Solarized: base1 для чтения, приглушённый текст осветлён для контраста на base02.
+   Синий слегка осветлён, чтобы текст кнопок на акценте проходил 4.5:1. */
+html[data-theme="solarized"] { color-scheme: dark; --bg:#002b36; --bg-soft:#073642; --fg:#93a1a1; --fg-dim:#8e9c9e; --line:#0d4250; --card:#073642; --accent:#2b94df; --accent-text:#002b36; --danger:#dc322f; --accent-ink: var(--accent); }
 
 
 * { box-sizing: border-box; }

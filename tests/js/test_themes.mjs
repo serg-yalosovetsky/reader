@@ -1,9 +1,9 @@
 // Темы читалки (serg/tasks#911): чёрная с зелёным текстом + согласованность.
 //
 // Запуск: node tests/js/test_themes.mjs
-// Тема регистрируется в пяти местах: палитра в css/theme.css, свотч в index.html,
+// Тема регистрируется в нескольких местах: палитра в css/theme.css, свотч в index.html,
 // цикл кнопки библиотеки (LIB_THEMES) и два списка тёмных тем — в library.js и
-// reader-core.js (по нему iframe книги получает color-scheme). Забытое место не
+// reader-core.js (по нему iframe книги получает color-scheme), а также в PDF. Забытое место не
 // видно глазом сразу: тёмная тема без записи в isDark рисует книгу со светлой
 // схемой — светлые полосы прокрутки и поля ввода на чёрном фоне.
 import assert from 'node:assert/strict'
@@ -67,6 +67,29 @@ assert.ok(report['приглушённый/фон'] >= 4.5, `phosphor: приг�
 assert.ok(report['акцент/фон'] >= 4.5, `phosphor: акцент/фон ${report['акцент/фон'].toFixed(2)} < 4.5`)
 assert.ok(report['текст на акценте'] >= 4.5, `phosphor: текст на акценте ${report['текст на акценте'].toFixed(2)} < 4.5`)
 
+// Синева новых палитр и контраст основного текста для долгого чтения.
+for (const name of ['night', 'grey']) {
+  const palette = themes[name]
+  const [r, g, b] = rgb(palette['--bg'])
+  assert.ok(b > r && b > g, `${name}: фон должен быть синеватым`)
+  assert.ok(contrast(palette['--fg'], palette['--bg']) >= 7, `${name}: текст/фон < 7`)
+}
+
+const solarized = themes.solarized
+assert.ok(solarized, 'нет темы solarized')
+assert.equal(solarized['color-scheme'], 'dark')
+assert.equal(solarized['--bg'], '#002b36')
+assert.equal(solarized['--accent-ink'], 'var(--accent)')
+// Solarized по замыслу низкоконтрастна: каноничный base1 на base03 даёт
+// 5.61:1, поэтому сохраняем палитру с порогом AA (4.5:1), а не AAA (7:1).
+for (const bg of ['--bg', '--card', '--bg-soft']) {
+  for (const fg of ['--fg', '--fg-dim']) {
+    assert.ok(contrast(solarized[fg], solarized[bg]) >= 4.5, `solarized: ${fg}/${bg} < 4.5`)
+  }
+}
+assert.ok(contrast(solarized['--accent'], solarized['--bg']) >= 4.5, 'solarized: акцент/фон < 4.5')
+assert.ok(contrast(solarized['--accent-text'], solarized['--accent']) >= 4.5, 'solarized: текст на акценте < 4.5')
+
 // --- 2. Каждая палитра зарегистрирована везде --------------------------------
 const set = (a) => [...new Set(a)].sort()
 const swatches = set([...html.matchAll(/class="swatch"\s+data-theme="([\w-]+)"/g)].map((m) => m[1]))
@@ -85,3 +108,15 @@ for (const [file, src] of [['library.js', lib], ['reader-core.js', core]]) {
 
 console.log('ok: темы —', names.join(', '))
 console.log('phosphor контраст:', Object.entries(report).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('; '))
+
+// PDF должен распознавать все тёмные палитры так же, как iframe книги.
+const pdfSource = read('vendor/foliate-js/pdf-appearance.js')
+const { darkTheme } = await import('data:text/javascript,' + encodeURIComponent(pdfSource))
+for (const name of names) assert.equal(darkTheme(name), dark.includes(name), `PDF: неверная схема ${name}`)
+for (const name of ['night', 'grey', 'solarized']) {
+  const p = themes[name]
+  console.log(`${name}:`, ['--bg', '--bg-soft', '--card', '--line', '--fg', '--fg-dim'].map(k => `${k} ${p[k]}`).join('; '))
+  console.log(`${name} контраст:`, ['--bg', '--card', '--bg-soft'].map(bg =>
+    `${bg}: текст ${contrast(p['--fg'], p[bg]).toFixed(2)}, приглушённый ${contrast(p['--fg-dim'], p[bg]).toFixed(2)}`).join('; '))
+}
+console.log('solarized акцент/фон и текст на акценте:', contrast(solarized['--accent'], solarized['--bg']).toFixed(2))

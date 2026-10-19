@@ -94,8 +94,17 @@ export async function openPDFSource(source, lib) {
             const hit = (etag || rev) ? await cache?.match(key).catch(() => null) : null
             if (hit) {
                 const bytes = new Uint8Array(await hit.arrayBuffer())
-                await put(key, bytes)
-                return bytes
+                const begin = index * CHUNK_SIZE
+                if (bytes.length === Math.min(length, begin + CHUNK_SIZE) - begin) {
+                    // Отметку «читали недавно» для вытеснения не ждём: очередь
+                    // записей перебирает весь кэш и тормозила открытие (#2038).
+                    void put(key, bytes)
+                    return bytes
+                }
+                // Блок не той длины дал бы pdf.js мусор без единого запроса в
+                // сеть — пустая страница. Удаляем и качаем заново.
+                console.warn('pdf-range: битый блок в кэше, перекачиваю', key, bytes.length)
+                await cache.delete(key).catch(e => console.warn('pdf-range: не удалил битый блок', key, e))
             }
             if (stopped) throw new Error('PDF закрыт')
             const controller = new AbortController(); controllers.add(controller)

@@ -84,3 +84,38 @@ globalThis.fetch = async () => new Response(data, {headers:headers()})
 await assert.rejects(read(changed, CHUNK_SIZE, CHUNK_SIZE+10), /изменился/)
 assert.equal(entries.size, 0)
 console.log('PDF fallback / If-Range OK')
+
+// #2038: блок из кэша не той длины перекачивается, а не отдаётся pdf.js.
+entries.clear()
+etag = '"v1"'
+let healReads = 0
+globalThis.fetch = async (url, options) => {
+  if (options.method === 'HEAD') return new Response(null, {headers: headers()})
+  healReads++
+  const [begin, last] = options.headers.Range.slice(6).split('-').map(Number)
+  return new Response(data.slice(begin, last+1), {status:206, headers: {...headers(), 'Content-Range': `bytes ${begin}-${last}/${data.length}`}})
+}
+const warn = console.warn; console.warn = () => {}
+const heal = await openPDFSource('/heal', {PDFDataRangeTransport:Transport})
+const key0 = [...entries.keys()].find(k => k.includes('chunk=0')) ?? new URL('/__reader_pdf_chunk__?' + new URLSearchParams({book:'/heal', etag:'"v1"', chunk:0}), 'https://reader.test/').href
+entries.set(key0, new Response(data.slice(0, 100)))
+await read(heal, 0, 10)
+console.warn = warn
+assert.equal(healReads, 1, 'короткий блок из кэша перекачан из сети')
+console.log('PDF short cached chunk OK')
+
+// #2038: чтение из кэша не ждёт очередь записей (она перебирает весь кэш).
+let hangKeys = false
+globalThis.caches = { open: async () => ({
+  keys: async () => hangKeys ? new Promise(() => {}) : [...entries.keys()].map(url => ({ url })),
+  match: async key => entries.get(key.url || key)?.clone(),
+  put: async (key, value) => entries.set(key, value.clone()),
+  delete: async key => entries.delete(key.url || key),
+}) }
+const warm = await openPDFSource('/heal', {PDFDataRangeTransport:Transport})
+hangKeys = true
+const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('чтение из кэша ждёт очередь записей')), 1000))
+await Promise.race([read(warm, 0, 10), timeout])
+assert.equal(healReads, 1, 'тёплый кэш читается без сети')
+console.log('PDF cache read does not wait writes OK')
+process.exit(0)

@@ -40,6 +40,7 @@ const render = async (page, doc, zoom, box, options) => {
     const canvas = document.createElement('canvas')
     canvas.height = viewport.height
     canvas.width = viewport.width
+    let pageImage = canvas
     const canvasContext = canvas.getContext('2d')
     await page.render({ canvasContext, viewport }).promise
     doc.querySelector('#image-original')?.remove()
@@ -100,9 +101,9 @@ const render = async (page, doc, zoom, box, options) => {
             doc.imageWheelHandler = event => {
                 const delta = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX
                 if (event.ctrlKey || !delta || (!event.shiftKey && Math.abs(event.deltaY) > Math.abs(delta))) return
-                const rect = canvas.getBoundingClientRect()
-                const x = (event.clientX - rect.left) * canvas.width / rect.width
-                const y = (event.clientY - rect.top) * canvas.height / rect.height
+                const rect = pageImage.getBoundingClientRect()
+                const x = (event.clientX - rect.left) * pageImage.width / rect.width
+                const y = (event.clientY - rect.top) * pageImage.height / rect.height
                 if (!boxes.some(b => x >= b.left && x < b.right && y >= b.top && y < b.bottom)) return
                 event.preventDefault(); event.stopImmediatePropagation()
                 options.setImageBlend(imageBlendDelta(options.getImageBlend(), delta, event.deltaMode, doc.defaultView.innerWidth))
@@ -128,7 +129,24 @@ const render = async (page, doc, zoom, box, options) => {
         }
         canvasContext.putImageData(pixels, 0, 0)
     }
-    doc.querySelector('#canvas').replaceChildren(doc.adoptNode(canvas))
+    // Оригинал для оверлея уже скопирован, тема применена: убираем живой canvas.
+    const blob = await new Promise(resolve => canvas.toBlob(resolve))
+    let imageURL
+    if (blob) {
+        imageURL = URL.createObjectURL(blob)
+        const img = doc.createElement('img')
+        img.width = canvas.width; img.height = canvas.height
+        img.style.cssText = `display:block;width:${canvas.width}px;height:${canvas.height}px`
+        img.src = imageURL
+        try { await img.decode() }
+        catch (error) { URL.revokeObjectURL(imageURL); throw error }
+        pageImage = img
+    } else console.warn(`PDF: toBlob вернул null, страница ${page.pageNumber}`)
+    const previousURL = doc.pdfImageURL
+    doc.querySelector('#canvas').replaceChildren(doc.adoptNode(pageImage))
+    doc.pdfImageURL = imageURL
+    if (previousURL) URL.revokeObjectURL(previousURL)
+    if (blob) { canvas.width = 0; canvas.height = 0 }
 
     const container = doc.querySelector('.textLayer')
     const textLayer = new pdfjsLib.TextLayer({

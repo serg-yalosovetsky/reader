@@ -38,7 +38,7 @@ export class FixedLayout extends HTMLElement {
     #strip
     #slots = []
     #frames = new Map()
-    #intersection
+    #scrollRAF
     #heights = []
     #position = { index: 0, offset: 0 }
     #generation = 0
@@ -78,6 +78,10 @@ export class FixedLayout extends HTMLElement {
             if (!this.scrolled || !this.#strip) return
             this.#position = scrollPosition(this.#heights, this.scrollTop)
             this.#reportLocation('scroll')
+            if (this.#scrollRAF == null) this.#scrollRAF = requestAnimationFrame(() => {
+                this.#scrollRAF = null
+                if (this.scrolled && this.#strip) this.#syncPages()
+            })
         }, { passive: true })
         this.#observer.observe(this)
     }
@@ -177,7 +181,7 @@ export class FixedLayout extends HTMLElement {
         const transform = frame => {
             let { element, iframe, width, height, blank, onZoom } = frame
             if (!iframe) return
-            if (onZoom) onZoom({ doc: frame.iframe.contentDocument, scale })
+            if (onZoom) frame.pending = onZoom({ doc: frame.iframe.contentDocument, scale })
             const iframeScale = onZoom ? scale : 1
             Object.assign(iframe.style, {
                 width: `${width * iframeScale}px`,
@@ -207,6 +211,7 @@ export class FixedLayout extends HTMLElement {
     }
     async #showSpread({ left, right, center, side }) {
         const generation = this.#generation
+        for (const frame of [this.#left, this.#right, this.#center]) if (frame) this.#release(frame)
         this.#root.replaceChildren()
         this.#left = null
         this.#right = null
@@ -351,20 +356,12 @@ export class FixedLayout extends HTMLElement {
         }
         if (generation === this.#generation) this.#reportLocation(reason)
     }
-    // События iframe не всплывают: прокручиваем общий контейнер ленты.
+    // Колесо из iframe передаём контейнеру; касания используют нативную цепочку прокрутки.
     #attachScrollInput(doc) {
         doc.addEventListener('wheel', e => {
             if (!this.scrolled || e.ctrlKey) return
             e.preventDefault()
             this.scrollBy(0, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.clientHeight : 1))
-        }, { passive: false })
-        let y
-        doc.addEventListener('touchstart', e => { y = e.touches[0]?.clientY }, { passive: true })
-        doc.addEventListener('touchmove', e => {
-            if (!this.scrolled || e.touches.length !== 1 || !doc.getSelection()?.isCollapsed) return
-            const next = e.touches[0].clientY
-            if (y != null) { e.preventDefault(); this.scrollBy(0, y - next) }
-            y = next
         }, { passive: false })
         doc.addEventListener('keydown', e => this.handleScrollKey(e))
     }
@@ -381,6 +378,10 @@ export class FixedLayout extends HTMLElement {
         const doc = frame.iframe.contentDocument
         frame.element.remove()
         const clear = () => {
+            if (doc?.pdfImageURL) {
+                URL.revokeObjectURL(doc.pdfImageURL)
+                doc.pdfImageURL = null
+            }
             for (const canvas of doc?.querySelectorAll('canvas') ?? []) { canvas.width = 0; canvas.height = 0 }
         }
         if (frame.pending) frame.pending.finally(clear).catch(() => {})
@@ -390,7 +391,9 @@ export class FixedLayout extends HTMLElement {
         const generation = ++this.#generation
         this.#frameController.abort()
         this.#frameController = new AbortController()
-        this.#intersection?.disconnect()
+        cancelAnimationFrame(this.#scrollRAF)
+        this.#scrollRAF = null
+        for (const frame of [this.#left, this.#right, this.#center]) if (frame) this.#release(frame)
         for (const frame of this.#frames.values()) this.#release(frame)
         this.#frames.clear()
         this.#root.replaceChildren()
@@ -420,8 +423,6 @@ export class FixedLayout extends HTMLElement {
         })
         this.#root.append(this.#strip)
         this.#layoutStrip()
-        this.#intersection = new IntersectionObserver(() => { this.#syncPages() }, { root: this, rootMargin: '100% 0px' })
-        this.#slots.forEach(slot => this.#intersection.observe(slot))
         // Даём восстановлению позиции выбрать целевую страницу до рендера.
         setTimeout(() => { if (generation === this.#generation) this.#syncPages() }, 0)
         this.#reportLocation('flow')
@@ -542,7 +543,9 @@ export class FixedLayout extends HTMLElement {
         this.#strip = null
         this.#generation++
         this.#frameController.abort()
-        this.#intersection?.disconnect()
+        cancelAnimationFrame(this.#scrollRAF)
+        this.#scrollRAF = null
+        for (const frame of [this.#left, this.#right, this.#center]) if (frame) this.#release(frame)
         for (const frame of this.#frames.values()) this.#release(frame)
         this.#frames.clear()
         this.#observer.unobserve(this)

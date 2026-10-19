@@ -77,7 +77,15 @@ with sync_playwright() as p:
       await new Promise(resolve => { frame.onload = resolve; frame.src = section.src; });
       await section.onZoom({doc: frame.contentDocument, scale: 2});
       const doc = frame.contentDocument;
-      const pixels = () => doc.querySelector('canvas').getContext('2d');
+      // Пиксели показанного PNG читаем через отдельный тестовый canvas.
+      const pixels = () => {
+        const img = doc.querySelector('#canvas > img');
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        return ctx;
+      };
       const pixel = (x,y) => {
         const base = [...pixels().getImageData(x*2,y*2,1,1).data].slice(0,3);
         const overlay = doc.querySelector('#image-original');
@@ -91,19 +99,19 @@ with sync_playwright() as p:
         textInk: (() => {const d=pixels().getImageData(20,36,80,24).data; return Math.max(...Array.from(d).filter((_,i)=>i%4===0))})(),
         filter: doc.querySelector('#canvas').style.filter,
         offset: doc.querySelector('#layers').style.left,
-        canvas: !!doc.querySelector('canvas'), text: !!doc.querySelector('.textLayer')};
-      const firstCanvas = doc.querySelector('canvas');
-      const rect = firstCanvas.getBoundingClientRect();
+        imageElement: !!doc.querySelector('#canvas > img'), text: !!doc.querySelector('.textLayer')};
+      const firstImage = doc.querySelector('#canvas > img');
+      const rect = firstImage.getBoundingClientRect();
       const wheel = (x,y,deltaX,deltaY=0,shiftKey=false) => {
-        const event = new frame.contentWindow.WheelEvent('wheel', {clientX:rect.left+x*rect.width/firstCanvas.width*2,
-          clientY:rect.top+y*rect.height/firstCanvas.height*2, deltaX, deltaY, shiftKey, bubbles:true, cancelable:true});
+        const event = new frame.contentWindow.WheelEvent('wheel', {clientX:rect.left+x*rect.width/firstImage.width*2,
+          clientY:rect.top+y*rect.height/firstImage.height*2, deltaX, deltaY, shiftKey, bubbles:true, cancelable:true});
         doc.dispatchEvent(event);
         return event.defaultPrevented;
       };
       result.gesture = wheel(70,50,300);
       result.blend = Number(doc.querySelector('#image-original').style.opacity);
       result.blendedImage = pixel(70,50);
-      result.sameCanvas = firstCanvas === doc.querySelector('canvas');
+      result.sameImage = firstImage === doc.querySelector('#canvas > img');
       result.textGesture = wheel(30,30,100);
       result.verticalGesture = wheel(70,50,0,100);
       result.shiftGesture = wheel(70,50,0,-120,true);
@@ -149,14 +157,14 @@ with sync_playwright() as p:
     assert result['cropped']['width'] < result['original']['width'], result
     assert result['restored'] == result['original'], result
     assert result['filter'] == '' and result['offset'].startswith('-'), result
-    assert result['canvas'] and result['text'], result
+    assert result['imageElement'] and result['text'], result
     assert result['background'] == [21, 23, 26], result
     light = (240*.2126 + 60*.7152 + 20*.0722)/255
     themed = [round(bg*light + 221*(1-light)) for bg in [21,23,26]]
     assert result['image'] == themed, result
     assert result['whiteImage'] == result['background'], result
     assert result['blackImage'] == [221,221,221], result
-    assert result['gesture'] and result['sameCanvas'] and result['shiftGesture'], result
+    assert result['gesture'] and result['sameImage'] and result['shiftGesture'], result
     assert not result['textGesture'] and not result['verticalGesture'], result
     assert result['blend'] == .5 and result['shiftBlend'] == .3, result
     assert result['savedBlend'] == result['nextBlend'] == .3, result

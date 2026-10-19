@@ -5,9 +5,11 @@ export const fromFraction = (fraction, count) => {
     const index = Math.min(count - 1, Math.floor(value))
     return { index, offset: value - index }
 }
+// Допуск в 1px: на телефоне scrollTop округляется до физических пикселей вниз,
+// и переход ровно на начало страницы иначе показывал бы предыдущую.
 export const scrollPosition = (heights, top) => {
     let index = 0
-    while (index < heights.length - 1 && top >= heights[index]) top -= heights[index++]
+    while (index < heights.length - 1 && top + 1 >= heights[index]) top -= heights[index++]
     return { index, offset: Math.max(0, Math.min(1, top / heights[index])) }
 }
 export const visiblePages = (heights, top, size, margin = 1) => {

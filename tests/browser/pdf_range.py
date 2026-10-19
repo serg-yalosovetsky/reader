@@ -78,20 +78,20 @@ with sync_playwright() as p:
         };
         await openRange();
     }''')
-    page.wait_for_function('view.renderer.getContents().some(x => x.index === 29 && x.doc?.querySelector("canvas"))')
+    page.wait_for_function('view.renderer.getContents().some(x => x.index === 29 && x.doc?.querySelector("#canvas > img, #canvas > canvas"))')
     page.wait_for_timeout(4000)
     downloaded = sum(end-begin+1 for begin, end in requests)
     assert downloaded < len(data) * .65, (downloaded, len(data), requests)
     before = len(requests)
     page.evaluate('view.goToFraction(30 / 60)')
-    page.wait_for_function('view.renderer.getContents().some(x => x.index === 30 && x.doc?.querySelector("canvas"))')
+    page.wait_for_function('view.renderer.getContents().some(x => x.index === 30 && x.doc?.querySelector("#canvas > img, #canvas > canvas"))')
     # Следующая волна предзагрузки вправе получить один новый блок.
     page.wait_for_timeout(1000)
     assert len(requests) - before <= 2, requests[before:]
     known = set(requests)
     before = len(requests)
     page.evaluate('''async () => { view.close(); view.remove(); await openRange(); }''')
-    page.wait_for_function('view.renderer.getContents().some(x => x.index === 29 && x.doc?.querySelector("canvas"))')
+    page.wait_for_function('view.renderer.getContents().some(x => x.index === 29 && x.doc?.querySelector("#canvas > img, #canvas > canvas"))')
     page.wait_for_timeout(2000)
     assert not (set(requests[before:]) & known), requests[before:]
     assert not errors, errors

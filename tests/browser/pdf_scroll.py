@@ -27,7 +27,13 @@ def pdf(count=20):
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, executable_path=os.environ.get('CHROME_BIN'), args=['--no-sandbox'])
-    page = browser.new_page(viewport={'width': 600, 'height': 700})
+    page = browser.new_page(viewport={'width': 412, 'height': 700},
+                            device_scale_factor=2.625, is_mobile=True, has_touch=True)
+    page.add_init_script('''
+        window.revokedURLs = [];
+        const revoke = URL.revokeObjectURL.bind(URL);
+        URL.revokeObjectURL = url => { revokedURLs.push(url); revoke(url); };
+    ''')
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
 
@@ -36,7 +42,7 @@ with sync_playwright() as p:
         if path.is_file():
             route.fulfill(path=str(path), content_type='text/javascript' if path.suffix in ('.js', '.mjs') else 'text/html')
         else:
-            route.fulfill(content_type='text/html', body='<!doctype html><html><style>html,body{margin:0;height:100%}foliate-view{display:block;width:100%;height:100%}</style></html>')
+            route.fulfill(content_type='text/html', body='<!doctype html><html><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;height:100%}foliate-view{display:block;width:100%;height:100%}</style></html>')
 
     page.route('http://reader.test/**', serve)
     page.goto('http://reader.test/pdf-test')
@@ -52,22 +58,43 @@ with sync_playwright() as p:
         view.renderer.setAttribute('flow', 'scrolled');
         await view.goToFraction(0);
     }''', list(pdf()))
-    page.wait_for_function('view.renderer.getContents().some(x => x.doc?.querySelector("canvas"))')
+    page.wait_for_function('view.renderer.getContents().some(x => x.doc?.querySelector("#canvas > img"))')
+    # Настоящий жест начинается внутри iframe и прокручивает внешний контейнер.
+    cdp = page.context.new_cdp_session(page)
+    before_touch = page.evaluate('view.renderer.scrollTop')
+    cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': 206, 'y': 560}]})
+    for step in range(1, 21):
+        cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': [{'x': 206, 'y': 560 - step * 20}]})
+        page.wait_for_timeout(16)
+    cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+    page.wait_for_function('start => view.renderer.scrollTop - start >= 320', arg=before_touch)
+    page.wait_for_timeout(600)
+    cdp.detach()
+    # Уход за пределы окна виртуализации освобождает URL именно прежних страниц.
+    old_images = page.evaluate("view.renderer.getContents().flatMap(x => [...x.doc.querySelectorAll('#canvas > img')].map(img => img.src))")
+    assert old_images
+    page.evaluate('view.renderer.scrollTop = view.renderer.scrollHeight / 2')
+    page.wait_for_function('urls => urls.every(url => revokedURLs.includes(url))', arg=old_images)
+    page.evaluate('view.goToFraction(0)')
+    page.wait_for_function('view.renderer.scrollTop === 0')
+    page.evaluate('locations.length = 0')
     for _ in range(6):
         page.evaluate('view.renderer.scrollBy(0, 450)')
         page.wait_for_timeout(150)
-        assert page.evaluate('view.renderer.getContents().filter(x => x.doc?.querySelector("canvas")).length') <= 5
+        assert page.evaluate('view.renderer.getContents().filter(x => x.doc?.querySelector("#canvas > img")).length') <= 5
     values = page.evaluate('locations')
     assert all(a <= b + 1e-9 for a, b in zip(values, values[1:])), values
-    page.evaluate('view.goToFraction(.5)')
+    # Не ровно .5: это граница страниц 9/10, а при DPR 2.625 scrollTop округляется вниз.
+    page.evaluate('view.goToFraction(.5004)')
     page.wait_for_function('view.lastLocation.section.current === 10')
     page.wait_for_timeout(600)
     result = page.evaluate('''() => ({index:view.renderer.index, fraction:view.lastLocation.fraction,
-        count:view.renderer.getContents().filter(x => x.doc?.querySelector('canvas')).length})''')
+        count:view.renderer.getContents().filter(x => x.doc?.querySelector('#canvas > img')).length})''')
     assert result['index'] == 10 and abs(result['fraction'] - .5) < .001, result
     assert 1 <= result['count'] <= 5, result
     page.evaluate("view.renderer.setAttribute('flow', 'paginated')")
     page.wait_for_function('!view.renderer.scrolled && view.renderer.index === 10')
+    page.wait_for_function('view.renderer.getContents().some(x => x.doc?.querySelector("#canvas > img"))')
     page.evaluate("view.renderer.setAttribute('flow', 'scrolled')")
     page.wait_for_function('view.renderer.scrolled && view.renderer.index === 10')
     page.evaluate('view.goToFraction(.525)')

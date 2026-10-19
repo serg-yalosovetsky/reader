@@ -84,6 +84,9 @@ export class FixedLayout extends HTMLElement {
     attributeChangedCallback(name, oldValue, value) {
         if (oldValue === value) return
         if (name === 'flow' && this.book) {
+            // Читалка ставит flow до первого показа книги: перестраивать нечего,
+            // первый goTo сам соберёт нужный режим на позиции возврата.
+            if (this.#index < 0 && !this.#strip) return
             const position = this.#strip ? this.#position : { index: Math.max(0, this.index), offset: this.#position.offset }
             this.#ready = this.#changeFlow(position)
             return
@@ -298,6 +301,7 @@ export class FixedLayout extends HTMLElement {
     get index() {
         if (this.scrolled) return this.#position.index
         const spread = this.#spreads[this.#index]
+        if (!spread) return -1
         const section = spread?.center ?? (this.#side === 'left'
             ? spread.left ?? spread.right : spread.right ?? spread.left)
         return this.book.sections.indexOf(section)

@@ -267,8 +267,9 @@ async function openReaderImpl(work, opts = {}) {
     history.pushState(histState, '', bookUrl)
   }
 
-  // Очистить прошлый экземпляр.
-  $('#view-host').innerHTML = ''
+  // Очистить прошлый экземпляр (книгу, слой resume-cache и пр.), кроме зон тапа:
+  // innerHTML = '' стирал и их, и с 006dfa8 тап у края не листал.
+  for (const el of [...$('#view-host').children]) if (!el.classList.contains('tap-zone')) el.remove()
   setView(document.createElement('foliate-view'))
   $('#view-host').append(view)
   const readerView = view
@@ -617,6 +618,8 @@ export function applyViewStyles(target = view) {
   // Вертикальные поля страницы (foliate --_margin, дефолт 48px) — компактные, в ритме уровня полей.
   r.setAttribute('margin', String(MARGIN_GAP[prefs.marginLevel] ?? MARGIN_GAP[2]))
   r.setAttribute('flow', prefs.flow)
+  // В «Ленте» зоны тапа выключены: касание у края должно прокручивать ленту.
+  $('#view-host').dataset.flow = prefs.flow
   r.setStyles?.(bookCSS())
 }
 

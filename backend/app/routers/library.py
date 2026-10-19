@@ -186,6 +186,7 @@ _LIST_COLUMNS = (
     Work.author,
     Work.calibre_id,
     Work.chapters_count,
+    Work.file_format,  # читалка по нему узнаёт PDF: память формата, кнопка PDF/EPUB
     Work.series,
     Work.series_index,
     Work.updated_at,
@@ -229,6 +230,7 @@ def list_works(
                 "author": r.author,
                 "calibre_id": r.calibre_id,
                 "chapters_count": r.chapters_count,
+                "file_format": r.file_format,
                 "series": r.series,
                 "series_index": r.series_index,
                 "updated_at": r.updated_at,

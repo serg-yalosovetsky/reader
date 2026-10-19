@@ -31,8 +31,11 @@ INTERNAL_FIELDS = {
 #   updated_at   — единственный ключ сортировки библиотеки (spec.reader.update-pipeline);
 #   calibre_id   — бейдж Calibre и дедуп калибровых карточек в findLibMatches;
 #   cover_v      — версия обложки в URL, без неё обложка не обновится после докачки;
-#   series/index — строка серии на карточке и переход «показать всю серию».
+#   series/index — строка серии на карточке и переход «показать всю серию»;
+#   file_format  — читалка по нему узнаёт PDF: без него «Читать» из библиотеки
+#                  забывает последний формат и не даёт переключиться на PDF.
 REQUIRED_FIELDS = {
+    "file_format",
     "id",
     "title",
     "author",

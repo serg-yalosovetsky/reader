@@ -174,6 +174,14 @@ async function openReaderImpl(work, opts = {}) {
   opening = true
   originalFile = false
   const current = () => generation === openGeneration
+  // Без file_format читалка не узнаёт PDF: не помнит последний формат (#1937)
+  // и не показывает кнопку PDF. Его нет в строке списка, закэшированной до
+  // того, как список стал его отдавать, — тогда берём деталь книги.
+  if (work.file_format == null) {
+    try { work = { ...work, ...await api.get(`/api/library/${work.id}`) } }
+    catch (e) { logErr(load work format, e) }
+    if (!current()) return
+  }
   setCurrentWork(work)
   currentRev = ''
   currentFormat = ''

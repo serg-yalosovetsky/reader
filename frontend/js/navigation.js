@@ -193,8 +193,12 @@ export function attachKeysToDoc(e) {
       const dx = t.clientX - _sx, dy = t.clientY - _sy
       if (Date.now() - _st > 900) return
       const ax = Math.abs(dx), ay = Math.abs(dy)
-      // Горизонталь -> между главами (в начало), в ЛЮБОМ режиме: влево=след., вправо=пред.
-      if (ax > 40 && ax > ay * 1.2) { dx < 0 ? gotoChapterStart(1) : gotoChapterStart(-1); return }
+      // Горизонталь: у PDF по страницам (главы оглавления там — десятки страниц),
+      // у текстовых книг — между главами (в начало). Влево=след., вправо=пред.
+      if (ax > 40 && ax > ay * 1.2) {
+        if (view.isFixedLayout) { dx < 0 ? goNext() : goPrev(); return }
+        dx < 0 ? gotoChapterStart(1) : gotoChapterStart(-1); return
+      }
       // Вертикаль в «Ленте» только на краях: верх -> конец пред. главы, низ -> начало след.
       if (prefs.flow === 'scrolled' && ay > 60 && ay > ax * 1.2) {
         const p = view?.renderer

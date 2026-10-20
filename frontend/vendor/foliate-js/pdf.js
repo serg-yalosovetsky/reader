@@ -417,6 +417,8 @@ export const makePDF = async file => {
             const onZoom = url.onZoom
             const registered = new WeakSet()
             url.onZoom = async args => {
+                // После удаления iframe документа нет: рисовать уже некуда.
+                if (!args.doc) return
                 if (!registered.has(args.doc)) {
                     registered.add(args.doc)
                     imageDocs.add(new WeakRef(args.doc))

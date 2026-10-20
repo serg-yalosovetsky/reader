@@ -153,6 +153,8 @@ export class FixedLayout extends HTMLElement {
         })
     }
     #render(side = this.#side) {
+        // После удаления ResizeObserver ещё может прислать нулевой размер.
+        if (!this.isConnected) return
         if (this.scrolled) { this.#layoutStrip(); return }
         if (!side) return
         for (const frame of [this.#left, this.#right, this.#center]) {
@@ -187,8 +189,10 @@ export class FixedLayout extends HTMLElement {
 
         const transform = frame => {
             let { element, iframe, width, height, blank, onZoom } = frame
-            if (!iframe) return
-            if (onZoom) frame.pending = onZoom({ doc: frame.iframe.contentDocument, scale })
+            const doc = iframe?.contentDocument
+            // При закрытии книги фрейм уже может быть отсоединён.
+            if (!iframe?.isConnected || !doc) return
+            if (onZoom) frame.pending = onZoom({ doc, scale })
             const iframeScale = onZoom ? scale : 1
             Object.assign(iframe.style, {
                 width: `${width * iframeScale}px`,
@@ -439,7 +443,8 @@ export class FixedLayout extends HTMLElement {
             + this.#heights[this.#position.index] * this.#position.offset
     }
     #layoutStrip() {
-        if (!this.#strip) return
+        // Асинхронная загрузка страницы может завершиться после удаления читалки.
+        if (!this.isConnected || !this.#strip) return
         // Размеры вьюпорта читаем один раз: чтение clientWidth после записи
         // style.height заставляло пересчитывать раскладку на каждом из сотен слотов.
         const width = this.clientWidth
@@ -452,9 +457,10 @@ export class FixedLayout extends HTMLElement {
             const height = size.height * scale + 1
             const css = `${height}px`
             if (slot.style.height !== css) slot.style.height = css
-            if (frame) {
+            const doc = frame?.iframe.contentDocument
+            if (frame?.iframe.isConnected && doc) {
                 Object.assign(frame.iframe.style, { display: 'block', width: `${width}px`, height: `${height - 1}px` })
-                if (frame.onZoom) frame.pending = frame.onZoom({ doc: frame.iframe.contentDocument, scale })
+                if (frame.onZoom) frame.pending = frame.onZoom({ doc, scale })
                 else Object.assign(frame.iframe.style, { width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${scale})`, transformOrigin: 'top left' })
             }
             return height

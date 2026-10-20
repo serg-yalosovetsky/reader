@@ -69,7 +69,7 @@ with sync_playwright() as p:
         el.setAttribute('flow', next);         // смена уже после показа
         await new Promise(resolve => setTimeout(resolve, 1500));
         out[initial] = {before, shown, after: el.index, scrolled: el.scrolled};
-        // Не удаляем: после remove() ResizeObserver зовёт onZoom с пустым doc — шум разборки.
+        el.remove(); book.destroy?.();
       }
       return out;
     }''', list(pdf()))

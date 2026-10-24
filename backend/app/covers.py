@@ -257,7 +257,7 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
     # редиректа (схема, порт, глобальные IP), а не только последующие хопы.
     url = str(check_redirect_target(httpx.URL(base or url), url))
     host = (urlparse(url).hostname or "").lower()
-    if host.endswith("ficbook.net"):
+    if host == "ficbook.net" or host.endswith(".ficbook.net"):
         import cloudscraper
         from contextlib import closing
 
@@ -266,6 +266,15 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
         with closing(cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows"}
         )) as c:
+            # cloudscraper (requests) сам ходит по редиректам — каждый хоп проверяем
+            # тем же правилом, что и у httpx-клиентов (serg/tasks#2330).
+            c.hooks["response"].append(
+                lambda resp, *a, **kw: check_redirect_target(
+                    httpx.URL(resp.url), resp.headers["Location"]
+                )
+                if resp.is_redirect
+                else None
+            )
             r = c.get(url, timeout=40)
             return r.content if binary else r.text
     with httpx.Client(

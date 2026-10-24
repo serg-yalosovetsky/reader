@@ -259,8 +259,10 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
             return r.content if binary else r.text
     import httpx
 
+    from ..downloaders.redirect_guard import redirect_hooks
+
     with httpx.Client(
-        timeout=40, follow_redirects=True, headers={"User-Agent": ua}
+        timeout=40, follow_redirects=True, event_hooks=redirect_hooks(), headers={"User-Agent": ua}
     ) as c:
         r = c.get(url)
         return r.content if binary else r.text

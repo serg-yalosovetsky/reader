@@ -33,6 +33,7 @@ from defusedxml import ElementTree as ET
 from ..app.config import TMP_DIR
 from . import pythondocs_cover
 from .base import DownloaderError, DownloadResult, UnsupportedURL
+from .redirect_guard import redirect_hooks
 
 log = logging.getLogger("reader.pythondocs")
 
@@ -216,7 +217,7 @@ def current_version() -> tuple[str, int]:
     КАЖДОМ тике по каждой из книг.
     """
     try:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as c:
+        with httpx.Client(timeout=30.0, follow_redirects=True, event_hooks=redirect_hooks()) as c:
             r = c.get(BASE + "_static/documentation_options.js")
             m = _VER_JS.search(r.text) if r.status_code < 400 else None
             if not m:
@@ -281,7 +282,7 @@ def fetch_master(ver: str, vint: int, lang: str = "en") -> Path:
         import os
 
         os.close(fd)
-        with httpx.Client(timeout=TIMEOUT, follow_redirects=True) as c:
+        with httpx.Client(timeout=TIMEOUT, follow_redirects=True, event_hooks=redirect_hooks()) as c:
             with c.stream("GET", url) as r:
                 if r.status_code >= 400:
                     raise DownloaderError(

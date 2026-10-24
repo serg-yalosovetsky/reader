@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
+from .redirect_guard import redirect_hooks
 from .textclean import clean_html, clean_title
 
 _BASE = "https://readli.net"
@@ -38,7 +39,7 @@ def _book_id(url: str) -> str:
         return bid
     # slug-страница книги (/vechno-golodnyiy-student-6/) → найти ссылку на читалку.
     with httpx.Client(
-        timeout=40, follow_redirects=True, headers={"User-Agent": _UA}
+        timeout=40, follow_redirects=True, event_hooks=redirect_hooks(), headers={"User-Agent": _UA}
     ) as c:
         html = _get(c, url).text
     m = re.search(r"/chitat-online/\?b=(\d+)", html)
@@ -88,7 +89,7 @@ def search_and_download(title: str, author: str = ""):
     # div.book__all (стр. /?s=).
     with httpx.Client(
         timeout=40,
-        follow_redirects=True,
+        follow_redirects=True, event_hooks=redirect_hooks(),
         headers={"User-Agent": _UA, "Accept-Language": "ru"},
     ) as c:
         html = _get(c, f"{_BASE}/srch/?q={quote(title)}").text
@@ -219,7 +220,7 @@ def count_chapters(url: str) -> int | None:
     try:
         with httpx.Client(
             timeout=25,
-            follow_redirects=True,
+            follow_redirects=True, event_hooks=redirect_hooks(),
             headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
         ) as c:
             r = _get(c, f"{_BASE}/chitat-online/?b={bid}&pg=1")
@@ -237,7 +238,7 @@ def download(url: str) -> DownloadResult:
 
     with httpx.Client(
         timeout=40,
-        follow_redirects=True,
+        follow_redirects=True, event_hooks=redirect_hooks(),
         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"},
     ) as c:
         first = _get(c, page_url(1))

@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from sqlmodel import Session
 
 from ..downloaders import egress
+from ..downloaders.redirect_guard import redirect_hooks
 from . import monitor, store
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -150,7 +151,7 @@ def _at_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str]
 
 # ----------------- fanfics.me -----------------
 def _fanfics_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list[str], dict]:
-    with httpx.Client(timeout=40, follow_redirects=True,
+    with httpx.Client(timeout=40, follow_redirects=True, event_hooks=redirect_hooks(),
                       headers={"User-Agent": _UA}) as c:
         c.get("https://fanfics.me/autent.php")
         r = c.post("https://fanfics.me/autent.php", data={"name": user, "pass": pw})

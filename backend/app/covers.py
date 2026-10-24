@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import base64
 import hashlib
 import posixpath
@@ -154,7 +155,10 @@ def fetch_cover_bytes(source_url: str) -> bytes | None:
             img_url = re.sub(r"/m_", "/d_", img_url, count=1)
         data = _fetch(img_url, _UA, binary=True, base=source_url)
         return data if data and len(data) > 200 else None
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 — обложка не обязательна, но причина видна
+        logging.getLogger("reader.covers").warning(
+            "обложка со страницы %s не получена: %s: %s", source_url, type(e).__name__, e
+        )
         return None
 
 
@@ -245,6 +249,13 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
 
     if base and not url.startswith("http"):
         url = urljoin(base, url)
+    import httpx
+
+    from ..downloaders.redirect_guard import check_redirect_target, redirect_hooks
+
+    # Адрес обложки берётся из HTML источника — проверяем его так же, как цель
+    # редиректа (схема, порт, глобальные IP), а не только последующие хопы.
+    url = str(check_redirect_target(httpx.URL(base or url), url))
     host = (urlparse(url).hostname or "").lower()
     if host.endswith("ficbook.net"):
         import cloudscraper
@@ -257,10 +268,6 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
         )) as c:
             r = c.get(url, timeout=40)
             return r.content if binary else r.text
-    import httpx
-
-    from ..downloaders.redirect_guard import redirect_hooks
-
     with httpx.Client(
         timeout=40, follow_redirects=True, event_hooks=redirect_hooks(), headers={"User-Agent": ua}
     ) as c:

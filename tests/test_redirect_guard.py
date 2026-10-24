@@ -128,3 +128,22 @@ def test_unresolvable_target_refused(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     with pytest.raises(RedirectBlocked, match="разрешить"):
         check_redirect_target(httpx.URL("https://author.today/a"), "/relative")
+
+
+def test_cover_og_image_to_internal_address_not_fetched(monkeypatch):
+    """og:image из HTML источника указывает во внутреннюю сеть — запроса туда нет."""
+    from backend.app import covers
+
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.host == "127.0.0.1":
+            return httpx.Response(200, content=b"x" * 1000)
+        return httpx.Response(
+            200, text='<meta property="og:image" content="http://127.0.0.1/admin.png">'
+        )
+
+    _patch_client(monkeypatch, handler)
+    assert covers.fetch_cover_bytes("https://author.today/work/1") is None
+    assert not any("127.0.0.1" in u for u in seen)

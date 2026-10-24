@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup, Comment
 
 from .base import DownloaderError, DownloadResult
 from .epub_build import build_epub
+from .redirect_guard import redirect_hooks
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -77,7 +78,7 @@ def is_supported(url: str) -> bool:
 def make_client() -> httpx.Client:
     return httpx.Client(
         headers={"User-Agent": UA, "Accept-Language": "en,ru;q=0.8"},
-        follow_redirects=True,
+        follow_redirects=True, event_hooks=redirect_hooks(),
         timeout=TIMEOUT,
     )
 

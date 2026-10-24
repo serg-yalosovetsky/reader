@@ -13,6 +13,7 @@ import httpx
 
 from ..app.config import FICHUB_API
 from .base import DownloaderError, DownloadResult
+from .redirect_guard import redirect_hooks
 
 _UA = "reader/0.1 (+https://github.com/serhii-yalosovetskyi/reader)"
 
@@ -20,7 +21,7 @@ _UA = "reader/0.1 (+https://github.com/serhii-yalosovetskyi/reader)"
 def download(url: str) -> DownloadResult:
     """Скачать произведение через FicHub. Бросает DownloaderError при сбое."""
     try:
-        with httpx.Client(timeout=120, headers={"User-Agent": _UA}, follow_redirects=True) as c:
+        with httpx.Client(timeout=120, headers={"User-Agent": _UA}, follow_redirects=True, event_hooks=redirect_hooks()) as c:
             # 1) Запросить генерацию/ссылку на EPUB.
             r = c.get(f"{FICHUB_API}/epub", params={"q": url})
             if r.status_code != 200:

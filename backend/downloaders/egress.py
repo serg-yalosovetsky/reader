@@ -25,6 +25,8 @@ import os
 
 import httpx
 
+from .redirect_guard import guarded_client
+
 AT_PROXY_ENV = "READER_AT_PROXY"
 
 
@@ -43,4 +45,5 @@ def at_client(**kw) -> httpx.Client:
     proxy = at_proxy()
     if proxy:
         kw.setdefault("proxy", proxy)
-    return httpx.Client(**kw)
+    # Каждый хоп редиректа — через проверку IP (serg/tasks#2330).
+    return guarded_client(**kw)

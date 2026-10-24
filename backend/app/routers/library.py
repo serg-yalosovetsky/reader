@@ -274,7 +274,11 @@ def _do_refresh_covers() -> None:
     from ..db.session import get_session as _gs
     from urllib.parse import urlparse
     import re as _re
-    import httpx as _httpx
+    import logging as _logging
+
+    from ...downloaders.redirect_guard import guarded_client
+
+    _log = _logging.getLogger("reader.covers_refresh")
 
     _ELIGIBLE_HOSTS = ("ficbook.net", "readli.net", "searchfloor.org", "fanfics.me")
 
@@ -291,12 +295,12 @@ def _do_refresh_covers() -> None:
 
     def _at_author(at_url: str) -> str:
         try:
-            r = _httpx.get(
-                at_url,
+            with guarded_client(
                 timeout=10,
                 follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0"},
-            )
+            ) as _c:
+                r = _c.get(at_url)
             _pat = "itemprop=['\"{0,1}author['\"{0,1}[^>]*>([^<]{2,60})<"
             m = _re.search(_pat, r.text)
             if not m:
@@ -304,7 +308,8 @@ def _do_refresh_covers() -> None:
                     r"book-authors[^>]*>.*?href=[^>]+>([^<]{2,60})<", r.text, _re.S
                 )
             return m.group(1).strip() if m else ""
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — нет автора AT → обложку не трогаем
+            _log.warning("обложки: не удалось прочитать автора %s: %s", at_url, e)
             return ""
 
     for session in _gs():

@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
+from .redirect_guard import redirect_hooks
 
 _log = logging.getLogger("reader.searchfloor")
 
@@ -63,7 +64,7 @@ _PROBE_TIMEOUT = 15
 
 
 def _client(timeout: int = 90) -> httpx.Client:
-    return httpx.Client(timeout=timeout, follow_redirects=True,
+    return httpx.Client(timeout=timeout, follow_redirects=True, event_hooks=redirect_hooks(),
                         headers={"User-Agent": _UA, "Accept-Language": "ru,en;q=0.8"})
 
 

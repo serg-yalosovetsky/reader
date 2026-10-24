@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import tempfile
 import time
@@ -22,6 +23,8 @@ from bs4 import BeautifulSoup
 
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
+
+_log = logging.getLogger("reader.searchfloor")
 
 _BASE = "https://searchfloor.org"
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -74,6 +77,44 @@ def download(url: str) -> DownloadResult:
     raise UnsupportedURL(f"searchfloor: неизвестный тип ссылки {url}")
 
 
+# Книга только для подписчиков сайта: на /b/<id> рядом с кнопкой скачивания
+# стоит замок `<a href="/donate" class="... bi-lock" data-bs-title="Доступ по
+# подписке">`, а /book/<id> анониму отвечает 401 — не на минуту, а пока книга
+# не выйдет из подписки (обычно онгоинги). Замер 24.10.2026 по 15 книгам: замок
+# есть ровно у тех, где /book/<id> отдаёт 401, у остальных 200/206.
+# Живой случай serg/tasks#1858: «Крушение сурка. Том 3» — пока author.today
+# лежал, монитор поверил плашке «Последняя глава» searchfloor (23), скачать
+# оттуда не смог (401) и пять тиков штрафовал подписку «глава недоступна?».
+_SUBSCRIPTION_RE = re.compile(r'data-bs-title\s*=\s*"Доступ по подписке"')
+
+
+class SubscriptionRequired(DownloaderError):
+    """Книга на searchfloor отдаётся только подписчикам сайта — анонимно не скачать."""
+
+
+def is_subscription_only(html: str) -> bool:
+    """Помечена ли страница книги /b/<id> замком «Доступ по подписке»."""
+    return bool(_SUBSCRIPTION_RE.search(html or ""))
+
+
+def subscription_only(book_id: str) -> bool | None:
+    """Только ли для подписчиков книга <book_id>.
+
+    None — страницу получить не удалось: это «не знаем», а не «свободна»;
+    вызывающий решает сам и в лог уже ушла причина."""
+    try:
+        with _client(_PROBE_TIMEOUT) as c:
+            r = c.get(f"{_BASE}/b/{book_id}")
+    except httpx.HTTPError as e:
+        _log.warning("searchfloor: не удалось открыть /b/%s для проверки подписки: %s: %s",
+                     book_id, type(e).__name__, e)
+        return None
+    if r.status_code != 200:
+        _log.warning("searchfloor: /b/%s вернул %s при проверке подписки", book_id, r.status_code)
+        return None
+    return is_subscription_only(r.text)
+
+
 # Коды, которыми searchfloor отвечает на скачивание ВРЕМЕННО. 401 — не протухший
 # вход (качаем анонимно, и через минуту та же ссылка отдаёт 200): так сайт
 # отвечает, пока пересобирает файл тома (живой случай 12.10 00:08 — «Вечно
@@ -91,6 +132,13 @@ def _download_book(book_id: str, src_url: str) -> DownloadResult:
             r = c.get(f"{_BASE}/book/{book_id}")
             if r.status_code == 200 and r.content:
                 break
+            # 401 бывает и временным (пересборка файла), и постоянным (книга по
+            # подписке). Постоянный не лечится повтором — называем причину сразу.
+            if r.status_code == 401 and attempt == 0 and subscription_only(book_id):
+                raise SubscriptionRequired(
+                    f"searchfloor: книга «{title}» доступна только подписчикам сайта "
+                    f"(«Доступ по подписке», /book/{book_id} вернул 401)"
+                )
             if r.status_code not in _DL_TRANSIENT or attempt == len(_DL_RETRY_DELAYS):
                 raise DownloaderError(f"searchfloor: скачивание книги вернуло {r.status_code}")
             time.sleep(_DL_RETRY_DELAYS[attempt])

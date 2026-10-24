@@ -130,6 +130,7 @@ def _stub_searchfloor(monkeypatch, *, found: bool, chapters: int = 70, title="С
     monkeypatch.setattr(sf, "search_book", lambda t, a="": ("999" if found else None))
     monkeypatch.setattr(sf, "_book_meta", lambda bid: (title, "Atlet123"))
     monkeypatch.setattr(sf, "count_chapters", lambda url: chapters)
+    monkeypatch.setattr(sf, "subscription_only", lambda bid: False)
 
 
 OUR = {"title": "Сломанный Меч", "author": "Atlet123", "annotation": ""}

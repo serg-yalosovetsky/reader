@@ -639,17 +639,18 @@ def add_mirror(
     Счётчик «видели» стартует с числа глав книги, чтобы новая подписка не
     вызвала полную перекачку на первом же тике.
     """
-    from urllib.parse import urlparse
-
     from ...accounts import monitor
     from ..blacklist import unblock
+    from ..source_url import SourceUrlError, validate_source_url
 
     work = session.get(Work, work_id)
     if not work:
         raise HTTPException(404, "work not found")
-    url = payload.url.strip()
-    if urlparse(url).scheme not in ("http", "https") or not urlparse(url).hostname:
-        raise HTTPException(400, "нужна ссылка на книгу (http/https)")
+    # Только сайты-источники reader и только глобальные IP (serg/tasks#1859, SSRF).
+    try:
+        url = validate_source_url(payload.url)
+    except SourceUrlError as e:
+        raise HTTPException(400, str(e)) from e
     other = session.exec(
         select(Monitored).where(Monitored.source_url == url, Monitored.work_id != work_id)
     ).first()

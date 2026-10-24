@@ -494,7 +494,7 @@ function renderBookPage(w) {
       btn.disabled = false
       setLbl(btn, 'Добавить зеркало')
       if (e.name === 'AuthRequiredError') toast('Сессия истекла — войдите заново', 'err')
-      else toast('Не удалось добавить зеркало: ' + e.message, 'err')
+      else toast('Не удалось добавить зеркало: ' + (typeof e.data?.detail === 'string' ? e.data.detail : e.message), 'err')
     }
   })
   $('#bp-gencover')?.addEventListener('click', async () => {

@@ -354,6 +354,14 @@ def _check_searchfloor_source(our: dict) -> tuple[str, int] | None:
     sf_title, sf_author = _sf._book_meta(bid)
     if not _bi.same_book(our, {"title": sf_title, "author": sf_author}):
         return None  # тёзка/чужой том
+    # Пригодное зеркало = с него можно СКАЧАТЬ (как у _check_at_source). Книга
+    # «по подписке» обещает главы, которых анониму не отдаст: монитор берёт её
+    # счётчик, докачка упирается в 401, и подписка штрафуется за чужой замок
+    # (serg/tasks#1858). None («не знаем») не отсекаем: причина уже в логе,
+    # а если книга всё же закрыта, докачка назовёт это прямо (SubscriptionRequired).
+    if _sf.subscription_only(bid):
+        _log.info("зеркало %s не берём: книга доступна только по подписке searchfloor", sf_url)
+        return None
     cnt = _sf.count_chapters(sf_url)
     if not cnt:
         return None  # завершённая книга без плашки — счётчика нет

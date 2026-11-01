@@ -15,10 +15,20 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session, select
 
+import logging
 import os
 
 from .. import covers, upload_progress
-from ..db.models import Monitored, Progress, Work, utcnow
+from ..db.models import (
+    Bookmark,
+    ChapterMeta,
+    Highlight,
+    Monitored,
+    PositionHistory,
+    Progress,
+    Work,
+    utcnow,
+)
 from ..db.session import get_session
 from ..upload_identity import clean_title, extract_identity
 from ..storage import (
@@ -27,6 +37,8 @@ from ..storage import (
     import_file,
     sha1_of_file,
 )
+
+log = logging.getLogger("reader.library")
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
@@ -102,20 +114,128 @@ def _dedup_works(session: Session) -> int:
                     keep.cover_path = dup.cover_path
                     keep.cover_source = dup.cover_source
                 session.add(keep)
+                # 1. Monitored: перевешиваем подписки на keep; дубли по source_url удаляем
+                existing_mon_urls = {
+                    (m.source_url or "").strip()
+                    for m in session.exec(select(Monitored).where(Monitored.work_id == keep.id)).all()
+                    if (m.source_url or "").strip()
+                }
                 for m in session.exec(
                     select(Monitored).where(Monitored.work_id == dup.id)
                 ).all():
-                    m.work_id = keep.id
-                    session.add(m)
-                for p in session.exec(
-                    select(Progress).where(Progress.work_id == dup.id)
+                    url = (m.source_url or "").strip()
+                    if url and url in existing_mon_urls:
+                        session.delete(m)
+                    else:
+                        m.work_id = keep.id
+                        session.add(m)
+                        if url:
+                            existing_mon_urls.add(url)
+
+                # 2. Bookmark: переносим закладки пользователя на keep; удаляем только дубликаты
+                # Правило уникальности: (locator, label, ratio)
+                existing_bm_keys = {
+                    (b.locator or "", round(float(b.ratio or 0.0), 4), b.label or "")
+                    for b in session.exec(select(Bookmark).where(Bookmark.work_id == keep.id)).all()
+                }
+                for bm in session.exec(
+                    select(Bookmark).where(Bookmark.work_id == dup.id)
                 ).all():
-                    session.delete(p)
+                    key = (bm.locator or "", round(float(bm.ratio or 0.0), 4), bm.label or "")
+                    if key in existing_bm_keys:
+                        session.delete(bm)
+                    else:
+                        bm.work_id = keep.id
+                        session.add(bm)
+                        existing_bm_keys.add(key)
+
+                # 3. Highlight: переносим цитаты/выделения на keep; удаляем только дубликаты
+                # Правило уникальности: (locator, text)
+                existing_hl_keys = {
+                    (h.locator or "", h.text or "")
+                    for h in session.exec(select(Highlight).where(Highlight.work_id == keep.id)).all()
+                }
+                for hl in session.exec(
+                    select(Highlight).where(Highlight.work_id == dup.id)
+                ).all():
+                    key = (hl.locator or "", hl.text or "")
+                    if key in existing_hl_keys:
+                        session.delete(hl)
+                    else:
+                        hl.work_id = keep.id
+                        session.add(hl)
+                        existing_hl_keys.add(key)
+
+                # 4. PositionHistory: переносим историю переходов на keep; удаляем дубликаты
+                # Правило уникальности: (locator, text_anchor, ratio)
+                existing_ph_keys = {
+                    (ph.locator or "", ph.text_anchor or "", round(float(ph.ratio or 0.0), 4))
+                    for ph in session.exec(select(PositionHistory).where(PositionHistory.work_id == keep.id)).all()
+                }
+                for ph in session.exec(
+                    select(PositionHistory).where(PositionHistory.work_id == dup.id)
+                ).all():
+                    key = (ph.locator or "", ph.text_anchor or "", round(float(ph.ratio or 0.0), 4))
+                    if key in existing_ph_keys:
+                        session.delete(ph)
+                    else:
+                        ph.work_id = keep.id
+                        session.add(ph)
+                        existing_ph_keys.add(key)
+
+                # 5. ChapterMeta: переносим метаданные глав на keep; дубли по url/number удаляем
+                existing_cm_keys = {
+                    (cm.url or "") if cm.url else str(cm.number)
+                    for cm in session.exec(select(ChapterMeta).where(ChapterMeta.work_id == keep.id)).all()
+                }
+                for cm in session.exec(
+                    select(ChapterMeta).where(ChapterMeta.work_id == dup.id)
+                ).all():
+                    key = (cm.url or "") if cm.url else str(cm.number)
+                    if key in existing_cm_keys:
+                        session.delete(cm)
+                    else:
+                        cm.work_id = keep.id
+                        session.add(cm)
+                        existing_cm_keys.add(key)
+
+                # 6. Progress: у keep может быть только ОДНА строка progress (unique=True).
+                # Если у keep прогресса не было — переносим прогресс дубля.
+                # Если у обоих есть — оставляем более свежий/продвинутый, дубль удаляем.
+                keep_prog = session.exec(select(Progress).where(Progress.work_id == keep.id)).first()
+                dup_prog = session.exec(select(Progress).where(Progress.work_id == dup.id)).first()
+                if dup_prog is not None:
+                    if keep_prog is None:
+                        dup_prog.work_id = keep.id
+                        session.add(dup_prog)
+                    else:
+                        dup_ts = dup_prog.last_read_time or utcnow()
+                        keep_ts = keep_prog.last_read_time or utcnow()
+                        if dup_ts > keep_ts or (dup_prog.saved_at or 0) > (keep_prog.saved_at or 0):
+                            keep_prog.ratio = dup_prog.ratio
+                            keep_prog.locator = dup_prog.locator
+                            keep_prog.text_anchor = dup_prog.text_anchor
+                            keep_prog.book_rev = dup_prog.book_rev
+                            keep_prog.file_format = dup_prog.file_format
+                            keep_prog.saved_at = dup_prog.saved_at
+                            keep_prog.finished_at = dup_prog.finished_at
+                            keep_prog.finished_chapters = dup_prog.finished_chapters
+                            keep_prog.last_read_time = dup_prog.last_read_time
+                            keep_prog.chapters_at_read = dup_prog.chapters_at_read
+                            keep_prog.chapter = dup_prog.chapter
+                            keep_prog.source = dup_prog.source
+                            session.add(keep_prog)
+                        session.delete(dup_prog)
+
                 if dup.file_path and dup.file_path != keep.file_path:
                     try:
                         os.remove(dup.file_path)
-                    except OSError:
-                        pass
+                    except FileNotFoundError:
+                        # Осознанно не считаем ошибкой: файла уже нет на диске,
+                        # следовательно цель удаления (убрать лишний файл дубля) уже достигнута.
+                        log.debug("Файл дубля %s уже отсутствует: %s", dup.id, dup.file_path)
+                    except OSError as e:
+                        log.warning("Не удалось удалить файл дубля %s (%s): %s", dup.id, dup.file_path, e)
                 session.delete(dup)
                 removed_works += 1
     session.commit()
@@ -684,6 +804,16 @@ def clear_update_flag(work_id: int, session: Session = Depends(get_session)) -> 
     return {"ok": True}
 
 
+CHILD_MODELS = (
+    PositionHistory,
+    ChapterMeta,
+    Bookmark,
+    Highlight,
+    Progress,
+    Monitored,
+)
+
+
 @router.delete("/{work_id}")
 def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     """Удалить книгу из библиотеки (файл + БД)."""
@@ -700,21 +830,52 @@ def delete_work(work_id: int, session: Session = Depends(get_session)) -> dict:
             select(Monitored).where(Monitored.work_id == work_id)
         ).all()
     ]
-    _bl_add(session, title=work.title, author=work.author, urls=_urls)
-    for p in session.exec(select(Progress).where(Progress.work_id == work_id)).all():
-        session.delete(p)
-    for m in session.exec(select(Monitored).where(Monitored.work_id == work_id)).all():
-        session.delete(m)
-    if work.file_path:
-        try:
-            os.remove(work.file_path)
-        except OSError:
-            pass
-    if work.cover_path:
-        try:
-            os.remove(work.cover_path)
-        except OSError:
-            pass
+    file_path = work.file_path
+    cover_path = work.cover_path
+    converted_path = work.converted_path
+
+    # Заносим в blacklist в рамках той же транзакции (без промежуточного commit)
+    _bl_add(session, title=work.title, author=work.author, urls=_urls, commit=False)
+
+    # Удаляем строки из всех дочерних таблиц с FK на work.id в одной транзакции
+    for child_cls in CHILD_MODELS:
+        for row in session.exec(
+            select(child_cls).where(child_cls.work_id == work_id)
+        ).all():
+            session.delete(row)
+
     session.delete(work)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        log.exception("Не удалось удалить книгу %s из БД", work_id)
+        raise
+
+    for path_str, desc in (
+        (file_path, "файл книги"),
+        (cover_path, "файл обложки"),
+        (converted_path, "конвертированный файл"),
+    ):
+        if path_str:
+            try:
+                os.remove(path_str)
+            except FileNotFoundError:
+                # Осознанно не считаем ошибкой: файла уже нет на диске (удалён ранее или
+                # не создавался) — цель удаления достигнута, файл отсутствует.
+                log.debug(
+                    "%s книги %s уже отсутствует на диске: %s",
+                    desc.capitalize(),
+                    work_id,
+                    path_str,
+                )
+            except OSError as e:
+                log.warning(
+                    "Не удалось удалить %s книги %s (%s): %s",
+                    desc,
+                    work_id,
+                    path_str,
+                    e,
+                )
+
     return {"ok": True}

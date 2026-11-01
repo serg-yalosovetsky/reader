@@ -24,6 +24,7 @@ from ..app.db.models import Monitored, Work, utcnow
 from ..app.services import register_download
 from ..downloaders import chain
 from ..downloaders import fanficfare_engine as fff
+from ..downloaders.redirect_guard import host_matches
 from . import store
 
 import logging
@@ -80,7 +81,7 @@ def _metric_kind(url: str) -> str:
     # `_host` пуст, и страницы readli молча становились главами. Итог: «25 гл. из
     # 109» на странице книги и `_seen_for` == 0 на каждом тике (update-pipeline v11).
     host = (_host(url) or s).lower()
-    return "pages" if host.endswith("readli.net") else "chapters"
+    return "pages" if host_matches(host, "readli.net") else "chapters"
 
 
 def _seen_for(mon: Monitored, url: str) -> int:
@@ -216,22 +217,22 @@ def _chapter_count(
     идёт через один долгоживущий процесс, паузу между ficbook-заданиями держит
     драйвер. Без него — отдельный процесс на ссылку, как раньше."""
     # docs.python.org: «главы» = НОМЕР ВЕРСИИ документации (см. _metric_kind)
-    if host.endswith("docs.python.org"):
+    if host_matches(host, "docs.python.org"):
         from ..downloaders import pythondocs as _pd
 
         return _pd.count_chapters(url)
     # readli: «главы» = число страниц читалки (пагинация растёт при дописывании)
-    if host.endswith("readli.net"):
+    if host_matches(host, "readli.net"):
         from ..downloaders import readli as _rd
 
         return _rd.count_chapters(url)
     # searchfloor: номер главы из плашки «Последняя глава» на странице книги
-    if host.endswith("searchfloor.org"):
+    if host_matches(host, "searchfloor.org"):
         from ..downloaders import searchfloor as _sf
 
         return _sf.count_chapters(url)
     # author.today: FanFicFare не поддерживает — используем наш адаптер
-    if host.endswith("author.today"):
+    if host_matches(host, "author.today"):
         from ..downloaders import authortoday as _at
 
         return _at.count_chapters(url)
@@ -242,7 +243,7 @@ def _chapter_count(
         meta = meta_driver.get_meta(url, creds=creds)
     else:
         meta = fff.get_meta(url, creds=creds)
-        if host.endswith("ficbook.net"):
+        if host_matches(host, "ficbook.net"):
             time.sleep(0.25)  # вежливость к DDoS-Guard: он тригеристый, не частим
     if not meta:
         return None
@@ -269,7 +270,7 @@ def _mirror_eligible(host: str, work_id: int | None, title: str) -> bool:
     Исключение — документация Python: у неё единственный источник, и поиск
     «зеркал» по названию только тратит запросы (spec.reader.python-docs).
     """
-    if host.endswith("docs.python.org"):
+    if host_matches(host, "docs.python.org"):
         return False
     return bool(work_id) and bool(title)
 
@@ -459,7 +460,7 @@ def _fetch_at_cover_bytes(source_url: str, title: str, author: str) -> bytes | N
     from ..downloaders import authortoday as _at
 
     host = (urlparse(source_url).hostname or "").lower()
-    if not any(host.endswith(e) for e in _AT_COVER_ELIGIBLE):
+    if not host_matches(host, _AT_COVER_ELIGIBLE):
         return None
     if not title:
         return None

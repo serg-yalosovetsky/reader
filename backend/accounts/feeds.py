@@ -20,7 +20,7 @@ from bs4 import BeautifulSoup
 from sqlmodel import Session
 
 from ..downloaders import egress
-from ..downloaders.redirect_guard import redirect_hooks
+from ..downloaders.redirect_guard import check_redirect_target, redirect_hooks, requests_redirect_hook
 from . import monitor, store
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -70,6 +70,7 @@ def _ficbook_feed(user: str, pw: str, cookies: dict | None = None) -> tuple[list
     # соединения (процесс жив, порт слушает, ответ — reset).
     with closing(cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows"})) as c:
+        c.hooks["response"].append(requests_redirect_hook)
         if cookies:
             c.cookies.update(cookies)
 

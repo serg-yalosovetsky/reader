@@ -181,9 +181,11 @@ def _host(url: str) -> str:
 
 def _forum(url: str) -> str:
     """Форумы XenForo FanFicFare поддерживает, но их нет в KNOWN_DOMAINS."""
+    from ..downloaders.redirect_guard import host_matches
+
     host = _host(url)
-    return host if host.endswith(("sufficientvelocity.com", "spacebattles.com",
-                                  "questionablequesting.com")) else ""
+    return host if host_matches(host, ("sufficientvelocity.com", "spacebattles.com",
+                                      "questionablequesting.com")) else ""
 
 
 def dates_for_work(session: Session, work_id: int) -> tuple[dict, dict]:

@@ -1,14 +1,19 @@
 """Роутер скачивания: вставил ссылку -> скачали -> добавили в библиотеку и Calibre."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from ...downloaders import chain
 from ...downloaders.base import DownloaderError
+from ...downloaders.redirect_guard import UrlBlocked, check_url
 from .. import ingest_service, ingestjob, webjob
 from ..db.session import get_session
+
+log = logging.getLogger("reader.ingest_router")
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -36,6 +41,12 @@ def ingest(
     q = (body.query or "").strip()
     if not q:
         raise HTTPException(400, "пустой запрос")
+    if chain.is_url(q):
+        try:
+            check_url(q)
+        except UrlBlocked as e:
+            log.warning("POST /api/ingest: отклонён адрес %s: %s", q, e)
+            raise HTTPException(400, f"запрещённый адрес: {e.reason}") from e
     if body.background:
         try:
             snap = ingestjob.enqueue(q)
@@ -94,6 +105,12 @@ def ingest_web(body: WebIn) -> dict:
     bad = [u for u in urls if not chain.is_url(u)]
     if bad:
         raise HTTPException(400, f"это не ссылки: {', '.join(bad[:3])}")
+    for u in urls:
+        try:
+            check_url(u)
+        except UrlBlocked as e:
+            log.warning("POST /api/ingest/web: отклонён адрес %s: %s", u, e)
+            raise HTTPException(400, f"запрещённый адрес: {e.reason}") from e
     return webjob.start_build(urls, title=body.title, author=body.author)
 
 
@@ -107,6 +124,11 @@ def ingest_web_auto(body: DiscoverIn) -> dict:
     url = (body.url or "").strip()
     if not chain.is_url(url):
         raise HTTPException(400, "нужна http(s)-ссылка")
+    try:
+        check_url(url)
+    except UrlBlocked as e:
+        log.warning("POST /api/ingest/web/auto: отклонён адрес %s: %s", url, e)
+        raise HTTPException(400, f"запрещённый адрес: {e.reason}") from e
     return webjob.start_auto(url, title=body.title, author=body.author)
 
 
@@ -116,6 +138,11 @@ def ingest_web_discover(body: DiscoverIn) -> dict:
     url = (body.url or "").strip()
     if not chain.is_url(url):
         raise HTTPException(400, "нужна http(s)-ссылка")
+    try:
+        check_url(url)
+    except UrlBlocked as e:
+        log.warning("POST /api/ingest/web/discover: отклонён адрес %s: %s", url, e)
+        raise HTTPException(400, f"запрещённый адрес: {e.reason}") from e
     return webjob.start_discover(url)
 
 

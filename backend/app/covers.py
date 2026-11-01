@@ -251,13 +251,18 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
         url = urljoin(base, url)
     import httpx
 
-    from ..downloaders.redirect_guard import check_redirect_target, redirect_hooks
+    from ..downloaders.redirect_guard import (
+        check_redirect_target,
+        host_matches,
+        redirect_hooks,
+        requests_redirect_hook,
+    )
 
     # Адрес обложки берётся из HTML источника — проверяем его так же, как цель
     # редиректа (схема, порт, глобальные IP), а не только последующие хопы.
     url = str(check_redirect_target(httpx.URL(base or url), url))
     host = (urlparse(url).hostname or "").lower()
-    if host == "ficbook.net" or host.endswith(".ficbook.net"):
+    if host_matches(host, "ficbook.net"):
         import cloudscraper
         from contextlib import closing
 
@@ -268,13 +273,7 @@ def _fetch(url: str, ua: str, binary: bool = False, base: str = ""):
         )) as c:
             # cloudscraper (requests) сам ходит по редиректам — каждый хоп проверяем
             # тем же правилом, что и у httpx-клиентов (serg/tasks#2330).
-            c.hooks["response"].append(
-                lambda resp, *a, **kw: check_redirect_target(
-                    httpx.URL(resp.url), resp.headers["Location"]
-                )
-                if resp.is_redirect
-                else None
-            )
+            c.hooks["response"].append(requests_redirect_hook)
             r = c.get(url, timeout=40)
             return r.content if binary else r.text
     with httpx.Client(

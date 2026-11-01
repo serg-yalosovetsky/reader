@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
-from .redirect_guard import redirect_hooks
+from .redirect_guard import check_url, host_matches, redirect_hooks
 from .textclean import clean_html, clean_title
 
 _BASE = "https://readli.net"
@@ -29,10 +29,12 @@ _TITLE_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s+(.*?)\s*[|/]", re.S)
 
 
 def supports(url: str) -> bool:
-    return (urlparse(url).hostname or "").lower().endswith("readli.net")
+    host = (urlparse(url).hostname or "").lower()
+    return host_matches(host, "readli.net")
 
 
 def _book_id(url: str) -> str:
+    check_url(url)
     qs = parse_qs(urlparse(url).query)
     bid = qs.get("b", [None])[0]
     if bid:
@@ -233,6 +235,7 @@ def count_chapters(url: str) -> int | None:
 
 
 def download(url: str) -> DownloadResult:
+    check_url(url)
     bid = _book_id(url)
     page_url = lambda n: f"{_BASE}/chitat-online/?b={bid}&pg={n}"
 

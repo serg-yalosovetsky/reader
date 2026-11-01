@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +30,9 @@ from bs4 import BeautifulSoup, Comment
 
 from .base import DownloaderError, DownloadResult
 from .epub_build import build_epub
-from .redirect_guard import redirect_hooks
+from .redirect_guard import UrlBlocked, check_url, redirect_hooks
+
+log = logging.getLogger("reader.webarticle")
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -85,9 +88,12 @@ def make_client() -> httpx.Client:
 
 def _get_html(client: httpx.Client, url: str) -> tuple[str, str]:
     """(html, final_url). Не-HTML отсекаем — иначе в книгу попадёт бинарь."""
+    check_url(url)
     try:
         r = client.get(url)
         r.raise_for_status()
+    except DownloaderError:
+        raise
     except Exception as e:  # noqa: BLE001
         raise DownloaderError(f"{url}: не удалось загрузить ({type(e).__name__})") from e
     ct = r.headers.get("content-type", "")
@@ -166,9 +172,14 @@ class ImageStore:
             self.skipped += 1
             return None
         try:
+            check_url(url)
             r = self._client.get(url, timeout=TIMEOUT)
             r.raise_for_status()
             data = r.content
+        except UrlBlocked as exc:
+            log.warning("webarticle: пропуск картинки с запрещённым адресом %s: %s", url, exc)
+            self.skipped += 1
+            return None
         except Exception:  # noqa: BLE001 — битая картинка не должна валить книгу
             self.skipped += 1
             return None
@@ -557,10 +568,13 @@ def build_book(
         for art in arts:
             if art.og_image:
                 try:
+                    check_url(art.og_image)
                     r = client.get(art.og_image, timeout=TIMEOUT)
                     if r.status_code == 200 and len(r.content) <= MAX_IMG_BYTES:
                         cover = r.content
                         break
+                except UrlBlocked as exc:
+                    log.warning("webarticle: пропуск og:image с запрещённым адресом %s: %s", art.og_image, exc)
                 except Exception:  # noqa: BLE001 — обложка не критична
                     pass
         # og:image есть не у всех блогов (github.io, старый blogspot). Тогда
@@ -773,10 +787,14 @@ def _sitemap_candidates(client: httpx.Client, root: str, prefix: str) -> list[st
             continue
         seen.add(sm)
         try:
+            check_url(sm)
             r = client.get(sm, timeout=TIMEOUT)
             if r.status_code != 200 or "xml" not in r.headers.get("content-type", "xml"):
                 continue
             body = r.text
+        except UrlBlocked as exc:
+            log.warning("webarticle: sitemap отклонён %s: %s", sm, exc)
+            continue
         except Exception:  # noqa: BLE001
             continue
         files += 1
@@ -812,10 +830,14 @@ def _taxonomy_candidates(
         for page in range(1, 8):
             url = tax if page == 1 else urljoin(tax.rstrip("/") + "/", f"page/{page}/")
             try:
+                check_url(url)
                 r = client.get(url, timeout=TIMEOUT)
                 if r.status_code != 200:
                     break
                 page_soup = BeautifulSoup(r.text, "lxml")
+            except UrlBlocked as exc:
+                log.warning("webarticle: taxonomy URL отклонён %s: %s", url, exc)
+                break
             except Exception:  # noqa: BLE001
                 break
             hits = 0
@@ -839,10 +861,14 @@ def _search_candidates(client: httpx.Client, root: str, prefix: str) -> list[str
         q = quote_plus(words)
         url = urljoin(root, f"/?s={q}" if page == 1 else f"/page/{page}/?s={q}")
         try:
+            check_url(url)
             r = client.get(url, timeout=TIMEOUT)
             if r.status_code != 200:
                 break
             soup = BeautifulSoup(r.text, "lxml")
+        except UrlBlocked as exc:
+            log.warning("webarticle: search URL отклонён %s: %s", url, exc)
+            break
         except Exception:  # noqa: BLE001
             break
         hits = 0

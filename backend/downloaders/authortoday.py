@@ -27,6 +27,7 @@ from ebooklib import epub
 from ..app import progress
 from . import egress
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
+from .redirect_guard import check_url
 from .remote_images import ImageEmbedder, fetch_image, image_client
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,7 @@ def search_work(title: str, author: str = "") -> str | None:
 
 def count_chapters(url: str) -> int | None:
     """Быстро получить число глав без скачивания текста."""
+    check_url(url)
     work_id = _work_id(url)
     with egress.at_client(
         timeout=20,
@@ -362,6 +364,7 @@ def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
     Параметр creds оставлен ради совместимости вызовов (chain, monitor,
     ingest) и больше не используется: пароль берёт at_auto из БД сам.
     """
+    check_url(url)
     from ..accounts import at_auto
 
     # Сессию берём всегда, а не только при пробросе creds: chain ищет на AT

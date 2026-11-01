@@ -276,7 +276,7 @@ def _do_refresh_covers() -> None:
     import re as _re
     import logging as _logging
 
-    from ...downloaders.redirect_guard import guarded_client
+    from ...downloaders.redirect_guard import check_url, guarded_client, host_matches
 
     _log = _logging.getLogger("reader.covers_refresh")
 
@@ -284,7 +284,7 @@ def _do_refresh_covers() -> None:
 
     def _host_ok(url: str) -> bool:
         h = (urlparse(url).hostname or "").lower()
-        return any(h.endswith(e) for e in _ELIGIBLE_HOSTS)
+        return host_matches(h, _ELIGIBLE_HOSTS)
 
     def _author_match(our: str, at_author: str) -> bool:
         if not our or not at_author:
@@ -295,6 +295,7 @@ def _do_refresh_covers() -> None:
 
     def _at_author(at_url: str) -> str:
         try:
+            check_url(at_url)
             with guarded_client(
                 timeout=10,
                 follow_redirects=True,

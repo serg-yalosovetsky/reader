@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from . import fanficfare_engine as fff
 from . import fichub
 from .base import DownloaderError, DownloadResult, PaidContentError, UnsupportedURL
+from .redirect_guard import check_url, host_matches
 
 log = logging.getLogger("reader.chain")
 
@@ -41,15 +42,16 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
             "(ficbook.net, fanfics.me, author.today, AO3, fanfiction.net)."
         )
     url = query.strip()
+    check_url(url)
     host = (urlparse(url).hostname or "").lower()
     opts = {"_creds": creds} if creds else None
 
     # 1) сайты со своими адаптерами.
-    if host.endswith("docs.python.org"):
+    if host_matches(host, "docs.python.org"):
         from . import pythondocs
 
         return pythondocs.download(url)
-    if host.endswith("author.today"):
+    if host_matches(host, "author.today"):
         from . import authortoday
 
         try:
@@ -75,11 +77,11 @@ def fetch(query: str, creds: tuple[str, str] | None = None) -> DownloadResult:
                 # пять тиков книга выпадает из автообновления (serg/tasks#983).
                 return _carry_paywall(res, free)
         return res
-    if host.endswith("readli.net"):
+    if host_matches(host, "readli.net"):
         from . import readli
 
         return readli.download(url)
-    if host.endswith("searchfloor.org"):
+    if host_matches(host, "searchfloor.org"):
         from . import searchfloor
 
         return searchfloor.download(url)
@@ -187,8 +189,8 @@ def fetch_fullest(
     # У документации Python единственный источник по определению: искать её
     # «зеркала» поиском по названию — это лишние запросы на каждом тике и риск
     # подцепить тёзку (spec.reader.python-docs).
-    if primary_url and (urlparse(primary_url).hostname or "").endswith(
-        "docs.python.org"
+    if primary_url and host_matches(
+        urlparse(primary_url).hostname or "", "docs.python.org"
     ):
         try:
             return fetch(primary_url, creds=creds)

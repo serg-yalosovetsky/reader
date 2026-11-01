@@ -31,7 +31,13 @@ AT_PROXY_ENV = "READER_AT_PROXY"
 
 
 def at_proxy() -> str | None:
-    """Адрес SOCKS5/HTTP-прокси для author.today или None (идём напрямую)."""
+    """Адрес SOCKS5/HTTP-прокси для author.today или None (идём напрямую).
+
+    Остаточный риск: author.today через SOCKS: имя резолвит прокси.
+    При соединении через SOCKS-прокси (socks5:// или socks5h://) httpcore
+    передаёт прокси-серверу доменное имя (DOMAIN_NAME), поэтому итоговое DNS-разрешение
+    выполняется на стороне прокси, а не локально на VPS.
+    """
     return (os.getenv(AT_PROXY_ENV) or "").strip() or None
 
 

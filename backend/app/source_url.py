@@ -26,7 +26,12 @@ import socket
 from urllib.parse import urlsplit
 
 from ..downloaders.fanficfare_engine import KNOWN_DOMAINS as _FFF_DOMAINS
-from ..downloaders.remote_images import _allowed_ip
+from ..downloaders.redirect_guard import (
+    UrlBlocked,
+    UrlUnresolvable,
+    check_url,
+    host_matches,
+)
 
 log = logging.getLogger("reader.source_url")
 
@@ -48,7 +53,7 @@ class SourceUrlError(ValueError):
 
 
 def _supported_host(host: str) -> bool:
-    return any(host == d or host.endswith("." + d) for d in SUPPORTED_DOMAINS)
+    return host_matches(host, SUPPORTED_DOMAINS)
 
 
 def validate_source_url(url: str) -> str:
@@ -78,17 +83,11 @@ def validate_source_url(url: str) -> str:
             + ", ".join(SUPPORTED_DOMAINS)
         )
     try:
-        infos = socket.getaddrinfo(host, port or (443 if parts.scheme == "https" else 80),
-                                   type=socket.SOCK_STREAM)
-    except OSError as exc:
-        log.warning("зеркало: не удалось разрешить %s (%s): %s", host, url, exc)
-        raise SourceUrlError(f"не удалось найти адрес сайта {host}: {exc}") from exc
-    ips = [ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos]
-    if not ips:
-        log.warning("зеркало: у %s нет IP-адресов (%s)", host, url)
-        raise SourceUrlError(f"у сайта {host} нет IP-адресов")
-    bad = [str(ip) for ip in ips if not _allowed_ip(ip)]
-    if bad:
-        log.warning("зеркало: %s разрешается во внутренние адреса %s (%s)", host, bad, url)
-        raise SourceUrlError(f"сайт {host} указывает на внутренний адрес ({', '.join(bad)})")
+        check_url(url)
+    except UrlUnresolvable as exc:
+        log.warning("зеркало: отклонён адрес %s: %s", url, exc.reason)
+        raise SourceUrlError(f"не удалось найти адрес сайта {host}: {exc.reason}") from exc
+    except UrlBlocked as exc:
+        log.warning("зеркало: отклонён адрес %s: %s", url, exc.reason)
+        raise SourceUrlError(f"сайт {host} указывает на {exc.reason}") from exc
     return url

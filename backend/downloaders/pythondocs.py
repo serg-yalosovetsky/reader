@@ -33,7 +33,7 @@ from defusedxml import ElementTree as ET
 from ..app.config import TMP_DIR
 from . import pythondocs_cover
 from .base import DownloaderError, DownloadResult, UnsupportedURL
-from .redirect_guard import redirect_hooks
+from .redirect_guard import check_url, host_matches, redirect_hooks
 
 log = logging.getLogger("reader.pythondocs")
 
@@ -175,7 +175,8 @@ _IMG_REF = re.compile(r"(?:\.\./)*_images/([A-Za-z0-9_.\-]+)")
 # адрес части
 # --------------------------------------------------------------------------
 def supports(url: str) -> bool:
-    return (urlparse(url).hostname or "").lower().endswith(HOST)
+    host = (urlparse(url).hostname or "").lower()
+    return host_matches(host, HOST)
 
 
 def part_url(key: str) -> str:
@@ -900,6 +901,7 @@ def build_part(master: Path, key: str, ver: str, out_path: Path | None = None) -
 # интерфейс загрузчика
 # --------------------------------------------------------------------------
 def download(url: str, creds: tuple[str, str] | None = None) -> DownloadResult:
+    check_url(url)
     key = part_of(url)
     ver, vint = current_version()
     master = fetch_master(ver, vint)

@@ -1,11 +1,24 @@
 """Fetch an arbitrary web article and extract readable text for TTS listening.
 GET /api/article?url=... -> {title, text, html, final_url}"""
 from __future__ import annotations
+
+import logging
 import re
+
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, HTTPException, Query
 from readability import Document
+from starlette.concurrency import run_in_threadpool
+
+from ...downloaders.redirect_guard import (
+    RedirectBlocked,
+    UrlBlocked,
+    check_url,
+    guarded_async_client,
+)
+
+log = logging.getLogger("reader.article")
 
 router = APIRouter(prefix="/api", tags=["article"])
 
@@ -17,8 +30,18 @@ async def article(url: str = Query(..., min_length=8)):
     if not re.match(r"^https?://", url, re.I):
         raise HTTPException(400, "требуется http(s) URL")
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True, timeout=25) as c:
+        await run_in_threadpool(check_url, url)
+    except UrlBlocked as exc:
+        log.warning("GET /api/article: отклонён адрес %s: %s", url, exc.reason)
+        raise HTTPException(400, f"запрещённый адрес: {exc.reason}") from exc
+    except Exception as exc:
+        log.warning("GET /api/article: ошибка проверки адреса %s: %s", url, exc)
+        raise HTTPException(400, f"некорректный адрес: {exc}") from exc
+
+    try:
+        async with guarded_async_client(headers={"User-Agent": UA},
+                                        follow_redirects=True,
+                                        timeout=25) as c:
             r = await c.get(url)
             ct = r.headers.get("content-type", "")
             if "html" not in ct and "xml" not in ct and "text" not in ct:
@@ -27,6 +50,9 @@ async def article(url: str = Query(..., min_length=8)):
             final = str(r.url)
     except HTTPException:
         raise
+    except (RedirectBlocked, UrlBlocked) as e:
+        log.warning("GET /api/article: редирект на запрещённый адрес %s: %s", url, e)
+        raise HTTPException(400, f"запрещённый адрес: {e}") from e
     except Exception as e:
         raise HTTPException(502, f"не удалось загрузить: {type(e).__name__}")
 

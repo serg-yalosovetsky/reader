@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 
 from .base import DownloaderError, DownloadResult, UnsupportedURL
 from .epub_build import build_epub
-from .redirect_guard import redirect_hooks
+from .redirect_guard import check_url, host_matches, redirect_hooks
 
 _log = logging.getLogger("reader.searchfloor")
 
@@ -52,7 +52,8 @@ def _strip_promo(raw: bytes) -> bytes:
 
 
 def supports(url: str) -> bool:
-    return (urlparse(url).hostname or "").lower().endswith("searchfloor.org")
+    host = (urlparse(url).hostname or "").lower()
+    return host_matches(host, "searchfloor.org")
 
 
 # Скачивание книги терпеливое (большой fb2), а МОНИТОРИНГ — нет: его зонды
@@ -69,6 +70,7 @@ def _client(timeout: int = 90) -> httpx.Client:
 
 
 def download(url: str) -> DownloadResult:
+    check_url(url)
     path = urlparse(url).path
     m_book = re.search(r"/(?:book|b)/(\d+)", path)
     if m_book:
@@ -192,6 +194,7 @@ def _book_meta(book_id: str) -> tuple[str, str]:
 
 
 def _download_boosty(url: str) -> DownloadResult:
+    check_url(url)
     post_id = re.search(r"/post/(\d+)", url)
     post_id = post_id.group(1) if post_id else "0"
     with _client() as c:

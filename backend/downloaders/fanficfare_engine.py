@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from ..app import progress
 from .base import DownloaderError, DownloadResult, UnsupportedURL
+from .redirect_guard import check_url, host_matches
 
 # Отказы скачивания уходят в journald → Loki вместе с остальными строками
 # сервиса: без них немой сбой невозможно разобрать даже задним числом
@@ -52,7 +53,7 @@ def supports(url: str) -> bool:
 def _needs_cloudscraper(url: str) -> bool:
     """ficbook закрыт анти-ботом (DDoS-Guard) — нужен cloudscraper."""
     host = (urlparse(url).hostname or "").lower()
-    return host.endswith("ficbook.net")
+    return host_matches(host, "ficbook.net")
 
 
 def _ff_executable() -> list[str]:
@@ -175,6 +176,7 @@ def get_meta(
     Отдельный процесс на вызов. Для серии ссылок (фаза счёта глав монитора) —
     `MetaDriver`: тот же ответ без старта интерпретатора на каждую ссылку.
     """
+    check_url(url)
     cmd = _ff_executable() + _meta_args(url, extra)
     try:
         # `-m` всё равно пишет ПУСТОЙ EPUB в рабочий каталог процесса: запуск из
@@ -359,7 +361,7 @@ class MetaDriver:
     def _pace(self, url: str) -> str | None:
         host = (urlparse(url).hostname or "").lower()
         for site, gap in self.pause.items():
-            if host.endswith(site):
+            if host_matches(host, site):
                 last = self._last_at.get(site)
                 if last is not None:
                     wait = gap - (time.monotonic() - last)
@@ -391,6 +393,7 @@ class MetaDriver:
         return {}
 
     def _get_meta(self, url, creds, extra) -> dict:
+        check_url(url)
         if self._proc is None:
             if self._disabled:
                 return self._fallback(url, creds, extra)
@@ -439,6 +442,7 @@ def download(url: str, *, is_adult: bool = True, extra_options: dict | None = No
     Бросает UnsupportedURL, если FanFicFare не знает сайт (тогда цепочка пробует
     следующий загрузчик), или DownloaderError при иных сбоях.
     """
+    check_url(url)
     workdir = Path(tempfile.mkdtemp(prefix="fff_"))
     cmd = _ff_executable() + [
         "-f", "epub",

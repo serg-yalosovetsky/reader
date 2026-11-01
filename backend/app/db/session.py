@@ -24,6 +24,7 @@ if _IS_SQLITE:
         locked' (мониторинг с докачкой работает долго, а фронт параллельно
         опрашивает API)."""
         cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA busy_timeout=15000")
         cur.execute("PRAGMA synchronous=NORMAL")

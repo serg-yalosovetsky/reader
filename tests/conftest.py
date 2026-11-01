@@ -20,6 +20,7 @@ os.environ["READER_DB_PATH"] = os.path.join(_tmp, "reader.db")
 os.environ.pop("READER_DB_URL", None)
 
 import pytest  # noqa: E402
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 from backend.app.db import models  # noqa: E402,F401  (registers tables on metadata)
@@ -29,6 +30,13 @@ from backend.app.db import models  # noqa: E402,F401  (registers tables on metad
 def session():
     """Fresh in-memory SQLite DB with all reader tables created."""
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_fk(dbapi_conn, _record):  # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         yield s

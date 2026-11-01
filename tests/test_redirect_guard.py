@@ -319,14 +319,13 @@ def test_host_matches_and_evil_ficbook():
     assert _needs_cloudscraper("https://sub.ficbook.net/readfic/1")
 
 
-def test_check_url_allows_nonstandard_ports():
-    """Порты 8080/8443 и другие на глобальных IP разрешены."""
-    u = check_url("https://example.com:8443/test")
-    assert u.port == 8443
-    assert str(u) == "https://example.com:8443/test"
-
-    u2 = check_url("http://example.com:8080/")
-    assert u2.port == 8080
+def test_check_url_rejects_nonstandard_ports():
+    """Только 80/443: публичный IP самого сервера проходит _allowed_ip, и без
+    ограничения порта http://<свой IP>:<порт>/ достал бы внутренние сервисы."""
+    for url in ("https://example.com:8443/test", "http://example.com:8080/", "http://1.1.1.1:6379/"):
+        with pytest.raises(UrlBlocked, match="нестандартный порт"):
+            check_url(url)
+    assert check_url("https://example.com:443/x").host == "example.com"  # 443 = порт по умолчанию
 
 
 def test_check_url_unresolvable_raises_subclass(monkeypatch):

@@ -124,6 +124,11 @@ def check_url(url: str | httpx.URL) -> httpx.URL:
         log.warning("URL отклонён: %s: в адресе не должно быть логина и пароля", target)
         raise UrlBlocked("в адресе не должно быть логина и пароля", url=str(target))
     port = target.port or (443 if target.scheme == "https" else 80)
+    if port not in (80, 443):
+        # Публичный IP самого VPS проходит _allowed_ip: без ограничения порта
+        # http://<IP VPS>:<порт>/ достал бы любой сервис, слушающий на 0.0.0.0.
+        log.warning("URL отклонён: %s: нестандартный порт %s", target, port)
+        raise UrlBlocked(f"нестандартный порт {port}", url=str(target))
     host = target.host.rstrip(".")
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)

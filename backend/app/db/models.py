@@ -154,6 +154,8 @@ class PositionHistory(SQLModel, table=True):
     # overwrite (её затёрла другая вкладка/устройство), open (место, с которого
     # книгу открыли).
     reason: str = "jump"
+    device: str = ""
+    book_rev: str = ""
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

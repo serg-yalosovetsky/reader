@@ -13,7 +13,7 @@
    НЕ кэшируем: не-GET, кросс-ориджин (Google Fonts и т.п.), редиректы —
    в частности SSO-логин (302 наружу), иначе бы залипала страница входа. */
 
-const SHELL_CACHE = 'reader-shell-v15'
+const SHELL_CACHE = 'reader-shell-v16'
 const API_CACHE = 'reader-api-v1'
 const BOOKS_CACHE = 'reader-books-v1'      // ДОЛЖЕН совпадать с offline.js
 const KEEP = new Set([SHELL_CACHE, API_CACHE, BOOKS_CACHE, 'reader-recent-books-v1', 'reader-pdf-chunks-v1'])
@@ -193,7 +193,7 @@ self.addEventListener('fetch', (e) => {
 
   // Файл книги: сначала books-кэш (сохранённое офлайн), иначе сеть.
   if (/^\/api\/reader\/\d+\/file$/.test(url.pathname)) {
-    if (req.headers.has('Range')) {
+    if (req.headers.has('Range') || req.cache === 'no-store') {
       e.respondWith(fetch(req))
       return
     }
@@ -203,6 +203,10 @@ self.addEventListener('fetch', (e) => {
       if (hit) return hit
       return fetch(req).catch(() => offlineResponse())
     })())
+    return
+  }
+  if (/^\/api\/library\/\d+$/.test(url.pathname) && req.cache === 'no-store') {
+    e.respondWith(fetch(req))
     return
   }
   // Обложки: cache-first (immutable).

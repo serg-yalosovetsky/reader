@@ -17,7 +17,7 @@ import { ttsSt, ttsStop, ttsReadPage } from './tts.js'
 import { loadHighlightsWeb, onDrawAnnotation, hideSelPopup } from './highlights.js'
 import { attachKeysToDoc, closePanels } from './navigation.js'
 import { recentBook, storeRecent, changedFile, readWithProgress, fileSource } from './core/recent-books.js'
-import { cachedBook } from './core/offline.js'
+import { checkedOfflineBook, refreshBook } from './core/offline.js'
 import { probeRangeSource, makeEpubRange } from './core/book-range.js'
 import { updateProgress, buildChapterMarks } from './progress-bar.js'
 import { setBookMeta, setChapterTitle, setMoreBadge } from './chrome.js'
@@ -93,8 +93,24 @@ async function fetchBookFile(url, alive, headers = {}) {
 // сохранённое место. Ждём именно действия человека: CFI и доля после открытия
 // меняются и без него (раскладка, переход к началу текста).
 let holdSaves = false
+let recoveringRevision = false
+document.addEventListener('reader-revision-conflict', async (event) => {
+  if (currentWork?.id !== Number(event.detail.workId) || recoveringRevision) return
+  recoveringRevision = true
+  holdSaves = true
+  clearTimeout(saveTimer)
+  const work = currentWork
+  try {
+    await refreshBook(work.id)
+    await openReaderImpl(work, { serverProgress: event.detail.progress })
+  } catch (e) {
+    holdSaves = true
+    logErr('recover book revision', e)
+    toast('Не удалось обновить книгу. Позиция сервера сохранена.', 'err', 6000)
+  } finally { recoveringRevision = false }
+})
 const USER_INPUT = ['pointerdown', 'keydown', 'wheel', 'touchstart']
-function releaseHold() { holdSaves = false }
+function releaseHold() { if (!recoveringRevision) holdSaves = false }
 for (const ev of USER_INPUT) window.addEventListener(ev, releaseHold, { capture: true, passive: true })
 
 // Формат и SHA-1 открытого файла: к ним привязан сохраняемый CFI.
@@ -108,13 +124,15 @@ const progressWrites = new Map()
 // потом PUT. Записи одной книги идут строго по очереди.
 function savePosition(pos, opts = {}) {
   if (!currentWork || !pos) return
-  if (holdSaves) return
+  if (holdSaves || recoveringRevision) return
   const id = currentWork.id
   const body = { book_rev: currentRev, file_format: currentFormat, ...pos }
   const savedAt = Date.now()
+  const revision = currentRev
   if (opts.keepalive) { commitPosition(id, body, { ...opts, savedAt }); return }
   const write = (progressWrites.get(id) || Promise.resolve())
-    .then(() => commitPosition(id, body, { ...opts, savedAt }))
+    .then(() => recoveringRevision || (currentWork?.id === id && revision && currentRev && revision !== currentRev)
+      ? false : commitPosition(id, body, { ...opts, savedAt }))
   progressWrites.set(id, write)
   write.finally(() => { if (progressWrites.get(id) === write) progressWrites.delete(id) })
 }
@@ -290,7 +308,17 @@ async function openReaderImpl(work, opts = {}) {
   })
   if (!current()) return
   const cachedBase = resumeBasePosition()
-  let resp = await cachedBook(work.id)
+  const offline = await checkedOfflineBook(work.id)
+  if (!current()) return
+  let badge = document.getElementById('reader-offline-warning')
+  if (!badge) {
+    badge = document.createElement('span')
+    badge.id = 'reader-offline-warning'
+    document.getElementById('reader-title').after(badge)
+  }
+  badge.textContent = offline.uncertain ? 'копия может отставать' : ''
+  badge.hidden = !offline.uncertain
+  let resp = offline.response
   if (opts.original && resp?.headers.get('X-Book-Format') !== selectedFormat) resp = null
   // Явный EPUB не должен подхватить офлайн-копию исходного PDF.
   if (opts.fmt === 'epub' && resp?.headers.get('X-Book-Format') !== 'epub') resp = null
@@ -406,13 +434,13 @@ async function openReaderImpl(work, opts = {}) {
 
   // Восстановить позицию: текстовый якорь (устойчив к пересборке книги), иначе
   // CFI, иначе доля (напр. импорт из ReadEra), иначе начало. См. core/position.js.
-  let prog = await progP
+  let prog = opts.serverProgress || await progP
   currentRev = await revP
   if (!current()) return
   // Неотправленная позиция (закрыли без сети, PWA убили до PUT) новее
   // серверной — она и есть место, где остановились. Досылаем её же.
   const pend = pendingFor(work.id)
-  if (pend?.body && pend.saved_at > serverSavedAt(prog)) {
+  if (!opts.serverProgress && pend?.body && pend.saved_at > serverSavedAt(prog)) {
     prog = { ...(prog || {}), ...pend.body }
     commitPosition(work.id, pend.body, { replay: true, savedAt: pend.saved_at })
   }
@@ -422,7 +450,7 @@ async function openReaderImpl(work, opts = {}) {
   const sameAsServer = prog && prog.locator && base && collapse(prog.locator) === collapse(base.locator)
     && sameAnchor(prog.text_anchor, base.text_anchor)
   const serverNewer = prog && serverSavedAt(prog) > resumeBaseSavedAt()
-  const samePosition = base && positionForFormat(prog, fmt) === prog && fmt !== 'pdf' && (!prog || sameAsServer || (cachedMoved && !serverNewer))
+  const samePosition = !opts.serverProgress && base && positionForFormat(prog, fmt) === prog && fmt !== 'pdf' && (!prog || sameAsServer || (cachedMoved && !serverNewer))
   if (base && !samePosition) { hideResume(); cachedSave = null; cachedTurned = false }
   if (cachedSave) { savePosition({ ...cachedSave, book_rev: '' }); cachedSave = null }
   // Позиция, с которой книга открывается, — точка отсчёта для признака прыжка:

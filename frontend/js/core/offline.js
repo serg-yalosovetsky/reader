@@ -23,7 +23,7 @@ export function offlineIds() {
   try {
     const a = JSON.parse(localStorage.getItem(INDEX_KEY) || '[]')
     return Array.isArray(a) ? a : []
-  } catch { return [] }
+  } catch (e) { logErr('offline index', e); return [] }
 }
 export function isOffline(id) { return offlineIds().includes(id) }
 function setIndex(ids) { localStorage.setItem(INDEX_KEY, JSON.stringify([...new Set(ids)])) }
@@ -32,7 +32,7 @@ function removeIndex(id) { setIndex(offlineIds().filter((x) => x !== id)) }
 
 // ---- что сохранено (глав в офлайн-копии) ----
 function allMeta() {
-  try { return JSON.parse(localStorage.getItem(META_KEY) || '{}') || {} } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(META_KEY) || '{}') || {} } catch (e) { logErr('offline metadata', e); return {} }
 }
 export function offlineMeta(id) { return allMeta()[id] || null }
 function setMeta(id, data) {
@@ -57,7 +57,7 @@ export async function cachedBook(id) {
   try {
     const c = await caches.open(BOOKS_CACHE)
     return (await c.match(bookUrl(id))) || null
-  } catch { return null }
+  } catch (e) { logErr('offline cache', e); return null }
 }
 
 // Скачать книгу в офлайн. onProgress(receivedBytes, totalBytes|null) — опционально.
@@ -68,8 +68,9 @@ export async function downloadBook(id, onProgress, chapters = 0) {
   const url = bookUrl(id)
   let resp
   try {
-    resp = await fetch(url, { credentials: 'same-origin' })
+    resp = await fetch(url, { credentials: 'same-origin', cache: 'no-store' })
   } catch (e) {
+    logErr('offline download', e)
     throw new Error('нет связи с сервером')
   }
   // Протухшая SSO-сессия НЕ выглядит как ошибка: nginx уводит на sso.ibotz.fun,
@@ -79,7 +80,7 @@ export async function downloadBook(id, onProgress, chapters = 0) {
   const ctype = resp.headers.get('Content-Type') || ''
   if (resp.status === 401 || resp.redirected || ctype.includes('text/html')) {
     let loginUrl = '/'
-    try { loginUrl = (await resp.clone().json()).login_url || '/' } catch { /* не JSON */ }
+    try { loginUrl = (await resp.clone().json()).login_url || '/' } catch (e) { logErr('offline auth response', e) }
     throw signalAuthRequired(url, 'GET', loginUrl)
   }
   if (!resp.ok) throw new Error('сервер ответил ' + resp.status)
@@ -96,7 +97,7 @@ export async function downloadBook(id, onProgress, chapters = 0) {
       if (done) break
       chunks.push(value)
       received += value.length
-      try { onProgress(received, total) } catch { /* ignore */ }
+      try { onProgress(received, total) } catch (e) { logErr('offline progress callback', e) }
     }
     const type = resp.headers.get('Content-Type') || 'application/epub+zip'
     const blob = new Blob(chunks, { type })
@@ -107,9 +108,10 @@ export async function downloadBook(id, onProgress, chapters = 0) {
   }
 
   const c = await caches.open(BOOKS_CACHE)
+  const rev = stored.headers.get('X-Book-Rev') || stored.headers.get('X-Book-SHA1') || ''
   await c.put(url, stored)     // Cache API кладёт явным put даже при no-store
   addIndex(id)
-  setMeta(id, { chapters: Number(chapters) || 0, savedAt: Date.now() })
+  setMeta(id, { chapters: Number(chapters) || 0, savedAt: Date.now(), rev })
   return true
 }
 
@@ -117,7 +119,6 @@ export async function downloadBook(id, onProgress, chapters = 0) {
 // лежит прежний файл. Именно этого действия не хватало — кнопка «Сохранить
 // офлайн» у уже сохранённой книги просто УДАЛЯЛА копию.
 export async function refreshBook(id, onProgress, chapters = 0) {
-  await removeBook(id)
   return downloadBook(id, onProgress, chapters)
 }
 
@@ -158,6 +159,33 @@ export async function offlineUsageMB() {
       const { usage } = await navigator.storage.estimate()
       return usage ? Math.round(usage / 1048576) : null
     }
-  } catch { /* ignore */ }
+  } catch (e) { logErr('offline progress callback', e) }
   return null
+}
+
+
+export const REV_CHECK_TIMEOUT_MS = 1500
+
+// Bounded metadata check; no-store also bypasses the service worker API fallback.
+export async function checkedOfflineBook(id, { timeout = REV_CHECK_TIMEOUT_MS } = {}) {
+  const copy = await cachedBook(id)
+  if (!copy) return { response: null, uncertain: false }
+  const controller = new AbortController()
+  let timer
+  try {
+    const work = await Promise.race([
+      fetch(`/api/library/${id}`, { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+        .then(r => { if (!r.ok) throw new Error(`revision HTTP ${r.status}`); return r.json() }),
+      new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('revision check timeout')) }, timeout) }),
+    ])
+    const rev = offlineMeta(id)?.rev
+    if (!rev || !work.file_rev || rev !== work.file_rev) {
+      await refreshBook(id, null, work.chapters_have || work.chapters_count)
+      return { response: await cachedBook(id), uncertain: false }
+    }
+    return { response: copy, uncertain: false }
+  } catch (e) {
+    logErr(`offline revision work ${id}`, e)
+    return { response: copy, uncertain: true }
+  } finally { clearTimeout(timer) }
 }

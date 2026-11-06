@@ -57,6 +57,13 @@ def import_progress(session: Session, bak_path: str | Path | None = None) -> dic
         if redoc.last_read_time <= our_ms:
             continue
         if prog:
+            from ..app.routers.progress import JUMP_RATIO, _push_history
+
+            if abs(prog.ratio - redoc.ratio) >= JUMP_RATIO:
+                _push_history(session, prog, chapter=prog.chapter, reason="overwrite", device="readera")
+            prog.text_anchor = ""
+            prog.book_rev = w.sha1
+            prog.chapter = ""
             prog.ratio = redoc.ratio
             prog.locator = ""  # позиция из ReadEra — по ratio (CFI нет)
             prog.last_read_time = _from_ms(redoc.last_read_time)

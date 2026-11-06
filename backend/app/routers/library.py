@@ -212,6 +212,12 @@ def _dedup_works(session: Session) -> int:
                         dup_ts = dup_prog.last_read_time or utcnow()
                         keep_ts = keep_prog.last_read_time or utcnow()
                         if dup_ts > keep_ts or (dup_prog.saved_at or 0) > (keep_prog.saved_at or 0):
+                            from .progress import JUMP_RATIO, _push_history
+
+                            if (abs(keep_prog.ratio - dup_prog.ratio) >= JUMP_RATIO
+                                    or keep_prog.chapter != dup_prog.chapter):
+                                _push_history(session, keep_prog, chapter=keep_prog.chapter,
+                                              reason="overwrite", device="server")
                             keep_prog.ratio = dup_prog.ratio
                             keep_prog.locator = dup_prog.locator
                             keep_prog.text_anchor = dup_prog.text_anchor
@@ -485,7 +491,10 @@ def get_work(work_id: int, session: Session = Depends(get_session)) -> dict:
     work = session.get(Work, work_id)
     if not work:
         raise HTTPException(404, "work not found")
+    from ..book_revision import file_rev
+
     d = work.model_dump()
+    d["file_rev"] = file_rev(work)
     d.update(_completeness(work, session))
     return d
 

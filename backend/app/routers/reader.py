@@ -238,6 +238,10 @@ def _file_sha1(path: str, mtime_ns: int, size: int) -> str:
 
 
 def _path_sha1(path: Path) -> str:
+    import re
+
+    if re.fullmatch(r"[0-9a-fA-F]{40}", path.stem):
+        return path.stem.lower()
     stat = path.stat()
     return _file_sha1(str(path), stat.st_mtime_ns, stat.st_size)
 
@@ -372,6 +376,7 @@ def get_book_file(
             fresh = _not_modified(request, cpath, "epub")
             if fresh is not None:
                 fresh.headers["X-Book-SHA1"] = converted_sha1
+                fresh.headers["X-Book-Rev"] = converted_sha1
                 return fresh
             resp = FileResponse(
                 cpath, media_type=_MEDIA["epub"], filename=cpath.name
@@ -380,6 +385,7 @@ def get_book_file(
             resp.headers["Cache-Control"] = "no-cache"
             resp.headers["X-Book-Format"] = "epub"
             resp.headers["X-Book-SHA1"] = converted_sha1
+            resp.headers["X-Book-Rev"] = converted_sha1
             return resp
 
     if is_calibre_link:
@@ -396,8 +402,7 @@ def get_book_file(
         if not path.exists():
             raise HTTPException(410, "файл книги отсутствует на диске")
     # Старые записи и ссылки Calibre могут ещё не иметь SHA-1 в Work.
-    if not sha1:
-        sha1 = _path_sha1(path)
+    sha1 = _path_sha1(path)
     if file_format == "pdf":
         from ..pdf_crop import ensure
 
@@ -406,6 +411,7 @@ def get_book_file(
     fresh = _not_modified(request, path, file_format or "")
     if fresh is not None:
         fresh.headers["X-Book-SHA1"] = sha1
+        fresh.headers["X-Book-Rev"] = sha1
         return fresh
     resp = FileResponse(path, media_type=media, filename=path.name)
     # Раньше здесь стоял no-store, и книга ехала по сети при КАЖДОМ открытии —
@@ -417,6 +423,7 @@ def get_book_file(
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Book-Format"] = file_format or ""
     resp.headers["X-Book-SHA1"] = sha1
+    resp.headers["X-Book-Rev"] = sha1
     return resp
 
 

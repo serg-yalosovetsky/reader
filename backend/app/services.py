@@ -170,6 +170,10 @@ def _unfinish_progress(session: Session, work_id: int, old_len: int, new_len: in
         return
     scaled = prog.ratio * (old_len / new_len)
     if scaled < prog.ratio:
+        from .routers.progress import JUMP_RATIO, _push_history
+
+        if prog.ratio - scaled >= JUMP_RATIO:
+            _push_history(session, prog, chapter=prog.chapter, reason="overwrite", device="server")
         prog.ratio = scaled
         session.add(prog)
 

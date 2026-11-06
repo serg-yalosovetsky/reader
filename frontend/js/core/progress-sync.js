@@ -13,10 +13,10 @@ import { logErr } from './log.js'
 const KEY = 'reader.pendingProgress.v1'
 
 function readAll() {
-  try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {} } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {} } catch (e) { logErr('pending progress read', e); return {} }
 }
 function writeAll(all) {
-  try { localStorage.setItem(KEY, JSON.stringify(all)) } catch { /* квота/приватный режим — останется только PUT */ }
+  try { localStorage.setItem(KEY, JSON.stringify(all)) } catch (e) { logErr('pending progress write', e) }
 }
 
 // Неотправленная позиция книги: { body, saved_at } или null.
@@ -52,6 +52,12 @@ async function send(workId, body, keepalive) {
       keepalive,
       credentials: 'same-origin',
     })
+    if (r.status === 409) {
+      const conflict = await r.json()
+      drop(workId, body.saved_at)
+      document.dispatchEvent(new CustomEvent('reader-revision-conflict', { detail: { workId, ...conflict } }))
+      return false
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     drop(workId, body.saved_at)
     return true

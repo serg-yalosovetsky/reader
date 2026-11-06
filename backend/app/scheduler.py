@@ -98,6 +98,11 @@ def _ficbook_feed_job() -> None:
     try:
         with Session(engine) as session:
             feeds.pull_all(session, sites=["ficbook"])
+            from .db.models import Monitored
+            from sqlmodel import select
+
+            if session.exec(select(Monitored).where(Monitored.has_update == True)).first() is None:
+                return  # No pending downloads; the full monitor has its own schedule.
         # Сразу докачать книги с has_update=True (без полного счёта глав)
         res = check_job.run_blocking("ficbook_feed", only_pending=True, pull_feeds=False)
         if res.get("status") not in ("skipped", "error"):

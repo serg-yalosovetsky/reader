@@ -155,3 +155,113 @@ def test_progress_format_migration(monkeypatch):
     with engine.connect() as conn:
         assert conn.execute(text('SELECT file_format FROM progress')).scalar_one() == ''
     assert not db._migrate_add_columns()
+
+
+def test_revision_conflict_and_replay(client):
+    wid = _upload(client, "revision-conflict")["id"]
+    rev = client.get(f"/api/library/{wid}").json()["file_rev"]
+    assert len(rev) == 40
+    file = client.get(f"/api/reader/{wid}/file")
+    assert file.headers["x-book-rev"] == rev
+    assert file.headers["etag"]
+    assert client.get(f"/api/reader/{wid}/file", headers={"If-None-Match": file.headers["etag"]}).headers["x-book-rev"] == rev
+    url = f"/api/progress/{wid}"
+    client.put(url, json={"ratio": .8, "locator": "phone", "book_rev": rev, "saved_at": 200})
+    rejected = client.put(url, json={"ratio": .2, "locator": "laptop", "book_rev": "old", "saved_at": 300})
+    assert rejected.status_code == 409
+    assert rejected.json()["file_rev"] == rev
+    assert rejected.json()["progress"]["locator"] == "phone"
+    assert client.get(url).json()["locator"] == "phone"
+    assert client.get(url + "/history").json() == []
+    replay = client.put(url, json={"ratio": .2, "book_rev": "old", "saved_at": 100, "replay": True})
+    assert replay.status_code == 200
+    assert replay.json()["locator"] == "phone"
+    assert client.put(url, json={"ratio": .9, "locator": "replay", "book_rev": "old", "saved_at": 400, "replay": True}).json()["locator"] == "replay"
+
+
+def test_overwrite_chapter_and_device(client):
+    wid = _upload(client, "overwrite-chapter")["id"]
+    url = f"/api/progress/{wid}"
+    client.put(url, json={"ratio": .5, "locator": "old", "chapter": "chapter 1", "book_rev": "revision"})
+    client.put(url, headers={"User-Agent": "Mozilla Android"}, json={"ratio": .501, "locator": "next", "chapter": "chapter 2"})
+    row = client.get(url + "/history").json()[0]
+    assert (row["locator"], row["chapter"], row["reason"], row["device"], row["book_rev"]) == ("old", "chapter 1", "overwrite", "android", "revision")
+    client.put(url, headers={"User-Agent": "Windows NT"}, json={"ratio": .8, "locator": "jump", "chapter": "chapter 2"})
+    assert client.get(url + "/history").json()[0]["device"] == "windows"
+
+
+def test_history_migration(monkeypatch):
+    from sqlalchemy import text
+    from sqlmodel import create_engine
+    from backend.app.db import session as db
+
+    engine = create_engine('sqlite://')
+    with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE positionhistory (id INTEGER PRIMARY KEY, work_id INTEGER)'))
+        conn.execute(text('INSERT INTO positionhistory (id, work_id) VALUES (1, 1)'))
+    monkeypatch.setattr(db, 'engine', engine)
+    added = db._migrate_add_columns()
+    assert {('positionhistory', 'device'), ('positionhistory', 'book_rev')} <= added
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT device, book_rev FROM positionhistory')).one() == ('', '')
+    assert not db._migrate_add_columns()
+
+
+def test_revision_guard_direct(session, tmp_path, monkeypatch):
+    """Exercise the transaction even when TestClient cannot start in a sandbox."""
+    import hashlib
+    import json
+    from starlette.requests import Request
+    from sqlmodel import select
+    from backend.app.db.models import Work, PositionHistory
+    from backend.app.routers import progress, library, reader
+    from backend.app.db import session as db
+
+    path = tmp_path / 'legacy.epub'
+    path.write_bytes(b'current book')
+    rev = hashlib.sha1(path.read_bytes()).hexdigest()
+    work = Work(title='Test', file_path=str(path), file_format='epub')
+    session.add(work)
+    session.commit()
+    monkeypatch.setattr(db, 'engine', session.get_bind())
+    request = Request({'type': 'http', 'headers': [(b'user-agent', b'Android')]})
+    def put(**data):
+        return progress.set_progress(work.id, progress.ProgressIn(**data), request, session)
+    assert library.get_work(work.id, session)['file_rev'] == rev
+    response = reader.get_book_file(request, work.id)
+    assert response.headers['x-book-rev'] == rev
+    put(ratio=.7, locator='phone', chapter='20', book_rev=rev, saved_at=200)
+    conflict = put(ratio=.4, locator='stale', book_rev='old', saved_at=300)
+    assert conflict.status_code == 409
+    assert json.loads(conflict.body)['progress']['locator'] == 'phone'
+    assert put(ratio=.4, book_rev='old', saved_at=100, replay=True).locator == 'phone'
+    assert session.exec(select(PositionHistory)).all() == []
+    put(ratio=.701, locator='next', chapter='21', book_rev=rev)
+    row = session.exec(select(PositionHistory)).one()
+    assert (row.locator, row.book_rev, row.device, row.reason) == ('phone', rev, 'android', 'overwrite')
+
+
+def test_revision_hash_cached_by_mtime(tmp_path, monkeypatch):
+    import hashlib
+    import os
+    from backend.app.routers.reader import _path_sha1
+    from backend.app import storage
+
+    path = tmp_path / 'legacy.epub'
+    path.write_bytes(b'first')
+    calls = []
+    def digest(path):
+        calls.append(path)
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(storage, 'sha1_of_file', digest)
+    assert _path_sha1(path) == _path_sha1(path)
+    assert len(calls) == 1
+    stamp = path.stat().st_mtime_ns
+    path.write_bytes(b'other')
+    os.utime(path, ns=(stamp + 1_000_000, stamp + 1_000_000))
+    assert _path_sha1(path) == hashlib.sha1(b'other').hexdigest()
+    assert len(calls) == 2
+    hashed = tmp_path / ('a' * 40 + '.epub')
+    hashed.write_bytes(b'content addressed')
+    assert _path_sha1(hashed) == 'a' * 40
+    assert len(calls) == 2

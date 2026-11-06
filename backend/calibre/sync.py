@@ -103,6 +103,10 @@ def merge_work(session: Session, keep: Work, drop: Work) -> None:
         else:
             # оставить более продвинутый/свежий прогресс
             if (dp.ratio, dp.last_read_time) > (kp.ratio, kp.last_read_time):
+                from ..app.routers.progress import JUMP_RATIO, _push_history
+
+                if abs(kp.ratio - dp.ratio) >= JUMP_RATIO or kp.chapter != dp.chapter:
+                    _push_history(session, kp, chapter=kp.chapter, reason="overwrite", device="server")
                 kp.ratio = dp.ratio
                 kp.locator = dp.locator
                 kp.last_read_time = dp.last_read_time

@@ -7,7 +7,10 @@ foliate-js. На этапе 3 этот же прогресс реконсили�
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from ..book_revision import file_rev
 from sqlmodel import Session, select
 
 from ..db.models import PositionHistory, Progress, Work, utcnow
@@ -33,6 +36,7 @@ def _push_history(
     *,
     chapter: str = "",
     reason: str = "jump",
+    device: str = "",
 ) -> None:
     """Сохранить ТЕКУЩУЮ позицию в историю (до того, как её перезапишут)."""
     if not (prog.locator or prog.text_anchor or prog.ratio):
@@ -43,7 +47,9 @@ def _push_history(
         .order_by(PositionHistory.created_at.desc(), PositionHistory.id.desc())
     ).first()
     # Тот же locator подряд — это не новый переход, а повтор.
-    if last and last.locator == prog.locator and last.text_anchor == prog.text_anchor:
+    if (last and reason != "overwrite"
+            and last.locator == prog.locator and last.text_anchor == prog.text_anchor
+            and last.ratio == prog.ratio and last.chapter == chapter):
         return
     session.add(
         PositionHistory(
@@ -53,6 +59,8 @@ def _push_history(
             text_anchor=prog.text_anchor or "",
             chapter=chapter,
             reason=reason,
+            device=device,
+            book_rev=prog.book_rev,
         )
     )
     _trim_history(session, prog.work_id)
@@ -205,6 +213,7 @@ def get_progress(work_id: int, session: Session = Depends(get_session)) -> Progr
 def set_progress(
     work_id: int,
     body: ProgressIn,
+    request: Request,
     session: Session = Depends(get_session),
 ) -> Progress:
     work = session.get(Work, work_id)
@@ -217,14 +226,26 @@ def set_progress(
     prog = session.exec(select(Progress).where(Progress.work_id == work_id)).first()
     if prog and body.replay and saved_at <= int(prog.saved_at or 0):
         return prog  # устаревшая досылка: на сервере уже позиция новее
+    rev = file_rev(work)
+    if (prog and not body.replay and body.book_rev and rev
+            and body.book_rev != rev and prog.book_rev == rev):
+        return JSONResponse(
+            status_code=409,
+            content={"progress": jsonable_encoder(prog), "file_rev": rev},
+        )
     if prog:
         # Позицию вот-вот перезапишут. Если новая далеко от старой — это не
         # чтение, а прыжок (или затирание чужой вкладкой, открытой в начале
         # книги): прежнее место уезжает в историю, чтобы «Назад» в читалке
         # было куда нажимать.
-        jumped = abs(float(prog.ratio or 0.0) - float(body.ratio)) >= JUMP_RATIO
+        jumped = (abs(float(prog.ratio or 0.0) - float(body.ratio)) >= JUMP_RATIO
+                  or bool(body.chapter and prog.chapter != body.chapter))
         if jumped:
-            _push_history(session, prog, chapter=prog.chapter, reason="overwrite")
+            ua = request.headers.get("user-agent", "").lower()
+            families = [("android", "android"), ("iphone", "ios"), ("ipad", "ios"),
+                        ("windows", "windows"), ("macintosh", "macos"), ("linux", "linux")]
+            device = next((name for token, name in families if token in ua), "unknown")
+            _push_history(session, prog, chapter=prog.chapter, reason="overwrite", device=device)
         prog.ratio = body.ratio
         # Координаты пишутся ОДНОЙ тройкой. Раньше пустой якорь оставлял
         # прежний — и строка склеивалась из двух страниц: CFI новой, якорь
